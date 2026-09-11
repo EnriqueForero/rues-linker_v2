@@ -1,0 +1,75 @@
+{
+  "etiqueta": "extra_ciudad",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T15:26:28",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 3763,
+    "pares_verdaderos": 22073,
+    "tp": 20949,
+    "fp": 1016,
+    "fn": 1124,
+    "precision": 0.9537,
+    "recall": 0.9491,
+    "f1": 0.9514,
+    "b3_precision": 0.9857,
+    "b3_recall": 0.9624,
+    "b3_f1": 0.9739,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9885,
+      "SIN_NIT": 0.8018
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.8014,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 42
+  },
+  "recursos": {
+    "segundos_total": 24.54,
+    "segundos_por_fase": {
+      "L1_prep": 0.35,
+      "L2_lsh_candidates": 19.35,
+      "L3_scoring": 3.23,
+      "L4_clustering": 0.17,
+      "L5_golden": 1.2
+    },
+    "rss_por_fase": {
+      "L1_prep": 240.6,
+      "L2_lsh_candidates": 303.3,
+      "L3_scoring": 413.0,
+      "L4_clustering": 409.2,
+      "L5_golden": 336.3
+    },
+    "rss_pico_mib": 413.0,
+    "rss_inicial_mib": 212.6,
+    "muestras_rss": 97,
+    "bytes_disco": 12854922,
+    "candidatos": 849825,
+    "pares_scoreados": 20547,
+    "candidatos_por_valido": 41.4
+  },
+  "huella": "8044f8f1155b09d2818488ab5506c6c51de4c4c2158b3c7d2abb90530a5c59da",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": [
+      "CIUDAD"
+    ],
+    "ajustes_perfil": null,
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "C16: CIUDAD como evidencia adicional"
+}

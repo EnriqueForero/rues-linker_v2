@@ -1,0 +1,92 @@
+{
+  "schema": "rues-linker-release-evidence-v2",
+  "date": "2026-08-28",
+  "version": "0.17.0",
+  "base": "0.16.0 (SHA-256 verificados contra manifest adjunto)",
+  "entorno": "Linux contenedor 2 vCPU / 7,8 GB; una corrida por medición",
+  "ground_truth_robusto_v3": {
+    "registros": 7368,
+    "grupos": 2000,
+    "casos_negativos": 606,
+    "nota": "GT sintético con ruido controlado; sin pares inter-grupo con NIT a distancia <=2, así que no acredita la frontera del rescate — el umbral 0,82 se mantiene por el caso real ML/TITANS",
+    "produccion_estandar": {
+      "pairwise": {
+        "tp": 7025,
+        "fp": 0,
+        "fn": 12280,
+        "precision": 1.0,
+        "recall": 0.3639,
+        "f1": 0.5336
+      },
+      "bcubed": {
+        "precision": 1.0,
+        "recall": 0.5987,
+        "f1": 0.749
+      },
+      "fp_negativos": 0
+    },
+    "fuentes_ruidosas": {
+      "pairwise": {
+        "tp": 14878,
+        "fp": 0,
+        "fn": 4427,
+        "precision": 1.0,
+        "recall": 0.7707,
+        "f1": 0.8705
+      },
+      "bcubed": {
+        "precision": 1.0,
+        "recall": 0.8586,
+        "f1": 0.9239
+      },
+      "fp_negativos": 0,
+      "recall_por_ruido": {
+        "CLEAN": 1.0,
+        "LIGHT": 0.917,
+        "MODERATE": 0.7939,
+        "SEVERE": 0.6371,
+        "EXTREME": 0.5572
+      }
+    },
+    "baseline_0160_produccion_estandar": {
+      "pairwise_f1": 0.5345,
+      "bcubed_f1": 0.7494
+    }
+  },
+  "e2e_real_rues_x_exportaciones": {
+    "filas_fisicas": 952288,
+    "produccion_estandar": {
+      "perfil": "produccion_estandar",
+      "filas_correlativa": 952288,
+      "entidades": 74220,
+      "segundos": 53.9,
+      "rss_pico_mib": 558.0,
+      "partition_fingerprint_sha256": "08ccac3fee7fe75809e6cb14158c0d04e1dddbeacc2f413128a7a163d77cbaed",
+      "coincide_con_0160": false
+    },
+    "fuentes_ruidosas": {
+      "perfil": "fuentes_ruidosas",
+      "filas_correlativa": 952288,
+      "entidades": 74206,
+      "segundos": 93.7,
+      "rss_pico_mib": 562.1,
+      "partition_fingerprint_sha256": "2129cabc457ce03c6a6ef42956969c878621efd864b745dd32c47011669162aa",
+      "coincide_con_0160": false
+    },
+    "paridad_pre_fix_limpieza": {
+      "fingerprint_reproducido": "61779b06bcc7316bb2089d1d75f85d14b83c115478d6ae2f613f9c9a10cd622b",
+      "nota": "reproducido EXACTO en Linux con el árbol 0.17.0 antes de los fixes de limpieza; la ruptura posterior (74.217 -> 74.220) es deliberada y está documentada en el CHANGELOG con caso mínimo"
+    }
+  },
+  "suite": "1.092+ aprobadas en Linux, 0 fallos; skips POSIX de Windows ejecutados aquí",
+  "artefactos": {
+    "rues_linker-0.17.0.tar.gz": {
+      "bytes": 644967,
+      "sha256": "b4c325b05ce3db260c95425d4d246f24bac84b9fba0f8cdca641ff7e9baa85de"
+    },
+    "rues_linker-0.17.0-py3-none-any.whl": {
+      "bytes": 588116,
+      "sha256": "d96bb95ceb05741f42eca79ad2719cc70bb5a23c1a0a4bc156cc7d333019208b"
+    }
+  }
+}

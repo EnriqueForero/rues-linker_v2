@@ -1,0 +1,23 @@
+COLUMNA,DESCRIPCION,TIPO_DATO,MAPEA_A_TIPO_MOTOR,OBSERVACIONES
+REG_ID,Identificador único de fila,int,—,Clave de la fila (no es dato de la empresa)
+NIT,Número de identificación tributaria,texto,identificador,Puede traer puntos/guiones o estar vacío
+RAZON_SOCIAL,Nombre legal/comercial de la empresa,texto,nombre_empresa,Variable principal de matching
+REPRESENTANTE_LEGAL,Nombre del representante legal,texto,nombre_persona,Prueba el tipo nombre_persona
+EMAIL,Correo de contacto,texto,email,Dominio propio = señal fuerte; gmail = señal débil
+TELEFONO,Teléfono de contacto,texto,telefono,Puede traer prefijo país (+57)
+DIRECCION,Dirección física,texto,direccion,Abreviaturas CL/CRA/AV equivalentes
+CIUDAD,Ciudad,texto,ciudad,Con o sin tilde
+DEPARTAMENTO,Departamento/estado,texto,categorico,Contexto geográfico
+PAIS,País,texto,categorico,Para linkage transfronterizo
+LATITUD,Latitud (grados decimales),float,geo (con LONGITUD),Vacío = sin geo
+LONGITUD,Longitud (grados decimales),float,geo (con LATITUD),Vacío = sin geo
+FECHA_CONSTITUCION,Fecha de constitución,fecha,fecha,ISO o DD/MM/YYYY
+VENTAS_ANUALES_COP,Ventas anuales en COP,float,numerico,Prueba el tipo numérico
+EMPLEADOS,Número de empleados,int,numerico,Prueba el tipo numérico
+SECTOR,Sector económico,texto,categorico,Prueba el tipo categórico
+SRC / FUENTE,Fuente del registro,texto,—,RUES/CRM/EXPORTACIONES/SUPERSOCIEDADES
+ES_TRUSTED,¿Fuente confiable?,bool,—,RUES y SUPERSOCIEDADES son trusted
+ID_GRUPO_ESPERADO,VERDAD: identidad del grupo (dedup),int,—,Mismo valor = misma entidad
+ENTIDAD_ID_ESPERADO,VERDAD: identidad cross-base (linkage),int,—,>0 = match; -1 solo-A/B; -2/-3 homónimo
+CASO_TIPO / RETO,Código del catálogo de casos,texto,—,Ver hoja CATALOGO_CASOS
+NOTAS,Explicación del reto de la fila,texto,—,Descripción legible

@@ -1,0 +1,44 @@
+CODIGO,NOMBRE,DESCRIPCION,TIPO_ESPERADO,APLICA_A
+C01,Match exacto cross-source,Mismo NIT y nombre idéntico en fuentes distintas,TP,Deduplicación
+C02,"Match NIT idéntico, variación leve de nombre","Mismo NIT, nombre con typo/acento/espaciado",TP,Deduplicación
+C03,"Match NIT idéntico, sufijo legal diferente","Mismo NIT, nombre difiere solo en SAS/LTDA/S.A.",TP,Deduplicación
+C04,"Match NIT idéntico, nombre truncado/abreviado","Mismo NIT, nombre incompleto en una fuente",TP,Deduplicación
+C05,"Match NIT idéntico, prefijo legal diferente","Mismo NIT, prefijo C.I./Sucursal",TP,Deduplicación
+C06,"Match NIT idéntico, ruido administrativo","Mismo NIT, con 'EN LIQUIDACION' u otro estado",TP,Deduplicación
+C07,"Match NIT idéntico, orden de palabras","Mismo NIT, palabras en distinto orden",TP,Deduplicación
+C08,Match NIT formato diferente,Mismo NIT con puntos/guiones vs limpio,TP,Deduplicación
+C09,"Match NIT cercano (dist≤3), nombre similar","NITs difieren en 1-3 dígitos, nombre idéntico. FRONTERA: el veto de NIT lo separa; Fase 3 debe unirlo con evidencia multicampo",TP_DIFICIL,Deduplicación
+C11,No-match: homónimos,"Empresas distintas con nombre parecido, NIT distinto",FP_trap,Deduplicación
+C12,"No-match: NIT idéntico, nombres muy diferentes",Reasignación de NIT o error de captura. Política: GT dice DISTINTAS,FP_trap,Deduplicación
+C13,No-match: persona vs empresa,Persona natural y empresa con nombre similar,FP_trap,Deduplicación
+C14,"Cadena transitiva (A~B, B~C, A≠C)",Test de clustering con restricciones de veto (cannot-link),CHAIN,Deduplicación
+C15,Trusted source: RUES-RUES no agrupa,Dos registros de fuente confiable no deben fusionarse,TRUSTED,Deduplicación
+C17,Encoding/caracteres especiales,"Ñ, tildes, caracteres mal codificados",TP,Deduplicación
+C18,Nombre muy corto (≤2 palabras),Nombres ambiguos por brevedad,EDGE,Deduplicación
+C19,Nombre muy largo con ruido,Nombre extenso con info legal/geográfica,TP,Deduplicación
+C20,Datos faltantes (NIT o nombre nulo),Registro con campos vacíos; sin señal suficiente,EDGE,Deduplicación
+C21,Grupo multi-NIT legítimo,Entidad real con 2+ NITs. FRONTERA: el veto de NIT lo separa; Fase 3 lo unirá,TP_DIFICIL,Deduplicación
+C22,Grupo excesivamente grande,Entidad con muchas variantes (test de tamaño de grupo),ANOMALY,Deduplicación
+C23,Score en frontera del threshold,Par justo en el límite de decisión,BOUNDARY,Deduplicación
+C24,Stopwords críticas,Nombre cuyo núcleo son stopwords,EDGE,Deduplicación
+C25,Registro único sin match,Empresa sin duplicado; singleton,TN,Deduplicación
+MC01,Multicampo salva ausencia de NIT,"NIT faltante en ambos, email+teléfono idénticos → mismo ente",TP,Deduplicación
+MC04,Email genérico compartido (gmail),Entidades distintas con mismo dominio genérico; NO fusionar por eso,FP_trap,Deduplicación
+MC05,Teléfono call center compartido,Entidades distintas con mismo teléfono tercerizado; NO fusionar,FP_trap,Deduplicación
+MC06,Geo idéntica (mismo edificio),Entidades distintas en la misma torre; NO fusionar por geo sola,FP_trap,Deduplicación
+MC07,"Misma entidad, sedes distintas","Mismo NIT+nombre, geo a km de distancia → misma empresa",TP,Deduplicación
+GEN,Bloque generado,Entidades sintéticas con perturbaciones aleatorias (volumen),MIXTO,Deduplicación
+exacto,Cruce exacto A↔B,Mismo NIT y nombre en ambas bases,TP,Record Linkage
+sufijo,Cruce con sufijo distinto,CRM sin sufijo vs RUES con sufijo legal,TP,Record Linkage
+comercial_vs_legal,Nombre comercial vs legal,CRM usa nombre corto; RUES el legal completo,TP,Record Linkage
+truncado,Cruce con nombre truncado,CRM tiene el nombre incompleto,TP,Record Linkage
+prefijo_ci,Cruce con prefijo C.I.,"RUES con C.I., CRM sin él",TP,Record Linkage
+orden,Cruce con orden alterado,Palabras en distinto orden entre bases,TP,Record Linkage
+nit_formato,Cruce con NIT formateado,NIT con puntos en CRM vs limpio en RUES,TP,Record Linkage
+sin_nit_en_A,Cruce sin NIT en A,CRM sin NIT: cruce por nombre+email+ciudad,TP_DIFICIL,Record Linkage
+typo,Cruce con typo,Error tipográfico en el nombre del CRM,TP,Record Linkage
+tildes,Cruce sin tildes,CRM sin tildes vs RUES con ellas,TP,Record Linkage
+abreviado,Cruce abreviado,CRM con palabras abreviadas,TP,Record Linkage
+solo_A,Solo en base A,Entidad presente solo en CRM; no debe cruzar,TN,Record Linkage
+solo_B,Solo en base B,Entidad presente solo en RUES; no debe cruzar,TN,Record Linkage
+homonimo_cross,Homónimo cross-base,"Mismo nombre en A y B, NIT distinto → NO cruza",FP_trap,Record Linkage

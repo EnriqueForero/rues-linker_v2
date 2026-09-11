@@ -1,0 +1,137 @@
+# ════════════════════════════════════════════════════════════════════
+# .gitignore — rues-linker
+# Generado automáticamente por el notebook de publicación.
+# PRINCIPIO: solo va a git el CÓDIGO.
+# ════════════════════════════════════════════════════════════════════
+
+
+# ── Python ────────────────────────────────────────────────────────────
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+
+
+# ── Datos y archivos binarios ─────────────────────────────────────────
+*.coverage
+*.csv
+*.gif
+*.ipynb
+*.jpeg
+*.jpg
+*.parquet
+*.pdf
+*.png
+*.xls
+*.xlsx
+*.zip
+
+
+# ── Carpetas excluidas ────────────────────────────────────────────────
+.eggs/
+.git/
+.hypothesis/
+.ipynb_checkpoints/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+build/
+dist/
+env/
+htmlcov/
+mnt/
+resultados/
+rues_linker.egg-info/
+salida/
+src/rues_linker.egg-info/
+venv/
+work/
+
+
+# ── Archivos específicos excluidos ────────────────────────────────────
+.coverage
+coverage.xml
+setup.cfg
+setup.py
+
+
+# ── Carpetas de trabajo personal ──────────────────────────────────────
+z. */
+z.*/
+
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+
+# ── Credenciales ──────────────────────────────────────────────────────
+.env
+.env.local
+secrets.json
+*_token.txt
+*.pem
+*.key
+
+
+# ── Excepciones (siempre incluir) ────────────────────────────────
+# Estas reglas DEBEN ser las últimas del archivo.
+# En .gitignore la última coincidencia gana; si una regla
+# de exclusión aparece después de una excepción, la anula.
+# Primero los directorios versionados, luego los archivos sueltos:
+# git no desciende a un directorio ignorado.
+!data/benchmark/
+!data/benchmark/**
+!data/conformidad/
+!data/conformidad/**
+!data/ground_truth/
+!data/ground_truth/**
+!docs/evidencia_importadores/
+!docs/evidencia_importadores/**
+!tests/data/
+!tests/data/**
+!tests/data_sintetica/
+!tests/data_sintetica/**
+!data/benchmark/benchmark_institucional.csv.gz
+!data/benchmark/benchmark_institucional.json
+!data/conformidad/catalogo_casos.csv
+!data/conformidad/dedup_pares.csv
+!data/conformidad/dedup_registros.csv
+!data/conformidad/diccionario.csv
+!data/conformidad/linkage_base_a.csv
+!data/conformidad/linkage_base_b.csv
+!data/conformidad/linkage_ground_truth.csv
+!data/conformidad/manifiesto.json
+!data/ground_truth/ground_truth_grande.csv
+!docs/evidencia_importadores/INVARIANTES.csv
+!docs/evidencia_importadores/METRICAS.csv
+!docs/evidencia_importadores/MUESTRA_REVISION.csv
+!docs/evidencia_importadores/PAISES.csv
+!docs/evidencia_importadores/PARAMETROS.csv
+!docs/evidencia_importadores/RECALL_BLOQUEO.csv
+!docs/evidencia_importadores/SENSIBILIDAD.csv
+!notebooks/01_deduplicar_una_base.ipynb
+!notebooks/02_cruzar_dos_bases.ipynb
+!notebooks/03_produccion_multifuente.ipynb
+!notebooks/04_multicampo_y_evaluacion.ipynb
+!notebooks/05_general_cruce_configurable.ipynb
+!notebooks/06_ejemplo_rues_x_exportaciones.ipynb
+!notebooks/06_orquestador_configurable.ipynb
+!notebooks/07_deduplicar_importadores_razon_social_pais.ipynb
+!notebooks/08_PUBLICAR_GITHUB.ipynb
+!tests/data/baseline_multicampo.json
+!tests/data/baseline_v0_9_0.json
+!tests/data/golden_truth.csv
+!tests/data/golden_truth_exhaustivo.csv
+!tests/data/golden_truth_exhaustivo_ciudad.csv
+!tests/data/golden_truth_sintetico_robusto.csv
+!tests/data/ground_truth_grande.csv
+!tests/data/oraculo_scorer_p1_1.pkl
+!tests/data_sintetica/dataset_sintetico_p2_extra_features.csv

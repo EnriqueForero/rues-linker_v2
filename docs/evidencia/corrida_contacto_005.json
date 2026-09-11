@@ -1,0 +1,84 @@
+{
+  "etiqueta": "contacto_005",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T15:34:13",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 3731,
+    "pares_verdaderos": 22073,
+    "tp": 21101,
+    "fp": 519,
+    "fn": 972,
+    "precision": 0.976,
+    "recall": 0.956,
+    "f1": 0.9659,
+    "b3_precision": 0.9918,
+    "b3_recall": 0.9679,
+    "b3_f1": 0.9797,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9885,
+      "SIN_NIT": 0.8344
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.834,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 62
+  },
+  "recursos": {
+    "segundos_total": 25.81,
+    "segundos_por_fase": {
+      "L1_prep": 0.34,
+      "L2_lsh_candidates": 20.18,
+      "L3_scoring": 3.37,
+      "L4_clustering": 0.17,
+      "L5_golden": 1.31
+    },
+    "rss_por_fase": {
+      "L1_prep": 240.7,
+      "L2_lsh_candidates": 338.3,
+      "L3_scoring": 427.2,
+      "L4_clustering": 361.2,
+      "L5_golden": 368.9
+    },
+    "rss_pico_mib": 419.0,
+    "rss_inicial_mib": 212.5,
+    "muestras_rss": 102,
+    "bytes_disco": 12713814,
+    "candidatos": 849825,
+    "pares_scoreados": 20721,
+    "candidatos_por_valido": 41.0
+  },
+  "huella": "c9d30223fd6ce9aed58e8d1f853e94469ede60009b59309e1357ddb6660b80ec",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": [
+      {
+        "column": "TELEFONO",
+        "type": "telefono_signed",
+        "weight": 0.05
+      },
+      {
+        "column": "EMAIL",
+        "type": "email_signed",
+        "weight": 0.05
+      }
+    ],
+    "ajustes_perfil": null,
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "C16 contacto peso 0.05"
+}

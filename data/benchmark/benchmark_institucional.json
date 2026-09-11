@@ -1,0 +1,81 @@
+{
+  "registros": 30486,
+  "grupos": 11478,
+  "pares_verdaderos": 46374,
+  "por_estrato": {
+    "CONTACTO": 12427,
+    "REAL": 9101,
+    "RUIDO": 7368,
+    "REAL_NEG": 1590
+  },
+  "por_fuente": {
+    "RUES": 7927,
+    "CRM": 7493,
+    "SUPERSOCIEDADES": 2854,
+    "DIAN": 2502,
+    "IMPORTACIONES": 2342,
+    "SOURCE_C": 1892,
+    "SOURCE_D": 1842,
+    "SOURCE_B": 1838,
+    "SOURCE_A": 1796
+  },
+  "por_regimen": {
+    "CON_ID": 22690,
+    "SIN_ID": 7796
+  },
+  "por_tipo_entidad": {
+    "empresa": 28226,
+    "persona": 2260
+  },
+  "por_caso": {
+    "positivo_con_nit": 10085,
+    "positivo_real": 9101,
+    "positivo_ruido_sin_id": 4934,
+    "positivo_sin_nit": 2299,
+    "positivo_ruido": 1828,
+    "negativo_diseñado": 606,
+    "negativo_homonimo_persona": 550,
+    "negativo_empresa_similar_sin_id": 520,
+    "negativo_empresa_similar_con_id": 520,
+    "negativo_intermediario": 33,
+    "negativo_generico": 10
+  },
+  "por_nivel_ruido": {
+    "SINTETICO": 12427,
+    "REAL": 10691,
+    "CLEAN": 2815,
+    "LIGHT": 2129,
+    "MODERATE": 1203,
+    "SEVERE": 717,
+    "EXTREME": 504
+  },
+  "cobertura_de_variables": {
+    "NIT": 0.7443,
+    "RAZON_SOCIAL": 1.0,
+    "DEPARTAMENTO": 0.3507,
+    "MUNICIPIO": 0.7583,
+    "CIIU": 0.1882,
+    "TAMANO": 0.1883,
+    "TELEFONO": 0.3308,
+    "DIRECCION": 0.3308,
+    "EMAIL": 0.3308
+  },
+  "tamano_de_grupo": {
+    "1": 1915,
+    "2": 5880,
+    "3": 1623,
+    "4": 940,
+    "5": 379,
+    "6": 183,
+    "7": 197,
+    "8": 69,
+    "9": 84,
+    "10": 30
+  },
+  "semilla": 42,
+  "saneamiento": {
+    "grupos_descartados_por_identificador_compartido": 50,
+    "grupos_descartados_por_nombre_compartido_entre_estratos": 58,
+    "grupos_descartados_total": 108
+  }
+}

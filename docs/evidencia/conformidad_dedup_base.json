@@ -1,0 +1,276 @@
+{
+  "etiqueta": "base",
+  "version": "0.22.4",
+  "escenario": "dedup",
+  "casos": [
+    {
+      "codigo": "C01",
+      "nombre": "Match exacto cross-source",
+      "tipo_esperado": "TP",
+      "pares": 3,
+      "aciertos": 3,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C02",
+      "nombre": "Match NIT idéntico, variación leve de nombre",
+      "tipo_esperado": "TP",
+      "pares": 6,
+      "aciertos": 6,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C03",
+      "nombre": "Match NIT idéntico, sufijo legal diferente",
+      "tipo_esperado": "TP",
+      "pares": 6,
+      "aciertos": 6,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C04",
+      "nombre": "Match NIT idéntico, nombre truncado/abreviado",
+      "tipo_esperado": "TP",
+      "pares": 3,
+      "aciertos": 3,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C05",
+      "nombre": "Match NIT idéntico, prefijo legal diferente",
+      "tipo_esperado": "TP",
+      "pares": 3,
+      "aciertos": 3,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C06",
+      "nombre": "Match NIT idéntico, ruido administrativo",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C07",
+      "nombre": "Match NIT idéntico, orden de palabras",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C08",
+      "nombre": "Match NIT formato diferente",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C09",
+      "nombre": "Match NIT cercano (dist≤3), nombre similar",
+      "tipo_esperado": "TP_DIFICIL",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": true,
+      "detalle": []
+    },
+    {
+      "codigo": "C11",
+      "nombre": "No-match: homónimos",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C12",
+      "nombre": "No-match: NIT idéntico, nombres muy diferentes",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C13",
+      "nombre": "No-match: persona vs empresa",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C14",
+      "nombre": "Cadena transitiva (A~B, B~C, A≠C)",
+      "tipo_esperado": "CHAIN",
+      "pares": 2,
+      "aciertos": 2,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C15",
+      "nombre": "Trusted source: RUES-RUES no agrupa",
+      "tipo_esperado": "TRUSTED",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C17",
+      "nombre": "Encoding/caracteres especiales",
+      "tipo_esperado": "TP",
+      "pares": 3,
+      "aciertos": 3,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C18",
+      "nombre": "Nombre muy corto (≤2 palabras)",
+      "tipo_esperado": "EDGE",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C19",
+      "nombre": "Nombre muy largo con ruido",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C21",
+      "nombre": "Grupo multi-NIT legítimo",
+      "tipo_esperado": "TP_DIFICIL",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": true,
+      "detalle": []
+    },
+    {
+      "codigo": "C22",
+      "nombre": "Grupo excesivamente grande",
+      "tipo_esperado": "ANOMALY",
+      "pares": 28,
+      "aciertos": 28,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "C23",
+      "nombre": "Score en frontera del threshold",
+      "tipo_esperado": "BOUNDARY",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "GEN",
+      "nombre": "Bloque generado",
+      "tipo_esperado": "MIXTO",
+      "pares": 69,
+      "aciertos": 69,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "MC01",
+      "nombre": "Multicampo salva ausencia de NIT",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "MC04",
+      "nombre": "Email genérico compartido (gmail)",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "MC05",
+      "nombre": "Teléfono call center compartido",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "MC06",
+      "nombre": "Geo idéntica (mismo edificio)",
+      "tipo_esperado": "FP_trap",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "MC07",
+      "nombre": "Misma entidad, sedes distintas",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    }
+  ],
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "nota": "",
+  "extra": {
+    "registros": 166,
+    "pares": 140
+  },
+  "pasa": true
+}

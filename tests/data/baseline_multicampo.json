@@ -1,0 +1,51 @@
+{
+  "descripcion": "Baseline del motor multicampo v0.10.0 (F2). GT sintético v3 (seed=42), esquema multicampo_completo (6 campos), bloqueo llaves exactas + LSH de nombre, clustering con restricciones de veto. Incluye el fix del normalizador (frases-sufijo completas, sin borrar palabras reales). NO regenerar sin acta.",
+  "generado": "2026-07-12",
+  "gt": {
+    "seed": 42,
+    "n_filas": 247,
+    "n_entidades": 135
+  },
+  "esquema": {
+    "nombre": "multicampo_completo",
+    "umbral_score": 0.6,
+    "min_concordancias": 3,
+    "campos": [
+      "NIT",
+      "RAZON_SOCIAL",
+      "TELEFONO",
+      "EMAIL",
+      "DIRECCION",
+      "CIUDAD"
+    ]
+  },
+  "bloqueo": {
+    "estrategias": [
+      "llave_exacta[NIT]",
+      "llave_exacta[EMAIL]",
+      "llave_exacta[TELEFONO]",
+      "lsh_texto[RAZON_SOCIAL]"
+    ],
+    "pc_combinada": 1.0,
+    "rr_combinada": 0.904579,
+    "n_candidatos": 2899
+  },
+  "calidad_pair_level": {
+    "precision": 1.0,
+    "recall": 0.89404,
+    "f1": 0.944056,
+    "tp": 135,
+    "fp": 0,
+    "fn": 16
+  },
+  "controles_negativos_mal_fusionados": 0,
+  "clustering": {
+    "respetar_vetos": true,
+    "grupos_formados": 146
+  },
+  "umbrales_gate_f2": {
+    "pc_minimo": 0.98,
+    "f1_minimo": 0.85,
+    "negativos_maximo": 0
+  }
+}

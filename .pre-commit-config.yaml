@@ -1,0 +1,57 @@
+# Pre-commit hooks para rues-linker.
+#
+# Instalación (una sola vez por clon):
+#   pip install pre-commit
+#   pre-commit install
+#
+# Esto activa los hooks ANTES de cada commit. Si algún hook falla,
+# el commit se aborta hasta que corrijas o re-corras (los autofixers
+# escriben directamente sobre los archivos staged).
+#
+# ⚠️ La versión de ruff aquí debe coincidir EXACTAMENTE con la del CI
+# (.github/workflows/ci.yml) y con la del extra [dev] en pyproject.toml.
+# Una diferencia de un solo carácter en line-length o un cambio de reglas
+# entre versiones puede romper CI silenciosamente. Cualquier upgrade debe
+# hacerse en los TRES sitios a la vez.
+
+repos:
+  # ─── Ruff: lint + format ──────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      # 1. ruff check --fix: corrige lo auto-corregible, falla en lo demás.
+      - id: ruff
+        args: [--fix]
+      # 2. ruff format: formatea (idempotente).
+      - id: ruff-format
+
+  # ─── Higiene básica de archivos ───────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'  # markdown puede usar 2 espacios al final como <br>
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']  # bloquea archivos > 1 MB (datos, modelos, etc.)
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # ─── mypy: type checking (v0.6.0+) ────────────────────────────────────
+  # Configurado en pyproject.toml [tool.mypy]. La mayoría de módulos
+  # heredados del notebook tienen `ignore_errors = True` mientras se
+  # refactorizan. Solo verifica módulos nuevos.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        files: ^src/record_linkage/
+        # Dependencias mínimas necesarias para que mypy resuelva imports.
+        # NO instalar todo `[dev]` aquí — sería lento y traería falsos positivos.
+        additional_dependencies:
+          - pandas-stubs
+          - types-requests
+        args: ["--config-file=pyproject.toml"]

@@ -1,0 +1,22 @@
+parametro,valor
+umbral_nombre,0.84
+alfa_idf,0.25
+prefix_weight,0.1
+max_diferencia_informativa,0
+min_informativos_compartidos,1
+frecuencia_max_distintivo,1000
+longitud_minima_token,3
+ignorar_numericos,True
+peso_token_generico,1.0
+lsh_permutaciones,128
+lsh_umbral,0.25
+lsh_ngram,3
+lsh_max_grupo,500
+max_candidatos,60000000
+peso_nombre,2.0
+peso_pais,1.0
+refinar_cohesion,True
+regla_nombre_final,cobertura
+paises_auditoria_bloqueo,"('GTM', 'NLD', 'DEU')"
+muestra_revision_por_banda,40
+semilla,42

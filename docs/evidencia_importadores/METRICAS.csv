@@ -1,0 +1,26 @@
+indicador,valor
+filas de entrada,211949
+"pares (razón social, país) únicos",211949
+"representantes (país, nombre normalizado)",114289
+importadores finales,99914
+empresas finales ignorando país,92537
+reducción de filas,52.9%
+filas con nombre reasignado,"75,317 (35.5%)"
+filas con país reasignado,"123,502 (58.3%)"
+grafías de país → canónicos,529 → 204
+grupos con 1 sola variante,"74,565 (74.6%)"
+grupos con 2–5 variantes,22995
+grupos con 6–14 variantes,2133
+grupos con 15+ variantes,221
+variantes en el grupo más grande,214
+cohesión mínima del peor grupo,0.84
+cohesión media de lo reasignado,0.9702
+pares candidatos evaluados,14062872
+segundos de ejecución,261
+grupos marcados para revisión,3629
+VALOR_FOB_USD_TOTAL total,"208,549,220,108"
+VALOR_FOB_USD_TOTAL conservado en GOLDEN,"208,549,220,108"
+diferencia (debe ser 0),'-0.0000
+concentración: top 10 importadores,20.61%
+concentración: top 100 importadores,45.62%
+VALOR_FOB_USD_TOTAL en grupos de revisión,39.4%

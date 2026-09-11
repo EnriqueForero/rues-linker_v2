@@ -1,0 +1,10 @@
+invariante,cumple,estado
+la correlativa tiene una fila por fila de entrada,True,OK
+ningún importador sin identificador,True,OK
+ningún nombre final vacío,True,OK
+ningún grupo cruza dos países,True,OK
+toda asignación cumple el umbral declarado,True,OK
+cada grupo tiene exactamente un nombre final,True,OK
+GOLDEN cubre todos los importadores,True,OK
+el país final está en el catálogo o marcado,True,OK
+VALOR_FOB_USD_TOTAL se conserva (dif. relativa 1.46e-16),True,OK

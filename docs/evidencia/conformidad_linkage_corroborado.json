@@ -1,0 +1,126 @@
+{
+  "etiqueta": "corroborado",
+  "version": "0.19.0",
+  "escenario": "linkage",
+  "casos": [
+    {
+      "codigo": "abreviado",
+      "nombre": "Cruce abreviado",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "comercial_vs_legal",
+      "nombre": "Nombre comercial vs legal",
+      "tipo_esperado": "TP",
+      "pares": 2,
+      "aciertos": 2,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "exacto",
+      "nombre": "Cruce exacto A↔B",
+      "tipo_esperado": "TP",
+      "pares": 3,
+      "aciertos": 3,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "nit_formato",
+      "nombre": "Cruce con NIT formateado",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "orden",
+      "nombre": "Cruce con orden alterado",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "prefijo_ci",
+      "nombre": "Cruce con prefijo C.I.",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "sin_nit_en_A",
+      "nombre": "Cruce sin NIT en A",
+      "tipo_esperado": "TP_DIFICIL",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": true,
+      "detalle": []
+    },
+    {
+      "codigo": "sufijo",
+      "nombre": "Cruce con sufijo distinto",
+      "tipo_esperado": "TP",
+      "pares": 2,
+      "aciertos": 2,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "tildes",
+      "nombre": "Cruce sin tildes",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "truncado",
+      "nombre": "Cruce con nombre truncado",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    },
+    {
+      "codigo": "typo",
+      "nombre": "Cruce con typo",
+      "tipo_esperado": "TP",
+      "pares": 1,
+      "aciertos": 1,
+      "pasa": true,
+      "frontera": false,
+      "detalle": []
+    }
+  ],
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "nota": "F3 activo",
+  "extra": {
+    "base_a": 20,
+    "base_b": 21
+  },
+  "pasa": true
+}

@@ -1,0 +1,123 @@
+{
+  "origen": "Ground_Truth_Multicampo_v1.xlsx",
+  "hojas": {
+    "dedup_registros": {
+      "filas": 166,
+      "columnas": [
+        "REG_ID",
+        "NIT",
+        "RAZON_SOCIAL",
+        "REPRESENTANTE_LEGAL",
+        "EMAIL",
+        "TELEFONO",
+        "DIRECCION",
+        "CIUDAD",
+        "DEPARTAMENTO",
+        "PAIS",
+        "LATITUD",
+        "LONGITUD",
+        "FECHA_CONSTITUCION",
+        "VENTAS_ANUALES_COP",
+        "EMPLEADOS",
+        "SECTOR",
+        "SRC",
+        "ES_TRUSTED",
+        "ID_GRUPO_ESPERADO",
+        "CASO_TIPO",
+        "NOTAS"
+      ],
+      "sha256": "fac4021c44ac034b"
+    },
+    "dedup_pares": {
+      "filas": 140,
+      "columnas": [
+        "PAR_ID",
+        "REG_ID_A",
+        "REG_ID_B",
+        "MATCH_ESPERADO",
+        "CASO_TIPO",
+        "RAZON"
+      ],
+      "sha256": "6ac613cf60c85bee"
+    },
+    "linkage_base_a": {
+      "filas": 20,
+      "columnas": [
+        "REG_ID_A",
+        "NIT",
+        "RAZON_SOCIAL",
+        "EMAIL",
+        "TELEFONO",
+        "DIRECCION",
+        "CIUDAD",
+        "DEPARTAMENTO",
+        "PAIS",
+        "LATITUD",
+        "LONGITUD",
+        "SECTOR",
+        "FUENTE",
+        "ENTIDAD_ID_ESPERADO",
+        "RETO",
+        "NOTAS"
+      ],
+      "sha256": "d0c9a55d5bf4dd00"
+    },
+    "linkage_base_b": {
+      "filas": 21,
+      "columnas": [
+        "REG_ID_B",
+        "NIT",
+        "RAZON_SOCIAL",
+        "EMAIL",
+        "TELEFONO",
+        "DIRECCION",
+        "CIUDAD",
+        "DEPARTAMENTO",
+        "PAIS",
+        "LATITUD",
+        "LONGITUD",
+        "SECTOR",
+        "FUENTE",
+        "ENTIDAD_ID_ESPERADO",
+        "RETO",
+        "NOTAS"
+      ],
+      "sha256": "cf135b17f2b7bc40"
+    },
+    "linkage_ground_truth": {
+      "filas": 15,
+      "columnas": [
+        "PAR_ID",
+        "REG_ID_A",
+        "REG_ID_B",
+        "ENTIDAD_ID",
+        "MATCH_ESPERADO",
+        "RETO",
+        "RAZON"
+      ],
+      "sha256": "0efabb828346a6c3"
+    },
+    "catalogo_casos": {
+      "filas": 43,
+      "columnas": [
+        "CODIGO",
+        "NOMBRE",
+        "DESCRIPCION",
+        "TIPO_ESPERADO",
+        "APLICA_A"
+      ],
+      "sha256": "5f4c69a2b862e3fb"
+    },
+    "diccionario": {
+      "filas": 22,
+      "columnas": [
+        "COLUMNA",
+        "DESCRIPCION",
+        "TIPO_DATO",
+        "MAPEA_A_TIPO_MOTOR",
+        "OBSERVACIONES"
+      ],
+      "sha256": "61a6c50ba8c8e2eb"
+    }
+  }
+}

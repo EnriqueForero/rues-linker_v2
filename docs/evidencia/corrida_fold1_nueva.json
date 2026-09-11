@@ -1,0 +1,77 @@
+{
+  "etiqueta": "fold1_nueva",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T16:07:07",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 4216,
+    "grupos_verdad": 1174,
+    "grupos_predichos": 1229,
+    "pares_verdaderos": 7492,
+    "tp": 7297,
+    "fp": 52,
+    "fn": 195,
+    "precision": 0.9929,
+    "recall": 0.974,
+    "f1": 0.9834,
+    "b3_precision": 0.9971,
+    "b3_recall": 0.98,
+    "b3_f1": 0.9885,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9877,
+      "SIN_NIT": 0.9283
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9877,
+      "positivo_sin_nit": 0.9281,
+      "negativo_generico": NaN,
+      "negativo_intermediario": 1.0
+    },
+    "fp_que_tocan_negativo": 0
+  },
+  "recursos": {
+    "segundos_total": 8.25,
+    "segundos_por_fase": {
+      "L1_prep": 0.18,
+      "L2_lsh_candidates": 5.73,
+      "L3_scoring": 1.36,
+      "L4_clustering": 0.09,
+      "L5_golden": 0.6
+    },
+    "rss_por_fase": {
+      "L1_prep": 219.1,
+      "L2_lsh_candidates": 261.6,
+      "L3_scoring": 437.4,
+      "L4_clustering": 322.5,
+      "L5_golden": 325.8
+    },
+    "rss_pico_mib": 418.1,
+    "rss_inicial_mib": 210.7,
+    "muestras_rss": 32,
+    "bytes_disco": 3134509,
+    "candidatos": 175588,
+    "pares_scoreados": 7123,
+    "candidatos_por_valido": 24.7
+  },
+  "huella": "db56634de667abf50326b2f46cfe5dd60557657649a5180632636faeb64614aa",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "lsh_threshold": 0.45,
+      "similitud_compacta_min": 0.96,
+      "idf_weight_blend_sin_identificador": 0.05
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "pliegue 1, config calibrada"
+}

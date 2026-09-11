@@ -1,0 +1,4 @@
+pais,nombres,pares_totales,pares_verdaderos,candidatos,PC_recall_bloqueo,RR_reduccion
+GTM,2681,3592540,301,206932,1,0.9424
+NLD,2630,3457135,478,152540,1,0.955877
+DEU,1683,1415403,230,35754,1,0.974739

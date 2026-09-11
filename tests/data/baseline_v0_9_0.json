@@ -1,0 +1,244 @@
+{
+  "version": "0.7.3",
+  "sprint": "0.9.0",
+  "profile": "deduplication_standard",
+  "mode": "BALANCEADO",
+  "gt_path": "data/ground_truth/ground_truth_grande.csv",
+  "gt_rows": 12427,
+  "gt_groups": 3486,
+  "tolerance": {
+    "f1": 0.02,
+    "precision": 0.03,
+    "recall": 0.03
+  },
+  "slices": {
+    "global": {
+      "informative": true,
+      "measured": {
+        "precision": 0.7589,
+        "recall": 0.9662,
+        "f1": 0.8501
+      },
+      "thresholds": {
+        "precision_min": 0.7289,
+        "recall_min": 0.9362,
+        "f1_min": 0.8301
+      },
+      "context": {
+        "n_records": 12427,
+        "tp": 21326,
+        "fp": 6776,
+        "fn": 747
+      }
+    },
+    "regimen=SIN_NIT": {
+      "informative": true,
+      "measured": {
+        "precision": 0.4029,
+        "recall": 0.9809,
+        "f1": 0.5712
+      },
+      "thresholds": {
+        "precision_min": 0.3729,
+        "recall_min": 0.9509,
+        "f1_min": 0.5512
+      },
+      "context": {
+        "n_records": 2342,
+        "tp": 4572,
+        "fp": 6776,
+        "fn": 89
+      }
+    },
+    "regimen=CON_NIT": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.9622,
+        "f1": 0.9807
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.9322,
+        "f1_min": 0.9607
+      },
+      "context": {
+        "n_records": 10085,
+        "tp": 16754,
+        "fp": 0,
+        "fn": 658
+      }
+    },
+    "caso=positivo_sin_nit": {
+      "informative": true,
+      "measured": {
+        "precision": 0.4904,
+        "recall": 0.9809,
+        "f1": 0.6539
+      },
+      "thresholds": {
+        "precision_min": 0.4604,
+        "recall_min": 0.9509,
+        "f1_min": 0.6339
+      },
+      "context": {
+        "n_records": 2299,
+        "tp": 4563,
+        "fp": 4741,
+        "fn": 89
+      }
+    },
+    "caso=positivo_con_nit": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.9622,
+        "f1": 0.9807
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.9322,
+        "f1_min": 0.9607
+      },
+      "context": {
+        "n_records": 10085,
+        "tp": 16754,
+        "fp": 0,
+        "fn": 658
+      }
+    },
+    "caso=negativo_intermediario": {
+      "informative": true,
+      "measured": {
+        "precision": 0.017,
+        "recall": 1.0,
+        "f1": 0.0335
+      },
+      "thresholds": {
+        "precision_min": 0.0,
+        "recall_min": 0.97,
+        "f1_min": 0.0135
+      },
+      "context": {
+        "n_records": 33,
+        "tp": 9,
+        "fp": 519,
+        "fn": 0
+      }
+    },
+    "caso=negativo_generico": {
+      "informative": true,
+      "measured": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "thresholds": {
+        "precision_min": 0.0,
+        "recall_min": 0.0,
+        "f1_min": 0.0
+      },
+      "context": {
+        "n_records": 10,
+        "tp": 0,
+        "fp": 4,
+        "fn": 0
+      }
+    },
+    "fuente=CRM": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.9694,
+        "f1": 0.9845
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.9394,
+        "f1_min": 0.9645
+      },
+      "context": {
+        "n_records": 2541,
+        "tp": 1077,
+        "fp": 0,
+        "fn": 34
+      }
+    },
+    "fuente=DIAN": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.965,
+        "f1": 0.9822
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.935,
+        "f1_min": 0.9622
+      },
+      "context": {
+        "n_records": 2502,
+        "tp": 1048,
+        "fp": 0,
+        "fn": 38
+      }
+    },
+    "fuente=IMPORTACIONES": {
+      "informative": true,
+      "measured": {
+        "precision": 0.4029,
+        "recall": 0.9809,
+        "f1": 0.5712
+      },
+      "thresholds": {
+        "precision_min": 0.3729,
+        "recall_min": 0.9509,
+        "f1_min": 0.5512
+      },
+      "context": {
+        "n_records": 2342,
+        "tp": 4572,
+        "fp": 6776,
+        "fn": 89
+      }
+    },
+    "fuente=RUES": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.9567,
+        "f1": 0.9779
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.9267,
+        "f1_min": 0.9579
+      },
+      "context": {
+        "n_records": 2485,
+        "tp": 1017,
+        "fp": 0,
+        "fn": 46
+      }
+    },
+    "fuente=SUPERSOCIEDADES": {
+      "informative": true,
+      "measured": {
+        "precision": 1.0,
+        "recall": 0.9643,
+        "f1": 0.9818
+      },
+      "thresholds": {
+        "precision_min": 0.97,
+        "recall_min": 0.9343,
+        "f1_min": 0.9618
+      },
+      "context": {
+        "n_records": 2557,
+        "tp": 1106,
+        "fp": 0,
+        "fn": 41
+      }
+    }
+  }
+}

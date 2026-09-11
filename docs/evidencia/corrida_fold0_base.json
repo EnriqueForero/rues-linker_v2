@@ -1,0 +1,73 @@
+{
+  "etiqueta": "fold0_base",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T16:06:42",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 4171,
+    "grupos_verdad": 1167,
+    "grupos_predichos": 1260,
+    "pares_verdaderos": 7516,
+    "tp": 7187,
+    "fp": 20,
+    "fn": 329,
+    "precision": 0.9972,
+    "recall": 0.9562,
+    "f1": 0.9763,
+    "b3_precision": 0.9982,
+    "b3_recall": 0.9673,
+    "b3_f1": 0.9825,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9893,
+      "SIN_NIT": 0.8172
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9893,
+      "positivo_sin_nit": 0.817,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 3
+  },
+  "recursos": {
+    "segundos_total": 5.49,
+    "segundos_por_fase": {
+      "L1_prep": 0.19,
+      "L2_lsh_candidates": 3.62,
+      "L3_scoring": 0.7,
+      "L4_clustering": 0.08,
+      "L5_golden": 0.62
+    },
+    "rss_por_fase": {
+      "L1_prep": 226.2,
+      "L2_lsh_candidates": 258.4,
+      "L3_scoring": 364.7,
+      "L4_clustering": 342.7,
+      "L5_golden": 346.0
+    },
+    "rss_pico_mib": 368.7,
+    "rss_inicial_mib": 215.2,
+    "muestras_rss": 21,
+    "bytes_disco": 2309475,
+    "candidatos": 102942,
+    "pares_scoreados": 7035,
+    "candidatos_por_valido": 14.6
+  },
+  "huella": "ff5115fa382a074e090cd1558de2fd34401da7b9a3a434fb88af47df9e79712a",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": null,
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "pliegue 0, config base"
+}

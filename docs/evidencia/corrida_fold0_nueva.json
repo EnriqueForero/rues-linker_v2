@@ -1,0 +1,77 @@
+{
+  "etiqueta": "fold0_nueva",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T16:06:51",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 4171,
+    "grupos_verdad": 1167,
+    "grupos_predichos": 1230,
+    "pares_verdaderos": 7516,
+    "tp": 7325,
+    "fp": 3,
+    "fn": 191,
+    "precision": 0.9996,
+    "recall": 0.9746,
+    "f1": 0.9869,
+    "b3_precision": 0.9995,
+    "b3_recall": 0.9789,
+    "b3_f1": 0.9891,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9893,
+      "SIN_NIT": 0.9127
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9893,
+      "positivo_sin_nit": 0.9127,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 3
+  },
+  "recursos": {
+    "segundos_total": 7.55,
+    "segundos_por_fase": {
+      "L1_prep": 0.2,
+      "L2_lsh_candidates": 5.2,
+      "L3_scoring": 1.15,
+      "L4_clustering": 0.09,
+      "L5_golden": 0.63
+    },
+    "rss_por_fase": {
+      "L1_prep": 218.4,
+      "L2_lsh_candidates": 262.2,
+      "L3_scoring": 413.0,
+      "L4_clustering": 282.1,
+      "L5_golden": 285.2
+    },
+    "rss_pico_mib": 410.6,
+    "rss_inicial_mib": 214.3,
+    "muestras_rss": 29,
+    "bytes_disco": 2992339,
+    "candidatos": 163848,
+    "pares_scoreados": 7131,
+    "candidatos_por_valido": 23.0
+  },
+  "huella": "2258edad95ce59872f0d18a1049a0761bd324d14e7a42fa95884a17156e9bf0e",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "lsh_threshold": 0.45,
+      "similitud_compacta_min": 0.96,
+      "idf_weight_blend_sin_identificador": 0.05
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "pliegue 0, config calibrada"
+}

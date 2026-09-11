@@ -1,0 +1,108 @@
+{
+  "etiqueta": "f2_base",
+  "version": "0.18.0",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T17:59:48",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 10201,
+    "grupos_verdad": 3845,
+    "grupos_predichos": 4435,
+    "pares_verdaderos": 15367,
+    "tp": 12988,
+    "fp": 233,
+    "fn": 2379,
+    "precision": 0.9824,
+    "recall": 0.8452,
+    "f1": 0.9086,
+    "b3_precision": 0.9938,
+    "b3_recall": 0.9222,
+    "b3_f1": 0.9566,
+    "recall_por_regimen": {
+      "CON_ID": 0.9694,
+      "SIN_ID": 0.689
+    },
+    "recall_por_caso": {
+      "positivo_real": 0.8787,
+      "negativo_homonimo_persona": NaN,
+      "positivo_con_nit": 0.9911,
+      "positivo_sin_nit": 0.7971,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN,
+      "negativo_empresa_similar_sin_id": NaN,
+      "negativo_empresa_similar_con_id": NaN,
+      "negativo_diseñado": 0.9906,
+      "positivo_ruido": 0.9973,
+      "positivo_ruido_sin_id": 0.6578
+    },
+    "fp_que_tocan_negativo": 35,
+    "calidad_por_estrato": {
+      "REAL": {
+        "precision": 1.0,
+        "recall": 0.8787,
+        "f1": 0.9354,
+        "pares": 1673.0
+      },
+      "REAL_NEG": {
+        "precision": NaN,
+        "recall": NaN,
+        "f1": NaN
+      },
+      "CONTACTO": {
+        "precision": 0.996,
+        "recall": 0.9535,
+        "f1": 0.9743,
+        "pares": 7822.0
+      },
+      "RUIDO": {
+        "precision": 0.9651,
+        "recall": 0.6914,
+        "f1": 0.8056,
+        "pares": 5872.0
+      }
+    },
+    "macro_f1": 0.9051
+  },
+  "recursos": {
+    "segundos_total": 8.68,
+    "segundos_por_fase": {
+      "L1_prep": 0.35,
+      "L2_lsh_candidates": 5.85,
+      "L3_scoring": 0.74,
+      "L4_clustering": 0.12,
+      "L5_golden": 1.32
+    },
+    "rss_por_fase": {
+      "L1_prep": 243.6,
+      "L2_lsh_candidates": 305.6,
+      "L3_scoring": 399.6,
+      "L4_clustering": 387.0,
+      "L5_golden": 387.2
+    },
+    "rss_pico_mib": 387.2,
+    "rss_inicial_mib": 225.5,
+    "muestras_rss": 34,
+    "bytes_disco": 4369708,
+    "candidatos": 133662,
+    "pares_scoreados": 13049,
+    "candidatos_por_valido": 10.2
+  },
+  "huella": "d211b9410233745a8725427606bd7d63f596275c751b69bbada71e0080926285",
+  "especificacion": {
+    "datos": "data/benchmark/benchmark_institucional.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "dv_es_mismo_identificador": false
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "pliegue 2 sin DV"
+}

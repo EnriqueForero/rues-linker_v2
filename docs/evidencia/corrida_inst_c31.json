@@ -1,0 +1,108 @@
+{
+  "etiqueta": "inst_c31",
+  "version": "0.19.0",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T19:55:31",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 30486,
+    "grupos_verdad": 11478,
+    "grupos_predichos": 13069,
+    "pares_verdaderos": 46374,
+    "tp": 38252,
+    "fp": 2505,
+    "fn": 8122,
+    "precision": 0.9385,
+    "recall": 0.8249,
+    "f1": 0.878,
+    "b3_precision": 0.9844,
+    "b3_recall": 0.9244,
+    "b3_f1": 0.9534,
+    "recall_por_regimen": {
+      "CON_ID": 0.9768,
+      "SIN_ID": 0.6523
+    },
+    "recall_por_caso": {
+      "positivo_real": 0.9319,
+      "negativo_homonimo_persona": NaN,
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.834,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN,
+      "negativo_empresa_similar_sin_id": NaN,
+      "negativo_empresa_similar_con_id": NaN,
+      "positivo_ruido": 0.9828,
+      "negativo_diseñado": 0.9926,
+      "positivo_ruido_sin_id": 0.6026
+    },
+    "fp_que_tocan_negativo": 287,
+    "calidad_por_estrato": {
+      "REAL": {
+        "precision": 1.0,
+        "recall": 0.9319,
+        "f1": 0.9648,
+        "pares": 4996.0
+      },
+      "REAL_NEG": {
+        "precision": NaN,
+        "recall": NaN,
+        "f1": NaN
+      },
+      "CONTACTO": {
+        "precision": 0.976,
+        "recall": 0.956,
+        "f1": 0.9659,
+        "pares": 22073.0
+      },
+      "RUIDO": {
+        "precision": 0.8786,
+        "recall": 0.6472,
+        "f1": 0.7454,
+        "pares": 19305.0
+      }
+    },
+    "macro_f1": 0.892
+  },
+  "recursos": {
+    "segundos_total": 41.38,
+    "segundos_por_fase": {
+      "L1_prep": 0.93,
+      "L2_lsh_candidates": 29.54,
+      "L3_scoring": 6.3,
+      "L4_clustering": 0.33,
+      "L5_golden": 3.62
+    },
+    "rss_por_fase": {
+      "L1_prep": 292.8,
+      "L2_lsh_candidates": 457.9,
+      "L3_scoring": 504.2,
+      "L4_clustering": 477.3,
+      "L5_golden": 477.3
+    },
+    "rss_pico_mib": 477.9,
+    "rss_inicial_mib": 239.7,
+    "muestras_rss": 163,
+    "bytes_disco": 20172427,
+    "candidatos": 1029966,
+    "pares_scoreados": 41737,
+    "candidatos_por_valido": 24.7
+  },
+  "huella": "1e365ba81c4df45e410dd09154cafef1d38e96d9fb2846998260c10ad69cbe31",
+  "especificacion": {
+    "datos": "data/benchmark/benchmark_institucional.csv.gz",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "llaves_bloqueo": "TELEFONO:telefono,EMAIL:email,DIRECCION:texto"
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "C31: bloqueo por telefono, correo y direccion"
+}

@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Full release quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" -c constraints/runtime-validado.txt
+          python -m pip check
+
+      - name: Verify tag and package version coherence
+        run: |
+          python scripts/verificar_coherencia_version.py
+          test "${GITHUB_REF_NAME}" = "v$(python -c 'import record_linkage; print(record_linkage.__version__)')"
+
+      - name: Lint and formatting
+        run: |
+          ruff check src/ tests/ scripts/
+          ruff format --check src/ tests/ scripts/
+
+      - name: Blocking type ring
+        run: |
+          mypy --config-file=pyproject.toml \
+            src/record_linkage/api.py \
+            src/record_linkage/config \
+            src/record_linkage/exporters \
+            src/record_linkage/ingestion \
+            src/record_linkage/matching/motor_bloqueo.py \
+            src/record_linkage/matching/normalizadores.py \
+            src/record_linkage/matching/pipeline_integration.py \
+            src/record_linkage/pipeline/fingerprints.py \
+            src/record_linkage/pipeline/orchestrator.py \
+            src/record_linkage/pipeline/state_manager.py \
+            src/record_linkage/utils
+
+      - name: Security gates
+        run: |
+          bandit -q -r src -lll
+          pip-audit
+
+      - name: Full versioned-data suite
+        run: |
+          pytest tests/ -q --tb=short -m "not canario" \
+            --cov=record_linkage --cov-report=term --cov-fail-under=60
+
+  build:
+    name: Build and verify distributions
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+
+      - name: Smoke-test wheel in isolation
+        run: |
+          python -m venv /tmp/rues-release-smoke
+          /tmp/rues-release-smoke/bin/pip install dist/*.whl
+          /tmp/rues-release-smoke/bin/python -I scripts/smoke_installed_release.py --expected-version 0.16.0
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-pypi:
+    name: Publish once to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rues-linker
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-distributions
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          attestations: true
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-distributions
+          path: dist/
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

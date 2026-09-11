@@ -1,0 +1,77 @@
+{
+  "etiqueta": "combo_b",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T15:54:55",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 3651,
+    "pares_verdaderos": 22073,
+    "tp": 21484,
+    "fp": 291,
+    "fn": 589,
+    "precision": 0.9866,
+    "recall": 0.9733,
+    "f1": 0.9799,
+    "b3_precision": 0.9951,
+    "b3_recall": 0.9785,
+    "b3_f1": 0.9868,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9885,
+      "SIN_NIT": 0.9165
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.9164,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 111
+  },
+  "recursos": {
+    "segundos_total": 39.84,
+    "segundos_por_fase": {
+      "L1_prep": 0.29,
+      "L2_lsh_candidates": 30.87,
+      "L3_scoring": 6.9,
+      "L4_clustering": 0.18,
+      "L5_golden": 1.22
+    },
+    "rss_por_fase": {
+      "L1_prep": 240.7,
+      "L2_lsh_candidates": 327.4,
+      "L3_scoring": 466.1,
+      "L4_clustering": 435.7,
+      "L5_golden": 435.8
+    },
+    "rss_pico_mib": 461.7,
+    "rss_inicial_mib": 212.8,
+    "muestras_rss": 158,
+    "bytes_disco": 19055325,
+    "candidatos": 1391044,
+    "pares_scoreados": 20965,
+    "candidatos_por_valido": 66.4
+  },
+  "huella": "6120d649cf36382b86add0c7fe366451c6c836865952312a7aa073346ac9f193",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "lsh_threshold": 0.45,
+      "idf_weight_blend_sin_identificador": 0.05,
+      "similitud_compacta_min": 0.96
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "barrido de calibracion"
+}

@@ -1,0 +1,264 @@
+[build-system]
+# PEP 639 (`project.license` SPDX + `license-files`) requiere setuptools 77+.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rues-linker"
+version = "0.22.4"
+description = "Pipeline de deduplicación y record linkage para fuentes empresariales colombianas (RUES, DIAN, CRM, SUPERSOCIEDADES)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Enrique Forero" },
+]
+keywords = [
+    "record-linkage",
+    "deduplication",
+    "lsh",
+    "minhash",
+    "snowflake",
+    "rues",
+    "colombia",
+    "empresas",
+    "entity-resolution",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Natural Language :: Spanish",
+]
+
+# Dependencias detectadas con AST a partir del notebook fuente.
+# Versiones mínimas conservadoras: las del Colab de junio 2025.
+dependencies = [
+    "pandas>=2.0",
+    # NumPy 2.4+ publica stubs con sintaxis PEP 695 que mypy no puede
+    # analizar bajo el target contractual Python 3.10. El cap mantiene el
+    # gate de tipos reproducible en 3.10-3.12 y coincide con el runtime validado.
+    "numpy>=1.24,<2.4",
+    "pyarrow>=14.0",
+    "scipy>=1.10",
+    "scikit-learn>=1.3,<2",   # cap major: cambios de algoritmo alteran el clasificador
+    "networkx>=3.0,<4",       # cap major: componentes conexos = corazón del clustering
+    # Pin <2.0: datasketch 2.0 cambia el esquema de firmas MinHash (mismo
+    # input+seed → hashvalues distintas) y colapsa la precisión SIN_NIT
+    # (F1 global 0.563→0.250 medido). Ver CHANGELOG [0.7.6].
+    "datasketch>=1.6,<2.0",
+    "rapidfuzz>=3.0,<4",      # cap major: similitud de strings = corazón del scoring
+    "psutil>=5.9",
+    "pytz>=2023.3",
+    "tqdm>=4.65",
+    "openpyxl>=3.1",
+    "h5py>=3.9",
+    # Backend en disco para staging, compactación exacta y expansión diferida.
+    "duckdb>=1.4,<2",
+]
+
+[project.urls]
+# Repositorio de la línea v2. La distribución sigue llamándose "rues-linker":
+# cambiarle el nombre rompería `importlib.metadata.version("rues-linker")` en
+# `__init__.py`, en `scripts/verificar_coherencia_version.py` y en los siete
+# notebooks. El repositorio y la distribución son cosas distintas.
+Homepage = "https://github.com/EnriqueForero/rues-linker_v2"
+Repository = "https://github.com/EnriqueForero/rues-linker_v2"
+Changelog = "https://github.com/EnriqueForero/rues-linker_v2/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/EnriqueForero/rues-linker_v2/issues"
+
+[project.optional-dependencies]
+snowflake = [
+    "snowflake-connector-python>=3.5",
+    "snowflake-snowpark-python>=1.10",
+]
+# Visualización y reportes gráficos (no necesarios para el pipeline core).
+viz = [
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "plotly>=5.15",
+    "upsetplot>=0.8",
+]
+# Optimización de hiperparámetros (Optuna). Solo si se calibra.
+optimization = [
+    "optuna>=3.3",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    # hypothesis: property-based testing usado por tests/test_comparadores_tipos.py
+    # (propiedades universales de los comparadores por tipo, F2.2). Es dependencia
+    # de test, no de runtime; sin ella pytest falla al colectar ese módulo.
+    "hypothesis>=6.90",
+    # Validación formal de schema de los notebooks en la misma venv de CI.
+    "nbformat>=5.10,<6",
+    # tomli: backport de tomllib para Python 3.10 (usado por
+    # scripts/verificar_coherencia_version.py, que corre en el CI de 3.10).
+    "tomli>=2.0; python_version < '3.11'",
+    "ruff==0.15.13",
+    "mypy>=1.8,<2",
+    "pandas-stubs",
+    "types-requests",
+    "types-pytz",
+    "build>=1,<2",
+    "twine>=5,<7",
+    "bandit[toml]>=1.7,<2",
+    "pip-audit>=2.7,<3",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "plotly>=5.15",
+    "upsetplot>=0.8",
+    "optuna>=3.3",
+]
+# Conveniencia: instala todo.
+all = [
+    "rues-linker[snowflake,viz,optimization]",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# PEP 561: el marcador py.typed debe viajar dentro del wheel para que
+# mypy/pyright reconozcan que el paquete provee type hints.
+record_linkage = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["build", "dist", ".venv", "data"]
+
+[tool.ruff.lint]
+# Reglas estrictas: pycodestyle, pyflakes, isort, bugbear, pyupgrade, ruff-specific, simplify.
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "SIM"]
+
+# Ignorados con justificación documentada:
+ignore = [
+    # E501: line-too-long. El código del notebook tiene líneas largas que se preservan
+    # tal cual; reescribirlas alteraría diffs. ruff format ajusta lo que puede.
+    "E501",
+    # B008: function call in default. Patrón usado en algunas firmas heredadas.
+    "B008",
+    # B904: raise from. El notebook tiene raise sin from; agregarlos sería un cambio
+    # de comportamiento (oculta tracebacks anidados).
+    "B904",
+    # RUF012: Mutable class attributes should be `typing.ClassVar`. Algunas clases del
+    # notebook usan dicts/sets como atributos de clase; refactorizar requiere cambiar
+    # firmas. Documentar como deuda técnica.
+    "RUF012",
+    # SIM108: usar operador ternario. Aplicado donde mejora; algunos `if/else` del
+    # notebook son intencionalmente verbosos para legibilidad.
+    "SIM108",
+    # SIM117: combine with statements. Idem.
+    "SIM117",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exporta símbolos: F401 (imported but unused) es esperado.
+"__init__.py" = ["F401"]
+# Tests pueden usar fixtures que parecen unused. RUF002 silenciado por
+# caracteres unicode legítimos en docstrings (×, –, etc.).
+"tests/*" = ["F401", "F811", "RUF002"]
+# scripts/: imports tras sys.path.insert son legítimos (E402); RUF002 igual que tests.
+"scripts/*" = ["E402", "RUF002", "SIM113"]
+# Código heredado del notebook fuente (src/record_linkage/): silencia warnings
+# de estilo que requerirían reescribir lógica de negocio. Cada regla aquí está
+# justificada en MIGRATION_LOG.md sección 9. Errores REALES (F-rules excepto F401/F811)
+# siguen activos.
+"src/record_linkage/**/*.py" = [
+    "E701",   # multiple-statements-on-one-line-colon — patrón del notebook
+    "E722",   # bare-except — patrón defensivo del notebook
+    "E402",   # module-import-not-at-top — algunos try/except imports legítimos
+    "SIM102", # collapsible-if — cosmético
+    "SIM105", # suppressible-exception — patrón del notebook
+    "SIM115", # open-file-with-context-handler — refactor requiere cambio de flujo
+    "B019",   # cached-instance-method — patrón documentado del notebook
+    "RUF001", # ambiguous-unicode-character-string — strings en español
+    "RUF002", # ambiguous-unicode-character-docstring — docstrings en español
+    "RUF003", # ambiguous-unicode-character-comment — comentarios en español
+    # F601 (multi-value-repeated-key-literal) ELIMINADO en v2.2.0: el bug real
+    # de clave duplicada en processing/text.py fue corregido (ver MIGRATION_LOG
+    # §11.3). La regla F601 vuelve a estar activa para detectar regresiones.
+]
+# Archivos NUEVOS del refactor (config/, credentials, etc.): reglas completas.
+# No se listan: heredan el set global estricto.
+
+[tool.ruff.lint.isort]
+known-first-party = ["record_linkage"]
+combine-as-imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+# Marcadores registrados. Requerido por --strict-markers: cualquier
+# @pytest.mark.<nombre> NO declarado aquí provoca un error de colección.
+# 'canario' marca tests que dependen de datos externos (variable de entorno
+# dedicada) no disponibles en Colab; CI los ejecuta cuando corresponde.
+markers = [
+    "canario: tests que dependen de datos/recursos externos (se excluyen en Colab con -m 'not canario').",
+    "slow: tests que corren el pipeline completo (>30s); se excluyen en CI rápido con -m 'not slow'.",
+]
+
+[tool.coverage.run]
+source = ["record_linkage"]
+branch = false
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    # Reportes opcionales (extras [viz]): no se cubren por default
+    "src/record_linkage/reporting/dashboard.py",
+    "src/record_linkage/reporting/suite.py",
+    "src/record_linkage/reporting/visualizer.py",
+    "src/record_linkage/reporting/reports.py",
+]
+
+[tool.coverage.report]
+# Baseline verificado para v0.13.0. Subir gradualmente sin excluir código core.
+# Ver docs/AUDITORIA_SPRINT_0_6_0.md.
+fail_under = 60
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    # __repr__ y similares no críticos
+    "def __repr__",
+    "def __str__",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+# Strict mode desactivado por ahora (deuda técnica heredada del notebook).
+# Roadmap: activar gradualmente módulo por módulo.
+strict_optional = false
+# Solo verificar paquete propio
+files = ["src/record_linkage"]
+# Omitir tests por ahora (refactor pendiente)
+exclude = ["tests/", "build/", "dist/", "docs/", "scripts/", "notebooks/"]
+
+[[tool.mypy.overrides]]
+# Heredados del notebook: tolerancia mientras no se refactorizan
+module = [
+    "record_linkage.pipeline.linkage_pipeline",
+    "record_linkage.deduplication.unified",
+    "record_linkage.reporting.*",
+]
+ignore_errors = true

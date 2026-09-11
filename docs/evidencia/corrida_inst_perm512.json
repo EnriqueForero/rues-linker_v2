@@ -1,0 +1,108 @@
+{
+  "etiqueta": "inst_perm512",
+  "version": "0.19.0",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T19:58:41",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 30486,
+    "grupos_verdad": 11478,
+    "grupos_predichos": 13095,
+    "pares_verdaderos": 46374,
+    "tp": 38104,
+    "fp": 2511,
+    "fn": 8270,
+    "precision": 0.9382,
+    "recall": 0.8217,
+    "f1": 0.8761,
+    "b3_precision": 0.9844,
+    "b3_recall": 0.9228,
+    "b3_f1": 0.9526,
+    "recall_por_regimen": {
+      "CON_ID": 0.9773,
+      "SIN_ID": 0.6449
+    },
+    "recall_por_caso": {
+      "positivo_real": 0.9319,
+      "negativo_homonimo_persona": NaN,
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.8199,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN,
+      "negativo_empresa_similar_sin_id": NaN,
+      "negativo_empresa_similar_con_id": NaN,
+      "positivo_ruido": 0.9892,
+      "negativo_diseñado": 0.997,
+      "positivo_ruido_sin_id": 0.597
+    },
+    "fp_que_tocan_negativo": 289,
+    "calidad_por_estrato": {
+      "REAL": {
+        "precision": 1.0,
+        "recall": 0.9319,
+        "f1": 0.9648,
+        "pares": 4996.0
+      },
+      "REAL_NEG": {
+        "precision": NaN,
+        "recall": NaN,
+        "f1": NaN
+      },
+      "CONTACTO": {
+        "precision": 0.9796,
+        "recall": 0.953,
+        "f1": 0.9661,
+        "pares": 22073.0
+      },
+      "RUIDO": {
+        "precision": 0.873,
+        "recall": 0.643,
+        "f1": 0.7405,
+        "pares": 19305.0
+      }
+    },
+    "macro_f1": 0.8905
+  },
+  "recursos": {
+    "segundos_total": 59.62,
+    "segundos_por_fase": {
+      "L1_prep": 0.77,
+      "L2_lsh_candidates": 48.47,
+      "L3_scoring": 5.66,
+      "L4_clustering": 0.31,
+      "L5_golden": 3.98
+    },
+    "rss_por_fase": {
+      "L1_prep": 291.2,
+      "L2_lsh_candidates": 628.5,
+      "L3_scoring": 505.8,
+      "L4_clustering": 437.3,
+      "L5_golden": 459.1
+    },
+    "rss_pico_mib": 625.1,
+    "rss_inicial_mib": 240.0,
+    "muestras_rss": 236,
+    "bytes_disco": 19202337,
+    "candidatos": 946849,
+    "pares_scoreados": 41631,
+    "candidatos_por_valido": 22.7
+  },
+  "huella": "cb11b9dc878ab189e941ccd24420dd5b447f43ba6aa26d1da75798b7d23399de",
+  "especificacion": {
+    "datos": "data/benchmark/benchmark_institucional.csv.gz",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "lsh_permutations": 504
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "504 permutaciones: curva S mas afilada al mismo umbral"
+}

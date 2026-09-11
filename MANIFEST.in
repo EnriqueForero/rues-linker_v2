@@ -1,0 +1,44 @@
+# Controla qué archivos entran en el sdist (.tar.gz). El wheel se rige por
+# las reglas de setuptools.package-data en pyproject.toml.
+
+# Documentación y metadatos en la raíz
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml
+recursive-include constraints *.txt
+# Los notebooks son ejemplos fuente y deben resolver los enlaces del README
+# dentro del sdist. El wheel permanece deliberadamente limitado al runtime.
+recursive-include notebooks *.ipynb *.md
+
+# Marcador de tipos (PEP 561) — debe viajar dentro del paquete
+include src/record_linkage/py.typed
+
+# Excluir artefactos que NUNCA deben empaquetarse
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude *.so
+prune .github
+prune .pytest_cache
+prune .ruff_cache
+prune build
+prune dist
+prune scripts
+prune tests
+
+# Los datasets de test y oráculos NO van en la distribución instalable
+# (son para desarrollo, no para el usuario final del paquete).
+prune data/ground_truth_backup
+recursive-exclude tests *
+
+# v0.18.0 — la documentación de decisiones y el banco de pruebas viajan con
+# el paquete: sin el conjunto de referencia no se puede reproducir ninguna
+# cifra publicada, y sin los ADR no se sabe por qué el código está así.
+include CLAUDE.md
+recursive-include docs *.md
+recursive-include docs/evidencia *.json
+recursive-include data/ground_truth *.csv
+recursive-include data/benchmark *.csv.gz *.json
+recursive-include data/conformidad *.csv *.json
+recursive-include scripts *.py

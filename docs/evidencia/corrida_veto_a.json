@@ -1,0 +1,77 @@
+{
+  "etiqueta": "veto_a",
+  "version": "0.17.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-08-29T16:02:48",
+  "entorno": {
+    "python": "3.11.15",
+    "pandas": "3.0.2",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v22-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 3687,
+    "pares_verdaderos": 22073,
+    "tp": 21141,
+    "fp": 1314,
+    "fn": 932,
+    "precision": 0.9415,
+    "recall": 0.9578,
+    "f1": 0.9496,
+    "b3_precision": 0.9859,
+    "b3_recall": 0.9696,
+    "b3_f1": 0.9777,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9885,
+      "SIN_NIT": 0.843
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9885,
+      "positivo_sin_nit": 0.8426,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 467
+  },
+  "recursos": {
+    "segundos_total": 40.44,
+    "segundos_por_fase": {
+      "L1_prep": 0.28,
+      "L2_lsh_candidates": 31.63,
+      "L3_scoring": 6.94,
+      "L4_clustering": 0.15,
+      "L5_golden": 1.16
+    },
+    "rss_por_fase": {
+      "L1_prep": 240.7,
+      "L2_lsh_candidates": 327.8,
+      "L3_scoring": 464.4,
+      "L4_clustering": 451.2,
+      "L5_golden": 450.3
+    },
+    "rss_pico_mib": 452.9,
+    "rss_inicial_mib": 212.9,
+    "muestras_rss": 160,
+    "bytes_disco": 19023938,
+    "candidatos": 1391044,
+    "pares_scoreados": 20868,
+    "candidatos_por_valido": 66.7
+  },
+  "huella": "f5e5ff34f775423db935302bc826267f13232041d366992281b9c6953704fde8",
+  "especificacion": {
+    "datos": "/tmp/w17/rl17/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "lsh_threshold": 0.45,
+      "similitud_compacta_min": 0.96,
+      "idf_veto_min_sin_identificador": 0.3
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "veto IDF corregido"
+}
