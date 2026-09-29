@@ -112,6 +112,10 @@ dev = [
     "twine>=5,<7",
     "bandit[toml]>=1.7,<2",
     "pip-audit>=2.7,<3",
+    # pip-audit audita el ENTORNO, no solo el paquete: el setuptools que trae la
+    # imagen de CI (79.0.1) tiene PYSEC-2026-3447 y la compuerta de seguridad
+    # fallaba en cada corrida. Se exige la versión corregida (0.23.0).
+    "setuptools>=83.0.0",
     "matplotlib>=3.7",
     "seaborn>=0.12",
     "plotly>=5.15",

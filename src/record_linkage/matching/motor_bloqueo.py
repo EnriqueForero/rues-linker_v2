@@ -365,8 +365,9 @@ class LSHTexto:
                         continue
                     claves = idx[:-1] * union.n + idx[1:]  # árbol de conectividad
                 else:
-                    a, b = _triangulo_superior(k)
-                    claves = idx[a] * union.n + idx[b]  # todos los pares del grupo
+                    # ``b`` es la banda del bucle exterior: no se pisa con el índice del par.
+                    fila_par, col_par = _triangulo_superior(k)
+                    claves = idx[fila_par] * union.n + idx[col_par]  # todos los pares del grupo
                 _validar_presupuesto(n_pares, len(claves), max_pares, self.nombre)
                 union.agregar(claves)
                 n_pares += len(claves)

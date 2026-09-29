@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -525,7 +526,7 @@ class _ManifestFileLock:
                 stream.write(b"\0")
                 stream.flush()
             stream.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":  # mypy solo tipa msvcrt bajo esta guardia
                 import msvcrt
 
                 while True:
@@ -551,7 +552,7 @@ class _ManifestFileLock:
         self._stream = None
         try:
             stream.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":  # mypy solo tipa msvcrt bajo esta guardia
                 import msvcrt
 
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
