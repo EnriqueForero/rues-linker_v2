@@ -69,6 +69,15 @@ def _conteo_por_grupo(df: pd.DataFrame, columna: str) -> pd.Series:
     return df.groupby(columna, dropna=False).size()
 
 
+def _estratos(indice: pd.Index) -> set[object]:
+    """Etiquetas de los estratos con NaN como un valor comparable.
+
+    Con pandas 2 (matriz 3.10) cada ``nan`` del índice es un objeto distinto y
+    ``{nan} == {nan}`` es falso; con pandas 3 coincidía por casualidad.
+    """
+    return {"<NaN>" if pd.isna(v) else v for v in indice.tolist()}
+
+
 # ---------------------------------------------------------------------------
 # La regla única: muestra_estratificada
 # ---------------------------------------------------------------------------
@@ -88,7 +97,7 @@ def test_muestra_estratificada_conserva_columnas_y_todos_los_grupos() -> None:
     assert list(muestra.columns) == list(df.columns)
     assert len(muestra) <= 20
     por_grupo = _conteo_por_grupo(muestra, "SRC")
-    assert set(por_grupo.index.tolist()) == set(_conteo_por_grupo(df, "SRC").index.tolist())
+    assert _estratos(por_grupo.index) == _estratos(_conteo_por_grupo(df, "SRC").index)
     assert (por_grupo >= 1).all()
     # Proporción: el estrato NaN (90 %) domina la muestra.
     assert por_grupo.loc[np.nan] >= 15
@@ -187,9 +196,9 @@ def test_load_smart_sample_golden_con_src_nan_no_queda_vacia(
     assert not muestra.empty
     assert list(muestra.columns) == list(golden_60k.columns)
     assert len(muestra) <= sample_size
-    grupos_origen = set(_conteo_por_grupo(golden_60k, "SRC").index.tolist())
+    grupos_origen = _estratos(_conteo_por_grupo(golden_60k, "SRC").index)
     grupos_muestra = _conteo_por_grupo(muestra, "SRC")
-    assert set(grupos_muestra.index.tolist()) == grupos_origen
+    assert _estratos(grupos_muestra.index) == grupos_origen
     assert (grupos_muestra >= 1).all()
     assert grupos_muestra.loc[np.nan] > 0.9 * len(muestra)
     # Lo que el constructor dejó en la instancia es esa misma muestra.
