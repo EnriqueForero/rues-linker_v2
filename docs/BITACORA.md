@@ -1545,4 +1545,4 @@ el mismo patrón que F1 retiró de la suite y los reportes. Queda para el pulido
 | determinismo | `tests/test_determinismo_linkage_procesos.py` en verde (dos procesos, `PYTHONHASHSEED` distinto, misma huella) |
 | trinquete | PASA; el techo baja: `except` sin relanzar 121 → 103, mypy 108 → 102 (complejidad ≥ 20: 11, tras sacar `_resolver_matching_profile` de `linkage()`, que había subido a 23) |
 | 139k con reporting (`linkage(carpeta_salida=…)`) | carpeta del estándar publicada y leída (`validar()` ok): 139.028 filas, 54.450 grupos, 18 archivos del estándar (Excel completo de 139k filas, 10 figuras), 19 artefactos de L6, `omitidos: []`, L6 48,6 s |
-| CI | en curso en el PR de la rama; el resultado se anota al cierre |
+| CI | **verde** en `646651d` ([run 37533795449](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/37533795449)): lint con trinquete estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete de deuda, build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 102 errores = techo) |
