@@ -133,6 +133,15 @@ identificadores distintos se reúnen **solo si** hay evidencia independiente
 fuerte —correo y teléfono idénticos— y el nombre es casi igual. Resuelve C09 y
 C21 sin perder ni una de las seis trampas de falso positivo.
 
+> **Regla, no flag opcional.** C09 y C21 **solo pasan con la corroboración por
+> contacto activa** (`--corroborar`); sin ella reprueban y cuentan como frontera
+> (deuda declarada, la corrida sigue en PASA). Desde esta versión la evidencia
+> publicada registra con qué se midió: `conformidad_{dedup,linkage}_base.json`
+> es la corrida **sin** corroborar y `..._corroborado.json` la corrida **con**,
+> y cada JSON lleva `corroborar` (true/false) y `camino` (`dedupe_esquema`).
+> Una evidencia sin ese campo no dice qué midió; `test_conformidad_evidencia.py`
+> lo exige.
+
 **Advertencia honesta sobre el parámetro.** `min_corroborantes=2` se eligió por
 criterio de riesgo, no porque esta suite lo respalde: con 1 también da
 F1 = 1,0000 y ninguna trampa se cae. Lo que sostiene las trampas no es el

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -32,6 +33,7 @@ sys.path.insert(0, str(RAIZ / "src"))
 
 from record_linkage import __version__
 from record_linkage.evaluation.conformidad import (
+    CAMINO_POR_DEFECTO,
     ConjuntoConformidad,
     Informe,
     cargar_conjunto,
@@ -137,7 +139,15 @@ def correr_dedup(
         datos[columna] = pd.to_numeric(datos[columna], errors="coerce")
     resultado = dedupe_esquema(datos, _esquema_conformidad(con_geo, corroborar))
     grupos = resultado.correlativa["ID_GRUPO"].to_numpy()
-    return evaluar_dedup(conjunto, grupos, etiqueta=etiqueta, version=__version__, nota=nota)
+    return evaluar_dedup(
+        conjunto,
+        grupos,
+        etiqueta=etiqueta,
+        version=__version__,
+        nota=nota,
+        corroborar=corroborar,
+        camino=CAMINO_POR_DEFECTO,
+    )
 
 
 def correr_linkage(
@@ -169,10 +179,19 @@ def correr_linkage(
         izquierda = bloque.loc[bloque["_LADO"] == "A", "REG_ID"].astype(str)
         derecha = bloque.loc[bloque["_LADO"] == "B", "REG_ID"].astype(str)
         pares.update((x, y) for x in izquierda for y in derecha)
-    return evaluar_linkage(conjunto, pares, etiqueta=etiqueta, version=__version__, nota=nota)
+    return evaluar_linkage(
+        conjunto,
+        pares,
+        etiqueta=etiqueta,
+        version=__version__,
+        nota=nota,
+        corroborar=corroborar,
+        camino=CAMINO_POR_DEFECTO,
+    )
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """Punto de entrada. `argv` permite correrlo desde una prueba sin subproceso."""
     analizador = argparse.ArgumentParser(description=__doc__)
     # El conjunto se ancla a la raíz del repositorio, no a la ubicación del
     # paquete: este script vive en el repositorio y siempre sabe dónde está.
@@ -189,12 +208,15 @@ def main() -> int:
     analizador.add_argument(
         "--corroborar",
         action="store_true",
-        help="activa F3: dos identificadores distintos se reúnen si email Y teléfono coinciden",
+        help=(
+            "activa F3: dos identificadores distintos se reúnen si email Y teléfono "
+            "coinciden. C09 y C21 solo pasan con esto; el JSON de evidencia registra el flag"
+        ),
     )
     analizador.add_argument("--nota", default="")
     analizador.add_argument("--evidencia", type=Path, default=RAIZ / "docs" / "evidencia")
     analizador.add_argument("--importar", type=Path, default=None)
-    args = analizador.parse_args()
+    args = analizador.parse_args(argv)
 
     if args.importar is not None:
         importar(args.importar, args.datos)
