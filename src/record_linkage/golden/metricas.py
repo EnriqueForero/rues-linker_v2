@@ -22,6 +22,14 @@ corrige la causa en el motor usando estas funciones; ``salida.completar`` las
 usa como red para reparar —y declarar en el manifiesto— cualquier fila que
 llegue sin métricas. Con F1.1 integrada la reparación es un no-op.
 
+Paridad con el motor (F1.9, revisión): ``tests/test_contrato_salida.py::
+test_paridad_metricas_con_el_motor_*`` compara el golden que deja L5 (antes de
+completar) con estas funciones, columna a columna, sobre el sintético y sobre
+``dataset_sintetico_p2_extra_features.csv``. Hoy la regla sigue escrita dos
+veces (aquí y en ``generator.py``): F1.1 debe hacer que
+``_process_batch_vectorized`` y ``_add_quality_metrics`` importen de AQUÍ,
+para que quede una sola copia. No se toca en F1.9 (regla 4: nada en L1…L5).
+
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.23.0
 """
 

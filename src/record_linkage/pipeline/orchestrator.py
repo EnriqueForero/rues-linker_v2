@@ -288,6 +288,14 @@ class Orchestrator:
         return self.config.get("profiles", {}).get(self.config.get("profile", ""), {})
 
     @property
+    def prioridad_fuentes(self) -> list[str]:
+        """Prioridad de fuentes del golden (L5): las claves de
+        ``source_quality_weights`` del perfil o, si no hay, el orden de las
+        fuentes. Una sola regla; ``api.py`` la lee de aquí."""
+        prioridad = list(self.profile.get("source_quality_weights", {}).keys())
+        return prioridad or list(self.sources.keys())
+
+    @property
     def output_dir(self) -> Path:
         """Directorio de salida principal (L6_reporting)."""
         return self.dirs[Phase.L6_REPORTING]
@@ -1770,9 +1778,7 @@ class Orchestrator:
                 self.log.warning(f"   ⚠️ {reporte_cl.resumen()}")
 
         # Prioridad de fuentes
-        priority = list(self.profile.get("source_quality_weights", {}).keys())
-        if not priority:
-            priority = list(self.sources.keys())
+        priority = self.prioridad_fuentes
         self.log.debug(f"   📝 Prioridad de fuentes: {priority}")
 
         # Generar Golden Records

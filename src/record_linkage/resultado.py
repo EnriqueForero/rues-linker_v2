@@ -200,10 +200,14 @@ class ResultadoLinkage:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _cumple_familia(dtype: Any, familia: str) -> bool:
+def _cumple_familia(serie: pd.Series, familia: str) -> bool:
     tipos = pd.api.types
+    dtype = serie.dtype
     if familia == "texto":
-        return bool(tipos.is_string_dtype(dtype) or tipos.is_object_dtype(dtype))
+        if tipos.is_object_dtype(dtype):
+            # ``object`` admite cualquier cosa: hay que mirar lo que contiene.
+            return tipos.infer_dtype(serie, skipna=True) in {"string", "empty"}
+        return bool(tipos.is_string_dtype(dtype))
     if familia == "entero":
         return bool(tipos.is_integer_dtype(dtype))
     if familia == "decimal":
@@ -238,7 +242,7 @@ def _validar_columnas(
         if col.nombre not in df.columns:
             continue
         familia = contrato.familia_tipo(col.tipo)
-        if not _cumple_familia(df[col.nombre].dtype, familia):
+        if not _cumple_familia(df[col.nombre], familia):
             fallos.append(
                 f"{tabla}: la columna {col.nombre} debe ser {familia} ({col.tipo}) y es "
                 f"{df[col.nombre].dtype}."
@@ -338,7 +342,9 @@ def _validar_golden(g: pd.DataFrame, c: pd.DataFrame) -> list[str]:
             fallos.append(f"golden: ID_ENTIDAD tiene {nulos} nulo(s).")
         if "ID_GRUPO" in g.columns and {"ID_GRUPO", "ID_ENTIDAD"} <= set(c.columns) and len(c):
             esperado = c.drop_duplicates("ID_GRUPO").set_index("ID_GRUPO")["ID_ENTIDAD"]
-            actual = g.set_index("ID_GRUPO")["ID_ENTIDAD"]
+            # Un ID_GRUPO repetido en el golden ya se reportó arriba; aquí se
+            # compara una fila por grupo para no reventar con índice duplicado.
+            actual = g.drop_duplicates("ID_GRUPO").set_index("ID_GRUPO")["ID_ENTIDAD"]
             comunes = actual.index.intersection(esperado.index)
             distintos = int((actual.loc[comunes] != esperado.loc[comunes]).sum())
             if distintos:

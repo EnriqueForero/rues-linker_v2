@@ -78,11 +78,15 @@ COLUMNAS_DICCIONARIO: tuple[str, ...] = (
 )
 
 #: Una sola definición de CONFIANZA, repetida en el diccionario de cada tabla.
+#: La regla vigente del golden (golden/metricas.py::confianza_de_grupo, la
+#: misma de GoldenRecordGeneratorV7), con sus tres umbrales exactos.
 _DEFINICION_CONFIANZA = (
-    "ALTA · MEDIA · BAJA, una sola definición: ALTA si el grupo adopta un identificador "
-    "único (NIT_VARIATIONS = 1) y lo respaldan dos o más fuentes; BAJA si trae más de "
-    "un identificador, más de una fuente discrepante o un solo registro sin "
-    "identificador; MEDIA en el resto. F2.12 unifica la regla entre caminos."
+    "ALTA · MEDIA · BAJA, una sola definición (la regla que produce los datos): "
+    "ALTA si el grupo tiene un solo identificador (NIT_VARIATIONS = 1) confirmado por dos "
+    "o más fuentes (SOURCES_COUNT >= 2); si no, MEDIA si tiene a lo sumo dos "
+    "identificadores (NIT_VARIATIONS <= 2) y es pequeño (RECORD_COUNT <= 5); BAJA en el "
+    "resto. Un registro solo sin identificador queda en MEDIA. F2.12 unifica la regla "
+    "entre caminos."
 )
 
 
@@ -213,7 +217,7 @@ GOLDEN: tuple[ColumnaContrato, ...] = (
     _c(
         "SOURCES_LIST",
         pa.string(),
-        "Fuentes presentes en el grupo, separadas por coma.",
+        "Fuentes presentes en el grupo, ordenadas y separadas por '|'.",
         "LISTA_FUENTES",
     ),
     _c("SOURCES_COUNT", pa.int64(), "Número de fuentes distintas en el grupo.", "N_FUENTES"),
@@ -470,6 +474,13 @@ def _tipo_de_serie(serie: pd.Series) -> str:
 
 _SIGNIFICADOS_MOTOR_EXTRA: dict[str, str] = {
     "REGIMEN_AUTO": "Ruta por la que pasó el registro en dedupe(): CON_NIT o SIN_NIT.",
+    # dedupe() no renombra las columnas del usuario: las copia a las canónicas
+    # y la fuente conserva las suyas (col_nit/col_name quedan como columnas
+    # de la fuente, con su nombre). linkage()/link() sí renombran.
+    "NIT": "Copia canónica de la columna de identificador del usuario (col_nit, p. ej. "
+    "IDENT) que hace dedupe(); la columna original sigue en la correlativa.",
+    "RAZON_SOCIAL": "Copia canónica de la columna de nombre del usuario (col_name, p. ej. "
+    "NOMBRE) que hace dedupe(); la columna original sigue en la correlativa.",
     "INPUT_ROW_COUNT": "Filas de entrada del grupo contando los duplicados exactos colapsados "
     "(collapse_exact_duplicates=True).",
 }

@@ -554,12 +554,9 @@ def linkage(
         # fuente y métricas de calidad.
         from .golden.generator import GoldenRecordGeneratorV7
 
-        priority = list(orchestrator.profile.get("source_quality_weights", {}).keys())
-        if not priority:
-            priority = list(orchestrator.sources.keys())
-        refined_golden, refined_correlative = GoldenRecordGeneratorV7(priority, config).generate(
-            refined_correlative
-        )
+        refined_golden, refined_correlative = GoldenRecordGeneratorV7(
+            orchestrator.prioridad_fuentes, config
+        ).generate(refined_correlative)
         refined_golden = refined_golden.drop(columns=[matcher_id], errors="ignore")
         refined_correlative = refined_correlative.drop(columns=[matcher_id], errors="ignore")
 
@@ -605,8 +602,7 @@ def linkage(
         col_nit="NIT",
         canonicos=canonicos,
         score_par_previo=info_score_par,
-        prioridad_fuentes=list(orchestrator.profile.get("source_quality_weights", {}).keys())
-        or source_order,
+        prioridad_fuentes=orchestrator.prioridad_fuentes,
     )
     metricas: dict[str, Any] = {
         "n_registros": len(correlativa),
@@ -640,6 +636,9 @@ def _armar_resultado(
         "retiradas_del_entregable": list(reporte.columnas_tecnicas_retiradas),
         "quedan_en": str(dir_trabajo),
     }
+    # Cuánto costó hashear las entradas (medido: 0,18 s en 30.486 filas,
+    # 1,4 s en 457k); queda en las métricas para que el banco lo vea.
+    metricas["segundos_manifiesto"] = float(manifiesto.get("segundos_huellas", 0.0))
     revision = contrato.revision_vacia()
     diccionario = contrato.diccionario(
         {"correlativa": correlativa, "golden": golden, "enlaces": None, "revision": revision},
@@ -705,20 +704,26 @@ def _manifiesto(
     llamada interna (``link`` → ``linkage``) en vez de volver a leer millones
     de filas para el mismo hash.
     """
+    import time
     from datetime import datetime, timezone
 
     hash_par = hashlib.sha256(
         json.dumps(parametros, sort_keys=True, default=str).encode()
     ).hexdigest()[:16]
     if entradas_listas is None:
-        entradas_listas = {
-            nombre: {
+        entradas_listas = {}
+        for nombre, d in entradas.items():
+            t0 = time.perf_counter()
+            huella = _huella_dataset(d)
+            entradas_listas[nombre] = {
                 "filas": len(d),
                 "columnas": list(d.columns),
-                "huella": _huella_dataset(d),
+                "huella": huella,
+                "segundos_huella": round(time.perf_counter() - t0, 3),
             }
-            for nombre, d in entradas.items()
-        }
+    segundos_huellas = round(
+        sum(float(e.get("segundos_huella", 0.0)) for e in entradas_listas.values()), 3
+    )
     return {
         "funcion": funcion,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -726,6 +731,7 @@ def _manifiesto(
         "parametros": parametros,
         "hash_parametros": hash_par,
         "entradas": entradas_listas,
+        "segundos_huellas": segundos_huellas,
         "versiones": _versiones_entorno(),
     }
 
@@ -869,7 +875,11 @@ def dedupe(
         col_id,
         {"df": [str(c) for c in df.columns]},
         col_nit=col_nit,
-        canonicos={col_name: "RAZON_SOCIAL", col_nit: "NIT"},
+        # deduplicate_unified NO renombra col_nit/col_name: los copia a
+        # NIT/RAZON_SOCIAL y la fuente conserva los suyos. Sin canónicos,
+        # columnas_fuente y el diccionario dicen la verdad (ver contrato.
+        # _SIGNIFICADOS_MOTOR_EXTRA para las copias).
+        canonicos=None,
     )
     return _armar_resultado(
         correlativa, None, metricas, manifiesto, reporte, Path(output_dir), ["df"]
@@ -998,6 +1008,7 @@ def link(
     # función, los parámetros y las métricas de cruce.
     for clave in ("contrato", "completar", "dir_trabajo", "columnas_tecnicas"):
         manifiesto[clave] = res.manifiesto[clave]
+    metricas["segundos_manifiesto"] = res.metricas.get("segundos_manifiesto", 0.0)
     res.metricas = metricas
     res.manifiesto = manifiesto
     return res

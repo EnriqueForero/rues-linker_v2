@@ -61,8 +61,10 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from collections.abc import Mapping, Sequence
+import warnings
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +72,7 @@ import numpy as np
 import pandas as pd
 
 from .. import contrato
+from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
 from ..matching.identificadores import LONGITUD_MINIMA_BASE, bases_canonicas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
 
@@ -127,6 +130,8 @@ class ReporteCompletar:
         golden: filas huérfanas retiradas y columnas pegadas retiradas.
         columnas_tecnicas_retiradas: las de ``COLUMNAS_TECNICAS`` presentes.
         columnas_fuente: las columnas de la fuente en el orden de salida.
+        prioridad_fuentes: prioridad con la que se repara ``PRIMARY_SOURCE``
+            (la del Orchestrator: ``source_quality_weights`` del perfil).
     """
 
     renombres: dict[str, str] = field(default_factory=dict)
@@ -139,6 +144,7 @@ class ReporteCompletar:
     golden: dict[str, Any] = field(default_factory=dict)
     columnas_tecnicas_retiradas: list[str] = field(default_factory=list)
     columnas_fuente: list[str] = field(default_factory=list)
+    prioridad_fuentes: list[str] = field(default_factory=list)
 
     def a_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +158,7 @@ class ReporteCompletar:
             "golden": dict(self.golden),
             "columnas_tecnicas_retiradas": list(self.columnas_tecnicas_retiradas),
             "columnas_fuente": list(self.columnas_fuente),
+            "prioridad_fuentes": list(self.prioridad_fuentes),
         }
 
 
@@ -242,19 +249,30 @@ def anexar_score_par(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _nombre_efectivo(col: str, presentes: Collection[str], canonicos: Mapping[str, str]) -> str:
+    """Cómo se llama hoy en la correlativa una columna de la fuente.
+
+    El Orchestrator renombra ``col_nit``/``col_name``/``col_ciudad`` a las
+    canónicas (``NIT``…) en la ingesta; ``deduplicate_unified`` (dedupe) NO
+    renombra: copia. El canónico se aplica solo si la columna original ya
+    no está: así el entregable dice de verdad qué columnas son del usuario.
+    """
+    return col if col in presentes else canonicos.get(col, col)
+
+
 def _columnas_de_fuentes(
     fuentes: Mapping[str, pd.DataFrame | Sequence[str]],
     canonicos: Mapping[str, str] | None,
+    presentes: Collection[str],
 ) -> list[str]:
     """Unión de las columnas de las fuentes, en orden de primera aparición,
-    con los nombres canónicos que el motor les dio (``col_name`` →
-    ``RAZON_SOCIAL``…)."""
+    con el nombre que tienen en la correlativa (``_nombre_efectivo``)."""
     canonicos = dict(canonicos or {})
     vistas: dict[str, None] = {}
     for fuente in fuentes.values():
         columnas = fuente.columns if isinstance(fuente, pd.DataFrame) else fuente
         for col in columnas:
-            vistas.setdefault(canonicos.get(str(col), str(col)), None)
+            vistas.setdefault(_nombre_efectivo(str(col), presentes, canonicos), None)
     return list(vistas)
 
 
@@ -281,6 +299,19 @@ def _resolver_colisiones(
             no_recuperables.append(col)
     if renombres:
         correl = correl.rename(columns=renombres)
+    if no_recuperables:
+        sugerido = ", ".join(f"'{c}' → '{c}{_SUFIJO_COLISION}'" for c in no_recuperables)
+        warnings.warn(
+            mensaje_accionable(
+                f"la fuente trae {no_recuperables}, columna(s) que el motor escribe con ese "
+                f"mismo nombre y ya sobrescribió.",
+                "el valor original de la fuente no está en la correlativa (queda anotado en "
+                "manifiesto['completar']['colisiones_no_recuperables']).",
+                f"si necesita conservarlo, renombre en la fuente antes de correr: {sugerido}.",
+            ),
+            UserWarning,
+            stacklevel=4,
+        )
     return correl, renombres, no_recuperables
 
 
@@ -485,8 +516,6 @@ def _reparar_metricas_golden(
     y cuáles. Con la causa corregida no hay filas que reparar y esto es un
     no-op.
     """
-    from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
-
     presentes = [m for m in contrato.COLUMNAS_METRICAS_GOLDEN if m in g.columns]
     if not presentes:
         return {"n": 0}
@@ -509,8 +538,6 @@ def _reparar_metricas_golden(
     else:
         g.loc[sin_metricas, "REQUIRES_REVIEW"] = revisar
     if "CREATED_AT" in g.columns:
-        from datetime import datetime, timezone
-
         ahora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         g.loc[sin_metricas & g["CREATED_AT"].isna(), "CREATED_AT"] = ahora
     return {
@@ -567,13 +594,21 @@ def completar_correlativa(
         raise ContratoSalidaError(
             [f"correlativa del motor sin {faltantes}: no se puede completar el contrato."]
         )
-    columnas_fuente = _columnas_de_fuentes(fuentes, canonicos)
+    canonicos = dict(canonicos or {})
+    columnas_fuente = _columnas_de_fuentes(fuentes, canonicos, set(correl.columns))
     correl, renombres, no_recuperables = _resolver_colisiones(correl, columnas_fuente)
     columnas_fuente = [renombres.get(c, c) for c in columnas_fuente]
 
     info_grupo = _recodificar_id_grupo(correl)
 
-    id_registro, info_id = _asignar_id_registro(correl, col_id)
+    # col_id se da con el nombre de la fuente; en la correlativa puede
+    # llamarse distinto (renombre canónico del motor o <col>_FUENTE por
+    # colisión). Se resuelve aquí; el reporte lleva el nombre efectivo.
+    col_id_efectivo: str | None = None
+    if col_id is not None:
+        nombre = _nombre_efectivo(col_id, correl.columns, canonicos)
+        col_id_efectivo = renombres.get(nombre, nombre)
+    id_registro, info_id = _asignar_id_registro(correl, col_id_efectivo)
     repetidos = int(id_registro.duplicated().sum())
     if repetidos:
         raise ContratoSalidaError(
@@ -614,6 +649,7 @@ def completar_correlativa(
         np.where(registro_valido & grupo_con_nit & misma_base, "identificador", "nombre"),
     )
 
+    prioridad = list(prioridad_fuentes or fuentes)
     info_golden: dict[str, Any] = {}
     if golden is None:
         correl["CONFIANZA"] = pd.Series(pd.NA, index=correl.index, dtype="string")
@@ -623,9 +659,7 @@ def completar_correlativa(
             "CONFIANZA queda nula.",
         }
     else:
-        golden, info_golden = _completar_golden(
-            golden, correl, columnas_fuente, prioridad_fuentes or list(fuentes)
-        )
+        golden, info_golden = _completar_golden(golden, correl, columnas_fuente, prioridad)
         confianza = golden.set_index("ID_GRUPO")["CONFIANZA"]
         correl["CONFIANZA"] = correl["ID_GRUPO"].map(confianza)
         info_confianza = {"origen": "golden.CONFIANZA (la del grupo)"}
@@ -649,5 +683,6 @@ def completar_correlativa(
         golden=info_golden,
         columnas_tecnicas_retiradas=tecnicas,
         columnas_fuente=fuente_salida,
+        prioridad_fuentes=prioridad,
     )
     return correl, golden, reporte
