@@ -8,8 +8,9 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
 * la carpeta ``<AAAA-MM-DD_HHMM>_<nombre>/`` tiene la forma EXACTA del
   estándar (lista fija de rutas relativas);
 * ``manifest.json`` lista cada artefacto con su SHA-256 y tamaño reales y
-  trae los bloques del estándar (insumos, conteos, invariantes, parámetros,
-  tiempos y RSS por fase, renombres, prioridad de fuentes, omitidos);
+  trae los bloques del estándar (insumos, conteos, invariantes, parámetros
+  —llamada y efectivos del motor, con la prioridad de fuentes—, métricas,
+  tiempos y RSS por fase, renombres, omitidos);
 * dos escrituras del mismo resultado con la misma ``marca_tiempo`` producen
   las mismas huellas en los artefactos deterministas (parquet, csv). Los
   ``.xlsx`` quedan fuera de la comparación: openpyxl escribe la fecha de
@@ -188,7 +189,17 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
         assert art["sha256"] == _sha256(archivo), ruta
     # Bloques del estándar.
     assert texto["insumos"] == res.manifiesto["entradas"]
-    assert texto["parametros"] == res.manifiesto["parametros"]
+    # F1.12: la llamada y los parámetros efectivos del motor, en un solo bloque.
+    assert texto["parametros"]["llamada"] == res.manifiesto["parametros"]
+    assert texto["parametros"]["perfil"] == res.manifiesto["parametros"]["profile"]
+    assert set(texto["parametros"]) == {
+        "llamada",
+        "perfil",
+        "lsh",
+        "scoring",
+        "pesos",
+        "prioridad_fuentes",
+    }
     assert texto["conteos"]["filas"] == len(res.correlativa)
     assert texto["conteos"]["grupos"] == res.correlativa["ID_GRUPO"].nunique()
     assert (
@@ -200,7 +211,9 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
     assert set(texto["tiempos_por_fase"]) >= {"L1_prep", "L5_golden"}
     assert set(texto["rss_por_fase"]) >= {"L1_prep", "L5_golden"}
     assert texto["renombres"] == {"ID_REGISTRO": "ID_REGISTRO_FUENTE"}
-    assert texto["prioridad_fuentes"] == res.manifiesto["completar"]["prioridad_fuentes"]
+    prioridad = res.manifiesto["completar"]["prioridad_fuentes"]
+    assert texto["parametros"]["prioridad_fuentes"] == prioridad
+    assert texto["metricas"]["candidatos"] and texto["metricas"]["pares_puntuados"]
     assert texto["omitidos"] == []
     assert texto["corrida"]["funcion"] == "linkage"
     assert isinstance(Manifiesto.desde_dict(texto), Manifiesto)
@@ -226,6 +239,29 @@ def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path)
         "excel/golden.xlsx",
     ]
     assert all("excel=False" in o["motivo"] for o in man.omitidos)
+
+
+def test_sin_configuracion_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """Un resultado sin ``manifiesto["configuracion"]`` (una ruta que no pasa por
+    el Orchestrator) no se repara en silencio: las claves del motor van vacías,
+    la llamada queda intacta y ``omitidos`` dice qué pasó y qué hacer."""
+    sin = _con(res)
+    sin.manifiesto.pop("configuracion")
+    man = escribir_resultado(sin, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert man.parametros["llamada"] == res.manifiesto["parametros"]
+    assert man.parametros["perfil"] is None
+    assert man.parametros["prioridad_fuentes"] == []
+    assert man.parametros["lsh"] == {} and man.parametros["scoring"] == {}
+    assert man.parametros["pesos"] == {}
+    omitidos = [o for o in man.omitidos if not o["artefacto"].startswith("excel/")]
+    assert [o["artefacto"] for o in omitidos] == ["parametros.perfil"]
+    motivo = omitidos[0]["motivo"]
+    assert "no trae la configuración" in motivo
+    assert "linkage(carpeta_salida=" in motivo and "parametros_motor(config).a_dict()" in motivo
+    # Lo mismo que se escribió se vuelve a leer.
+    texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
+    assert texto["parametros"]["perfil"] is None
+    assert {o["artefacto"] for o in texto["omitidos"]} >= {"parametros.perfil"}
 
 
 def test_excel_que_no_cabe_deja_leeme_y_no_recorta(

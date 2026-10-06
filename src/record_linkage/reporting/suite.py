@@ -251,9 +251,9 @@ class EnhancedReportingSuite:
             return None, None
         try:
             if data_ref.endswith(".db"):
-                from ..evaluation.banco import _contar_filas_sqlite
+                from ..pipeline.metricas import contar_filas_sqlite
 
-                return _contar_filas_sqlite(Path(data_ref), table_name), None
+                return contar_filas_sqlite(Path(data_ref), table_name), None
             if data_ref.endswith(".parquet"):
                 import pyarrow.parquet as pq
 

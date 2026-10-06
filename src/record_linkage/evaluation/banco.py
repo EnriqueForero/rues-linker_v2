@@ -44,6 +44,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ..pipeline.metricas import RUTA_CANDIDATES_DB, RUTA_SCORED_DB, contar_filas_sqlite
+
 __all__ = [
     "Corrida",
     "EspecificacionBanco",
@@ -644,12 +646,8 @@ def correr_banco(espec: EspecificacionBanco, *, silencioso: bool = True) -> Corr
         rss_inicial_mib=round(muestreador.inicial_mib, 1),
         muestras_rss=muestreador.muestras,
         bytes_disco=_tamano_directorio(espec.dir_trabajo),
-        candidatos=_contar_filas_sqlite(
-            espec.dir_trabajo / "L2_lsh_candidates" / "candidates.db", "candidate_pairs"
-        ),
-        pares_scoreados=_contar_filas_sqlite(
-            espec.dir_trabajo / "L3_scoring" / "scored.db", "scored_pairs"
-        ),
+        candidatos=contar_filas_sqlite(espec.dir_trabajo / RUTA_CANDIDATES_DB, "candidate_pairs"),
+        pares_scoreados=contar_filas_sqlite(espec.dir_trabajo / RUTA_SCORED_DB, "scored_pairs"),
     )
     _guardar_prediccion(espec, referencia, prediccion)
     corrida = Corrida(
@@ -726,19 +724,6 @@ def _rss_por_fase(manifiesto: Mapping[str, Any]) -> dict[str, float]:
     return salida
 
 
-def _contar_filas_sqlite(ruta: Path, tabla: str) -> int | None:
-    """Cuenta filas de una tabla SQLite sin cargarla. None si no se puede."""
-    if not ruta.is_file():
-        return None
-    import sqlite3
-
-    try:
-        with sqlite3.connect(f"file:{ruta}?mode=ro", uri=True) as conexion:
-            existe = conexion.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)
-            ).fetchone()
-            if not existe:
-                return None
-            return int(conexion.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0])
-    except sqlite3.Error:
-        return None
+#: Nombre histórico de ``pipeline.metricas.contar_filas_sqlite`` (la regla vive
+#: allí desde F1.12; las pruebas y ``reporting.suite`` lo importaban de aquí).
+_contar_filas_sqlite = contar_filas_sqlite

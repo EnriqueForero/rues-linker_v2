@@ -531,13 +531,17 @@ def test_meta_del_fixture_coincide_con_el_codigo(
 
 
 def test_fixture_no_guarda_valores_variables(foto_esperada: dict[str, Any]) -> None:
-    """El fixture guarda patrones: ninguna ruta conserva una marca de tiempo."""
+    """El fixture guarda patrones: ninguna ruta conserva una marca de tiempo.
+
+    Hasta F1.12 se exigía además que ``config_auditoria_<MARCA_TIEMPO>.*``
+    estuviera en la foto; desde F1.12 L6 escribe ``config_auditoria.json``
+    con nombre estable (alias de ``manifest.json``) y ningún archivo de la
+    corrida lleva marca de tiempo en el nombre.
+    """
     for ruta in foto_esperada["archivos"]:
         assert normalizar_ruta(ruta) == ruta, f"ruta sin normalizar en el fixture: {ruta!r}"
-    assert any("<MARCA_TIEMPO>" in r for r in foto_esperada["archivos"]), (
-        "config_auditoria_<MARCA_TIEMPO>.* debería estar en la foto; si L6 dejó de "
-        "escribirla, actualice esta prueba junto con el fixture."
-    )
+    assert "L6_reporting/config_auditoria.json" in foto_esperada["archivos"]
+    assert not any("<MARCA_TIEMPO>" in r for r in foto_esperada["archivos"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

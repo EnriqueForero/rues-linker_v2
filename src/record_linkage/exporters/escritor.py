@@ -12,7 +12,7 @@ forma exacta del estándar de salida (``ESTANDAR_SALIDA``)::
     ├── entidades_ids.parquet      crosswalk ID_ENTIDAD ↔ ID_GRUPO de esta corrida
     ├── revision.csv               pares por decidir (forma del archivo de decisiones)
     ├── diccionario.csv            tabla · columna · tipo · significado · origen · alias_es
-    ├── manifest.json              contrato, versión, huellas, parámetros, conteos…
+    ├── manifest.json              contrato, versión, huellas, parámetros, conteos, métricas…
     ├── excel/                     correlativa.xlsx, golden.xlsx (o *_LEEME.xlsx si no caben)
     ├── figuras/                   las PNG que se le pasen
     └── _trabajo/                  L1…L5, si linkage() lo dejó aquí (borrable)
@@ -70,6 +70,15 @@ Reglas
   ``VERSION_RETIRO_ALIAS_V1``.
 * El resultado se valida (``validar(estricto=True)``) ANTES de escribir: una
   carpeta del estándar que incumple el contrato no se publica.
+* **Un solo manifiesto (F1.12).** ``manifest.json`` es donde vive lo que
+  antes escribía L6 en ``config_auditoria_<ts>.json/.txt``: ``parametros``
+  trae la ``llamada`` (lo que se pidió a ``linkage()``) y los parámetros
+  EFECTIVOS del motor (``perfil``, ``lsh``, ``scoring``, ``pesos``,
+  ``prioridad_fuentes`` real del golden; ``config.auditoria.parametros_motor``
+  los declara una sola vez), ``metricas`` sale de la verdad en disco
+  (``candidates.db``, ``scored.db``, ``_trabajo/manifest.json``) y ``version``
+  es la del paquete (``importlib.metadata``). ``config_auditoria.json`` queda
+  en ``_trabajo/L6_reporting/`` como alias que remite aquí.
 
 ``leer_resultado`` hace el camino inverso: verifica las huellas del
 manifiesto (falla con mensaje accionable si un artefacto cambió o falta),
@@ -99,8 +108,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .. import contrato
+from ..config.auditoria import ParametrosMotor
 from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
 from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
+from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
 from ._spreadsheet import prepare_spreadsheet_data, validate_leaf_name
 
@@ -138,6 +149,11 @@ _SUFIJO_PENDIENTE = ".pendiente"
 _FILAS_POR_LOTE_CSV = 50_000
 _ALIAS = {"es": "alias_es"}
 
+#: Clave de ``parametros`` donde va lo que se pidió a ``linkage()``; el resto
+#: de claves son las de ``config.auditoria.ParametrosMotor``.
+_CLAVE_LLAMADA = "llamada"
+_CLAVES_MOTOR: tuple[str, ...] = ("perfil", "lsh", "scoring", "pesos", "prioridad_fuentes")
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,19 +173,31 @@ class Manifiesto:
         marca_tiempo: ISO 8601 (segundos) de la marca de tiempo de la carpeta.
         carpeta: ruta de la carpeta definitiva (en el JSON va solo su nombre:
             las rutas absolutas no sobreviven a un cambio de máquina).
-        insumos: huella SHA-256, filas y columnas por fuente
-            (``api._manifiesto`` → ``entradas``).
+        insumos: huella SHA-256 (16 hex, ``api._huella_dataset``), filas y
+            columnas por fuente (``api._manifiesto`` → ``entradas``).
         artefactos: ``[{"ruta", "bytes", "sha256"}]`` de cada archivo escrito
             (rutas relativas a la carpeta; ``manifest.json`` no se lista a sí
             mismo y ``_trabajo/`` no es un artefacto).
-        parametros: los de la llamada (``linkage(...)``), tal como se guardaron.
+        parametros: ``llamada`` (los de ``linkage(...)``, tal como se guardaron;
+            es lo que ``corrida.hash_parametros`` resume) y los EFECTIVOS del
+            motor (F1.12, ``config.auditoria.ParametrosMotor``): ``perfil``,
+            ``lsh``, ``scoring``, ``pesos`` y ``prioridad_fuentes`` (la real
+            del golden, L5). Si el resultado no trae la configuración (una
+            ruta que no pasa por el Orchestrator), las claves del motor van
+            vacías y ``omitidos`` lo declara.
         conteos: filas, grupos, entidades (con NIT / sin NIT), fuentes…
         invariantes: el ``ReporteValidacion`` (``ok`` y ``fallos``).
-        tiempos_por_fase: segundos por fase L1…L5 desde ``_trabajo/manifest.json``.
+        metricas: lo que antes vivía en ``config_auditoria_*`` → ``metrics``:
+            el bloque de ``pipeline.metricas.metricas_de_corrida`` (la misma
+            función que usa ``Orchestrator._build_metrics``; desde la verdad
+            en disco: ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
+            ``grupos_multifuente``, ``confianza_media``/``mediana``,
+            ``segundos_total``, ``rss_pico_mib``), más los escalares de
+            ``res.metricas`` (``n_registros``, ``n_fuentes``…).
+        tiempos_por_fase: segundos por fase L1…L6 desde ``_trabajo/manifest.json``.
         rss_por_fase: pico de RSS (MiB) por fase, misma fuente.
         omitidos: ``[{"artefacto", "motivo"}]``: lo que no se escribió y por qué.
         renombres: colisiones de la fuente con el contrato (``<col>_FUENTE``).
-        prioridad_fuentes: la real del golden (L5).
         corrida: el resto del manifiesto de la corrida (función, timestamp,
             seed, hash de parámetros, versiones, reporte de ``completar``…).
     """
@@ -184,12 +212,26 @@ class Manifiesto:
     parametros: dict[str, Any] = field(default_factory=dict)
     conteos: dict[str, Any] = field(default_factory=dict)
     invariantes: dict[str, Any] = field(default_factory=dict)
+    metricas: dict[str, Any] = field(default_factory=dict)
     tiempos_por_fase: dict[str, float] = field(default_factory=dict)
     rss_por_fase: dict[str, float] = field(default_factory=dict)
     omitidos: list[dict[str, str]] = field(default_factory=list)
     renombres: dict[str, str] = field(default_factory=dict)
-    prioridad_fuentes: list[str] = field(default_factory=list)
     corrida: dict[str, Any] = field(default_factory=dict)
+
+    def llamada(self) -> dict[str, Any]:
+        """Los parámetros de la llamada. Un manifiesto anterior a F1.12 traía
+        ``parametros`` PLANOS (solo la llamada): se leen igual."""
+        if _CLAVE_LLAMADA in self.parametros:
+            return dict(self.parametros[_CLAVE_LLAMADA] or {})
+        return dict(self.parametros)
+
+    def configuracion(self) -> dict[str, Any]:
+        """Los parámetros efectivos del motor (``perfil``, ``lsh``, ``scoring``,
+        ``pesos``, ``prioridad_fuentes``); vacío en un manifiesto anterior a F1.12."""
+        if _CLAVE_LLAMADA not in self.parametros:
+            return {}
+        return {k: v for k, v in self.parametros.items() if k != _CLAVE_LLAMADA}
 
     def a_dict(self) -> dict[str, Any]:
         return {
@@ -203,11 +245,11 @@ class Manifiesto:
             "parametros": self.parametros,
             "conteos": self.conteos,
             "invariantes": self.invariantes,
+            "metricas": self.metricas,
             "tiempos_por_fase": self.tiempos_por_fase,
             "rss_por_fase": self.rss_por_fase,
             "omitidos": list(self.omitidos),
             "renombres": dict(self.renombres),
-            "prioridad_fuentes": list(self.prioridad_fuentes),
             "corrida": self.corrida,
         }
 
@@ -235,11 +277,11 @@ class Manifiesto:
             parametros=dict(datos.get("parametros") or {}),
             conteos=dict(datos.get("conteos") or {}),
             invariantes=dict(datos.get("invariantes") or {}),
+            metricas=dict(datos.get("metricas") or {}),
             tiempos_por_fase=dict(datos.get("tiempos_por_fase") or {}),
             rss_por_fase=dict(datos.get("rss_por_fase") or {}),
             omitidos=list(datos.get("omitidos") or []),
             renombres=dict(datos.get("renombres") or {}),
-            prioridad_fuentes=list(datos.get("prioridad_fuentes") or []),
             corrida=dict(datos.get("corrida") or {}),
         )
 
@@ -593,6 +635,51 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
     return conteos
 
 
+def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[str, Any]:
+    """``parametros`` del manifiesto: la llamada más los efectivos del motor.
+
+    ``res.manifiesto["configuracion"]`` lo deja ``api.linkage``/``link``
+    (``config.auditoria.parametros_motor``). Una ruta que no lo trae no se
+    repara en silencio: las claves del motor van vacías y ``omitidos`` lo dice.
+    """
+    configuracion = res.manifiesto.get("configuracion")
+    if not configuracion:
+        configuracion = ParametrosMotor(None, {}, {}, {}, ()).a_dict()
+        omitidos.append(
+            {
+                "artefacto": "parametros.perfil",
+                "motivo": "el resultado no trae la configuración efectiva del motor "
+                "(res.manifiesto['configuracion']: esta ruta no pasa por el "
+                "Orchestrator). Sin ella la corrida no se reproduce desde el "
+                "manifiesto. Use linkage(carpeta_salida=...) o deje "
+                "res.manifiesto['configuracion'] = parametros_motor(config).a_dict() "
+                "antes de escribir; F2 unifica los caminos.",
+            }
+        )
+    return {_CLAVE_LLAMADA: dict(res.manifiesto.get("parametros") or {})} | {
+        k: configuracion.get(k) for k in _CLAVES_MOTOR
+    }
+
+
+def _metricas(
+    res: ResultadoLinkage, tiempos: Mapping[str, float], rss: Mapping[str, float]
+) -> dict[str, Any]:
+    """Métricas de la corrida desde la verdad en disco (ver ``Manifiesto.metricas``).
+
+    El bloque es ``pipeline.metricas.metricas_de_corrida`` tal cual: la misma
+    regla que ``Orchestrator._build_metrics`` entrega a L6 y al alias
+    ``config_auditoria.json`` (escrita una vez; ``None`` —nunca 0— donde no
+    se puede saber).
+    """
+    metricas = metricas_de_corrida(res.golden, res.correlativa, res.dir_trabajo, tiempos, rss)
+    # Los escalares de res.metricas (n_registros, n_grupos, n_fuentes…); las
+    # listas y tablas (report_files, matcher_decisions…) no son métricas.
+    for clave, valor in res.metricas.items():
+        if clave not in metricas and (valor is None or isinstance(valor, (bool, int, float, str))):
+            metricas[clave] = valor
+    return metricas
+
+
 def _tiempos_y_rss(
     dir_trabajo: Path | None,
 ) -> tuple[dict[str, float], dict[str, float], str | None]:
@@ -819,7 +906,9 @@ def _escribir_en(
 
     completar = res.manifiesto.get("completar") or {}
     corrida = {
-        k: v for k, v in res.manifiesto.items() if k not in ("entradas", "parametros", "omitidos")
+        k: v
+        for k, v in res.manifiesto.items()
+        if k not in ("entradas", "parametros", "configuracion", "omitidos")
     }
     corrida["dir_trabajo"] = str(res.dir_trabajo) if res.dir_trabajo is not None else None
     if dir_trabajo_relativo:
@@ -832,6 +921,7 @@ def _escribir_en(
         omitidos.append({"artefacto": "tiempos_por_fase", "motivo": motivo})
         omitidos.append({"artefacto": "rss_por_fase", "motivo": motivo})
     reporte = res.validar()
+    parametros = _parametros(res, omitidos)
     manifiesto = Manifiesto(
         contrato=contrato.VERSION_CONTRATO,
         version=_version_paquete(),
@@ -840,14 +930,14 @@ def _escribir_en(
         carpeta=definitiva,
         insumos=dict(res.manifiesto.get("entradas") or {}),
         artefactos=artefactos,
-        parametros=dict(res.manifiesto.get("parametros") or {}),
+        parametros=parametros,
         conteos=_conteos(res),
         invariantes={"ok": reporte.ok, "fallos": list(reporte.fallos)},
+        metricas=_metricas(res, tiempos, rss),
         tiempos_por_fase=tiempos,
         rss_por_fase=rss,
         omitidos=omitidos,
         renombres=dict(completar.get("renombres") or {}),
-        prioridad_fuentes=list(completar.get("prioridad_fuentes") or []),
         corrida=corrida,
     )
     manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
@@ -1008,8 +1098,9 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     archivos conservan los nombres de v1.
 
     ``manifiesto`` del resultado trae las claves de la corrida (``funcion``,
-    ``parametros``, ``entradas``…) y, en ``manifest``, el manifiesto completo
-    de la carpeta. ``dir_trabajo`` apunta a ``_trabajo/`` si está dentro, y
+    ``parametros`` —la llamada—, ``configuracion`` —los efectivos del motor—,
+    ``entradas``…) y, en ``manifest``, el manifiesto completo de la carpeta;
+    ``metricas`` trae los conteos y las ``metricas`` del manifiesto. ``dir_trabajo`` apunta a ``_trabajo/`` si está dentro, y
     entonces las rutas que el JSON guarda relativas a ``_trabajo/`` vuelven
     absolutas, resueltas contra la carpeta leída (``manifest`` conserva el
     JSON tal cual).
@@ -1072,7 +1163,8 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
             manifiesto, Path(NOMBRE_TRABAJO), dir_trabajo, tambien_resuelta=False
         )
     manifiesto["entradas"] = man.insumos
-    manifiesto["parametros"] = man.parametros
+    manifiesto["parametros"] = man.llamada()
+    manifiesto["configuracion"] = man.configuracion()
     manifiesto["contrato"] = {"version": man.contrato}
     manifiesto["carpeta_salida"] = str(carpeta)
     manifiesto["dir_trabajo"] = str(dir_trabajo) if dir_trabajo is not None else None
@@ -1080,6 +1172,7 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     metricas: dict[str, Any] = {
         "n_registros": man.conteos.get("filas"),
         "n_grupos": man.conteos.get("grupos"),
+        **man.metricas,
         **man.conteos,
     }
     return ResultadoLinkage(

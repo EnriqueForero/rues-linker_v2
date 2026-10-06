@@ -140,9 +140,11 @@ def test_sin_bases_en_disco_el_resumen_no_inventa_ceros(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Si L6 no encuentra candidates.db/scored.db, dice N/A; un 0 sería mentira."""
-    # Instancia parcial con lo mínimo REAL: directorios de fase (vacíos, sin
-    # bases) y un logger. La librería no tolera instancias a medio construir.
+    # Instancia parcial con lo mínimo REAL: work_dir y directorios de fase
+    # (vacíos, sin bases) y un logger. La librería no tolera instancias a
+    # medio construir.
     orquestador = object.__new__(Orchestrator)
+    orquestador.work_dir = tmp_path
     orquestador.dirs = {p: tmp_path / p.value for p in Phase}
     orquestador.log = logging.getLogger("prueba_resumen")
     orquestador._start_time = time.time() - 1  # execution_time > 0: se emite RENDIMIENTO

@@ -31,6 +31,17 @@ IPython y Colab silencian por defecto los ``DeprecationWarning`` que no nacen
 en ``__main__``). ``ExcelReportsStrategy`` (``reporte_*.xlsx``) no es un
 alias: pasa por ``escribir_xlsx`` pero conserva la hoja ``Sheet1`` de v1
 hasta que F1.11 lo unifique en ``informe_cruce.xlsx``.
+
+F1.12: ``ConfigAuditStrategy`` es un ALIAS de v1. Lo que era
+``config_auditoria_<ts>.json/.txt`` (parámetros LSH, scoring, pesos,
+prioridad de fuentes, tiempos por fase, métricas) vive en ``manifest.json`` de
+la carpeta del estándar (``parametros`` / ``tiempos_por_fase`` / ``metricas``,
+con ``version`` real e insumos con huella). La estrategia escribe
+``config_auditoria.json`` (nombre estable, sin marca de tiempo) con
+``vease: "manifest.json"`` y el mismo bloque de parámetros
+(``config.auditoria.parametros_motor``: una regla, una vez), es OPCIONAL en
+el contrato de L6 y avisa con ``DeprecationWarning``; el ``.txt`` ya no se
+escribe.
 """
 
 from __future__ import annotations
@@ -53,6 +64,7 @@ import pandas as pd
 import psutil
 import pyarrow.parquet as pq
 
+from ..config.auditoria import parametros_motor
 from ..exporters.escritor import (
     VERSION_RETIRO_ALIAS_V1,
     escribir_csv_gz,
@@ -108,6 +120,33 @@ def _avisar_alias_v1() -> None:
     _logger.warning(mensaje)
 
 
+#: Nombre estable del alias de v1 de la auditoría de configuración (F1.12).
+ALIAS_AUDITORIA = "config_auditoria.json"
+
+_AUDITORIA_V1_AVISADA = False
+
+
+def _avisar_auditoria_v1() -> None:
+    """Avisa una sola vez por proceso que ``config_auditoria.json`` es un alias.
+
+    Mismo patrón que ``_avisar_alias_v1``: ``DeprecationWarning`` y, con el
+    mismo texto, ``logging.warning``.
+    """
+    global _AUDITORIA_V1_AVISADA
+    if _AUDITORIA_V1_AVISADA:
+        return
+    _AUDITORIA_V1_AVISADA = True
+    mensaje = (
+        f"L6_reporting/{ALIAS_AUDITORIA} es un ALIAS de v1 desde 0.23.0: la configuración "
+        "efectiva, los tiempos por fase y las métricas de la corrida viven en manifest.json "
+        "de la carpeta del estándar (linkage(carpeta_salida=...)) bajo parametros / "
+        "tiempos_por_fase / metricas; config_auditoria_<ts>.txt ya no se escribe. El alias "
+        f"desaparece en rues-linker {VERSION_RETIRO_ALIAS_V1}."
+    )
+    warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
+    _logger.warning(mensaje)
+
+
 def _leeme_de(base_name: str) -> pd.DataFrame:
     return leeme_alias_v1(ARCHIVO_NUEVO_DE_ALIAS.get(base_name, "la carpeta del estándar"))
 
@@ -144,6 +183,9 @@ class ReportingContext:
         metrics: Métricas de ejecución calculadas
         start_time: Timestamp de inicio del proceso
         phase_times: Diccionario con duración de cada fase en segundos
+        prioridad_fuentes: la prioridad REAL del golden (``Orchestrator.
+            prioridad_fuentes``), para que el alias de auditoría (F1.12) diga
+            lo mismo que el manifiesto; vacía si el llamador no la conoce.
     """
 
     golden_df: pd.DataFrame
@@ -153,6 +195,7 @@ class ReportingContext:
     metrics: dict[str, Any]
     start_time: float
     phase_times: dict[str, float] = field(default_factory=dict)
+    prioridad_fuentes: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Validación en construcción - falla rápido si hay datos inválidos."""
@@ -761,144 +804,65 @@ class EnhancedInsightsStrategy(BaseReportingStrategy):
 
 
 class ConfigAuditStrategy(BaseReportingStrategy):
-    """
-    Exporta configuración y métricas para auditoría y reproducibilidad.
+    """ALIAS de v1 (F1.12): escribe ``config_auditoria.json`` y remite al manifiesto.
 
-    Genera:
-    - Archivo JSON con configuración completa
-    - Archivo TXT legible con resumen
+    Hasta F1.12 escribía ``config_auditoria_<timestamp>.json`` (obligatorio) y
+    ``.txt`` (opcional) con ``orchestrator_version: "8.5"`` fijo, sin huellas
+    de insumos y con ``source_priority`` leído de ``source_quality_weights``
+    sin la segunda mitad de la regla del golden (orden de las fuentes si el
+    perfil no trae pesos): decía ``{}`` cuando el golden usaba otra cosa. Todo
+    eso vive ahora en ``manifest.json`` de la carpeta del estándar, escrito
+    por ``exporters.escritor`` con la versión real del paquete y las huellas.
+
+    Lo que queda aquí es el alias: nombre ESTABLE (sin marca de tiempo),
+    ``vease: "manifest.json"``, el mismo bloque ``parametros`` que el
+    manifiesto (``config.auditoria.parametros_motor``), los tiempos de las
+    fases cerradas (L1…L5) y las métricas de L6 (``Orchestrator._build_metrics``,
+    cuyo bloque en español es ``pipeline.metricas.metricas_de_corrida``, el
+    mismo que ``manifest.json → metricas``).
+    Es OPCIONAL en el contrato de L6: si falla se omite con motivo. El ``.txt``
+    desaparece. Avisa con ``DeprecationWarning`` una vez por proceso y se retira
+    en ``VERSION_RETIRO_ALIAS_V1``.
     """
 
     @property
     def name(self) -> str:
-        return "Auditoría de Configuración"
+        return "Auditoría de configuración (alias de v1)"
 
     @property
     def required_class(self) -> str:
         return "None"  # Siempre disponible
 
     def _execute_impl(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        profile_name = ctx.config.get("profile", "Unknown")
-        profile_params = ctx.config.get("profiles", {}).get(profile_name, {})
+        _avisar_auditoria_v1()
+        ruta = ctx.output_dir / ALIAS_AUDITORIA
+        ruta.write_text(
+            json.dumps(contenido_alias_auditoria(ctx), indent=2, ensure_ascii=False, default=str)
+            + "\n",
+            encoding="utf-8",
+        )
+        return [ruta]
 
-        # Construir estructura de auditoría
-        audit_data = {
-            "meta": {
-                "timestamp": datetime.now().isoformat(),
-                "orchestrator_version": "8.5",
-                "profile": profile_name,
-            },
-            "metrics": ctx.metrics,
-            "parameters": {
-                "lsh": {
-                    k: profile_params.get(k)
-                    for k in ["lsh_permutations", "lsh_threshold", "lsh_ngram", "cross_source_only"]
-                },
-                "scoring": {
-                    k: profile_params.get(k)
-                    for k in ["score_threshold", "min_name_similarity", "max_nit_distance"]
-                },
-                "weights": profile_params.get("weights", {}),
-                "source_priority": profile_params.get("source_quality_weights", {}),
-            },
-            "phase_times": ctx.phase_times,
-            "config_completa": ctx.config,
-        }
 
-        generated = []
+def contenido_alias_auditoria(ctx: ReportingContext) -> dict[str, Any]:
+    """El JSON del alias: ``vease``, el aviso y lo que el manifiesto también trae.
 
-        # JSON (para procesamiento programático)
-        json_path = ctx.output_dir / f"config_auditoria_{timestamp}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(audit_data, f, indent=2, default=str, ensure_ascii=False)
-        generated.append(json_path)
+    ``prioridad_fuentes`` es la real si el contexto la trae; si no, la del
+    perfil (``parametros_motor``), que es lo único que L6 puede saber.
+    """
+    from .. import __version__
 
-        # TXT (para lectura humana): OPCIONAL en el contrato de L6. Si falla
-        # (un perfil con pesos no numéricos, p. ej.) no tumba la corrida: el
-        # JSON obligatorio ya está, el TXT a medias se borra y la omisión queda
-        # con su motivo. La misma regla que el Excel en DataExportStrategy.
-        txt_path = ctx.output_dir / f"config_auditoria_{timestamp}.txt"
-        try:
-            self._write_txt_audit(
-                txt_path, audit_data, profile_params, ctx.metrics, ctx.phase_times
-            )
-            generated.append(txt_path)
-        except Exception as e:
-            with contextlib.suppress(OSError):
-                txt_path.unlink(missing_ok=True)
-            # `execute` ya escribe un warning por cada omisión: aquí solo se registra.
-            self.omitir(txt_path.name, f"{type(e).__name__}: {e}")
-
-        return generated
-
-    def _write_txt_audit(
-        self, path: Path, audit: dict, params: dict, metrics: dict, phase_times: dict
-    ):
-        """Escribe archivo de auditoría en formato legible para humanos."""
-        with open(path, "w", encoding="utf-8") as f:
-            # Header
-            f.write("=" * 70 + "\n")
-            f.write("📋 AUDITORÍA DE CONFIGURACIÓN - ORCHESTRATOR v8.5\n")
-            f.write(f"   Timestamp: {audit['meta']['timestamp']}\n")
-            f.write(f"   Profile: {audit['meta']['profile']}\n")
-            f.write("=" * 70 + "\n\n")
-
-            # Tiempos por fase
-            f.write("⏱️ TIEMPOS POR FASE\n")
-            f.write("-" * 70 + "\n")
-            total_time = 0
-            for phase, duration in phase_times.items():
-                mins = duration / 60
-                total_time += duration
-                f.write(f"  {phase:<25}: {mins:>8.1f} min\n")
-            f.write("-" * 70 + "\n")
-            f.write(f"  {'TOTAL':<25}: {total_time / 60:>8.1f} min ({total_time / 3600:.2f} h)\n\n")
-
-            # Métricas de ejecución
-            f.write("🎯 MÉTRICAS DE EJECUCIÓN\n")
-            f.write("-" * 70 + "\n")
-            for k, v in metrics.items():
-                if k != "phase_times" and k != "records_per_source":
-                    if isinstance(v, float):
-                        f.write(f"  {k:<30}: {v:>12.4f}\n")
-                    elif isinstance(v, int):
-                        f.write(f"  {k:<30}: {v:>12,}\n")
-                    elif isinstance(v, dict):
-                        f.write(f"  {k:<30}: {len(v)} items\n")
-                    else:
-                        f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Parámetros LSH
-            f.write("📊 PARÁMETROS LSH\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["lsh"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Parámetros Scoring
-            f.write("🎯 PARÁMETROS SCORING\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["scoring"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Pesos de matching
-            f.write("⚖️ PESOS DE MATCHING\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["weights"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Prioridad de fuentes
-            f.write("🏆 PRIORIDAD DE FUENTES\n")
-            f.write("-" * 70 + "\n")
-            source_priority = audit["parameters"]["source_priority"]
-            for src, weight in sorted(source_priority.items(), key=lambda x: -x[1]):
-                f.write(f"  {src:<30}: {weight:.2f}\n")
-
-            # Footer
-            f.write("\n" + "=" * 70 + "\n")
-            f.write("FIN DEL ARCHIVO DE AUDITORÍA\n")
-            f.write("=" * 70 + "\n")
+    prioridad = list(ctx.prioridad_fuentes) if ctx.prioridad_fuentes else None
+    return {
+        "vease": "manifest.json",
+        "aviso": (
+            "Alias de v1 (F1.12). La fuente de verdad es manifest.json de la carpeta del "
+            "estándar: parametros, tiempos_por_fase, metricas, insumos (huella SHA-256) y "
+            f"version. Este alias desaparece en rues-linker {VERSION_RETIRO_ALIAS_V1}."
+        ),
+        "version": str(__version__),
+        "marca_tiempo": datetime.now().isoformat(timespec="seconds"),
+        "parametros": parametros_motor(ctx.config, prioridad_fuentes=prioridad).a_dict(),
+        "tiempos_por_fase": dict(ctx.phase_times),
+        "metricas": dict(ctx.metrics),
+    }

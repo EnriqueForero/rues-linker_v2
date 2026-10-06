@@ -176,9 +176,13 @@ class _SilentLog:
 
 def _orquestador_parcial(tmp_path) -> Orchestrator:
     """Lo mínimo REAL de un orquestador para `_build_metrics`/`_run_L6`:
-    directorios de fase (vacíos) y logger; la librería no tolera menos."""
+    work_dir y directorios de fase (vacíos), fuentes y logger; la librería no
+    tolera menos (F1.12: `_build_metrics` cuenta bajo `work_dir` y L6 lee la
+    prioridad de fuentes de `sources`)."""
     orchestrator = object.__new__(Orchestrator)
+    orchestrator.work_dir = tmp_path
     orchestrator.dirs = {p: tmp_path / p.value for p in Phase}
+    orchestrator.sources = {}
     orchestrator.log = _SilentLog()
     orchestrator._start_time = None
     orchestrator._phase_times = {}
@@ -290,5 +294,4 @@ def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monk
         "tabla_correlativa.csv.gz",
         "golden_records.parquet",
         "golden_records.csv.gz",
-        "config_auditoria_*.json",
     )

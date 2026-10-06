@@ -25,12 +25,12 @@ from typing import Any
 import pandas as pd
 import psutil
 
+from ..config.auditoria import prioridad_del_perfil
 from ..engine.cannot_link import aplicar_cannot_link_identificador
 from ..engine.clusterer import OptimizedClusterer
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
 from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
-from ..evaluation.banco import _contar_filas_sqlite
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
 from ..golden.metricas import verificar_golden
@@ -66,6 +66,14 @@ from .errores import (
 )
 from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
+from .metricas import (
+    CLAVES_METRICAS,
+    RUTA_CANDIDATES_DB,
+    RUTA_SCORED_DB,
+    TABLA_CANDIDATES,
+    TABLA_SCORED,
+    metricas_de_corrida,
+)
 from .state_manager import StateManager
 from .storage import HybridStorageManager
 
@@ -319,10 +327,11 @@ class Orchestrator:
 
     @property
     def prioridad_fuentes(self) -> list[str]:
-        """Prioridad de fuentes del golden (L5): las claves de
-        ``source_quality_weights`` del perfil o, si no hay, el orden de las
-        fuentes. Una sola regla; ``api.py`` la lee de aquí."""
-        prioridad = list(self.profile.get("source_quality_weights", {}).keys())
+        """Prioridad de fuentes del golden (L5): la que declara el perfil
+        (``config.auditoria.prioridad_del_perfil``: claves de
+        ``source_quality_weights``) o, si no hay, el orden de las fuentes.
+        Una sola regla; ``api.py``, L6 y el manifiesto la leen de aquí."""
+        prioridad = prioridad_del_perfil(self.profile)
         return prioridad or list(self.sources.keys())
 
     @property
@@ -2015,7 +2024,9 @@ class Orchestrator:
             metrics["reporting_sampled"] = True
             metrics["reporting_sample_size"] = SAMPLE_SIZE
 
-        # 5. CREAR CONTEXTO
+        # 5. CREAR CONTEXTO (F1.12: la prioridad REAL del golden viaja con él,
+        #    para que el alias config_auditoria.json diga lo mismo que el manifiesto)
+        prioridad = tuple(self.prioridad_fuentes)
         ctx = ReportingContext(
             golden_df=golden_df,
             correlative_df=correl_df,
@@ -2024,6 +2035,7 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
         export_ctx = ReportingContext(
             golden_df=full_golden_df,
@@ -2033,6 +2045,7 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
 
         # 6. EJECUTAR ESTRATEGIAS BAJO EL CONTRATO DE L6 (F1.4)
@@ -2058,8 +2071,8 @@ class Orchestrator:
 
             # Los artefactos obligatorios se intentan incluso bajo presión
             # crítica (la exportación usa streaming desde checkpoints y evita
-            # el Excel completo con RAM alta; la auditoría es un JSON). Solo
-            # se omite la analítica, y con constancia.
+            # el Excel completo con RAM alta). Solo se omite la analítica (y
+            # el alias config_auditoria.json, F1.12), y con constancia.
             if current_mem > 95 and not obligatoria:
                 motivo = f"RAM crítica ({current_mem:.1f} %): se omitió para proteger la corrida"
                 self.log.error(f"   🛑 {strategy.name}: {motivo}")
@@ -2121,30 +2134,6 @@ class Orchestrator:
 
         return all_files, all_files
 
-    def _contar_filas_fase(self, fase: Phase, archivo: str, tabla: str) -> int | None:
-        """Filas de una tabla SQLite escrita por una fase, sin cargarla.
-
-        Devuelve ``None`` —nunca 0— cuando la base o la tabla no están (p. ej.
-        un L6 relanzado tras limpiar el directorio de trabajo): un conteo
-        ausente se muestra como «N/A», un 0 sería una cifra falsa. Reutiliza
-        ``evaluation.banco._contar_filas_sqlite`` (privada en ese módulo; es la
-        misma regla que usa el banco y se escribe una sola vez). ``self.dirs``
-        y ``self.log`` existen desde ``__init__``; una instancia parcial de
-        prueba debe traerlos, no se toleran aquí.
-        """
-        ruta = Path(self.dirs[fase]) / archivo
-        total = _contar_filas_sqlite(ruta, tabla)
-        if total is None:
-            self.log.warning(
-                mensaje_accionable(
-                    f"no se pudo contar {tabla} en {ruta}.",
-                    "el resumen ejecutivo mostrará N/A en vez de un número.",
-                    "si necesita la cifra, relance la fase con force_rerun o conserve el "
-                    "directorio de trabajo entre corridas.",
-                )
-            )
-        return total
-
     @staticmethod
     def _omisiones_de(strategy: BaseReportingStrategy, motivo: str) -> list[ArtefactoOmitido]:
         """Una omisión por cada artefacto que la estrategia habría producido.
@@ -2160,22 +2149,23 @@ class Orchestrator:
         """
         Construye diccionario de métricas para reportes (fuente única de L6).
 
-        Claves de volumen de trabajo del motor (F1.7), leídas de la verdad en
-        disco y no de contadores en memoria:
+        El bloque en español (``pipeline.metricas.CLAVES_METRICAS``:
+        ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
+        ``grupos_multifuente``, ``confianza_media``/``mediana``,
+        ``segundos_total``, ``rss_pico_mib``) lo calcula
+        ``metricas_de_corrida`` desde la verdad en disco (F1.7/F1.12): es la
+        MISMA función que escribe ``manifest.json → metricas``, así el alias
+        ``config_auditoria.json`` y el manifiesto dicen la misma cifra. Aquí
+        ``rss_pico_mib`` y ``segundos_total`` cubren las fases ya cerradas (L6
+        aún no lo está cuando se construyen las métricas).
 
-        - ``candidatos``: filas de ``L2_lsh_candidates/candidates.db``
-          (tabla ``candidate_pairs``); ``None`` si la base no está.
-        - ``pares_puntuados``: filas de ``L3_scoring/scored.db``
-          (tabla ``scored_pairs``); ``None`` si la base no está.
-        - ``rss_pico_mib``: máximo de ``peak_rss_mib_by_phase`` (RSS pico del
-          proceso entre las fases ya cerradas; L6 aún no lo está cuando se
-          construyen las métricas); ``None`` si ninguna fase registró RSS.
-
-        ``candidates_found``, ``pairs_scored`` y ``max_memory_gb`` son alias
-        heredados de los mismos valores para los consumidores que siguen en
-        inglés (``visualizer``, ``suite``, ``dashboard``); con ``None`` se
-        entregan como 0 porque esos consumidores dividen por ellos. El resumen
-        ejecutivo lee las claves en español. ``max_memory_gb`` está en GiB
+        Los alias en inglés se DERIVAN del bloque, no se recalculan:
+        ``reduction_rate``/``linkage_rate`` (0 sin filas), ``multi_source_groups``,
+        ``avg_confidence``/``median_confidence`` (solo cuando el golden trae la
+        columna: los consumidores de v1 hacen ``.get(clave, 0)``),
+        ``candidates_found``, ``pairs_scored`` y ``max_memory_gb`` (con ``None``
+        se entregan como 0 porque ``visualizer``/``suite``/``dashboard`` dividen
+        por ellos). El resumen ejecutivo lee las claves en español. ``max_memory_gb`` está en GiB
         (``rss_pico_mib / 1024``, como el muestreador) aunque la clave diga
         «gb»: sus consumidores lo rotulan GiB.
 
@@ -2190,11 +2180,26 @@ class Orchestrator:
         if not isinstance(phase_peak_rss_mib, dict):
             raise TypeError("_phase_peak_rss_mib debe ser un diccionario")
 
-        candidatos = self._contar_filas_fase(
-            Phase.L2_LSH_CANDIDATES, "candidates.db", "candidate_pairs"
+        # ``self.work_dir`` y ``self.log`` existen desde ``__init__``; una
+        # instancia parcial de prueba debe traerlos, no se toleran aquí. Sin
+        # la base en disco el bloque dice None (nunca 0) y se avisa qué hacer.
+        dir_trabajo = self.work_dir
+        bloque = metricas_de_corrida(
+            golden_df, correl_df, dir_trabajo, self._phase_times, phase_peak_rss_mib
         )
-        pares_puntuados = self._contar_filas_fase(Phase.L3_SCORING, "scored.db", "scored_pairs")
-        rss_pico_mib = max(phase_peak_rss_mib.values()) if phase_peak_rss_mib else None
+        for clave, ruta, tabla in (
+            ("candidatos", RUTA_CANDIDATES_DB, TABLA_CANDIDATES),
+            ("pares_puntuados", RUTA_SCORED_DB, TABLA_SCORED),
+        ):
+            if bloque[clave] is None:
+                self.log.warning(
+                    mensaje_accionable(
+                        f"no se pudo contar {tabla} ({clave}) en {Path(dir_trabajo) / ruta}.",
+                        "el resumen ejecutivo mostrará N/A en vez de un número.",
+                        "si necesita la cifra, relance la fase con force_rerun o conserve el "
+                        "directorio de trabajo entre corridas.",
+                    )
+                )
 
         metrics: dict[str, Any] = {
             "total_records": len(correl_df),
@@ -2202,34 +2207,23 @@ class Orchestrator:
             "execution_time": time.time() - self._start_time if self._start_time else 0,
             "phase_times": self._phase_times.copy(),
             "peak_rss_mib_by_phase": phase_peak_rss_mib.copy(),
-            "candidatos": candidatos,
-            "pares_puntuados": pares_puntuados,
-            "rss_pico_mib": rss_pico_mib,
+            **{clave: bloque[clave] for clave in CLAVES_METRICAS},
             # Alias heredados (ver docstring).
-            "candidates_found": candidatos or 0,
-            "pairs_scored": pares_puntuados or 0,
-            "max_memory_gb": (rss_pico_mib or 0.0) / 1024,
+            "candidates_found": bloque["candidatos"] or 0,
+            "pairs_scored": bloque["pares_puntuados"] or 0,
+            "max_memory_gb": (bloque["rss_pico_mib"] or 0.0) / 1024,
+            "linkage_rate": bloque["tasa_reduccion"] if bloque["tasa_reduccion"] is not None else 0,
+            "reduction_rate": (
+                bloque["tasa_reduccion"] if bloque["tasa_reduccion"] is not None else 0
+            ),
         }
-
-        # Tasa de linkage/reducción
-        if len(correl_df) > 0:
-            metrics["linkage_rate"] = 1 - (len(golden_df) / len(correl_df))
-            metrics["reduction_rate"] = 1 - (len(golden_df) / len(correl_df))
-        else:
-            metrics["linkage_rate"] = 0
-            metrics["reduction_rate"] = 0
-
-        # Grupos multi-fuente
-        for col in ["SOURCES_COUNT", "SOURCE_COUNT"]:
-            if col in golden_df.columns:
-                metrics["multi_source_groups"] = int((golden_df[col] > 1).sum())
-                break
-
-        # Métricas de confianza
+        if bloque["grupos_multifuente"] is not None:
+            metrics["multi_source_groups"] = bloque["grupos_multifuente"]
+        if bloque["confianza_media"] is not None:
+            metrics["avg_confidence"] = bloque["confianza_media"]
+            metrics["median_confidence"] = bloque["confianza_mediana"]
         if "CONFIDENCE_SCORE" in golden_df.columns:
             scores = golden_df["CONFIDENCE_SCORE"]
-            metrics["avg_confidence"] = float(scores.mean())
-            metrics["median_confidence"] = float(scores.median())
             metrics["high_confidence_count"] = int((scores > 0.9).sum())
             metrics["low_confidence_count"] = int((scores < 0.75).sum())
 
