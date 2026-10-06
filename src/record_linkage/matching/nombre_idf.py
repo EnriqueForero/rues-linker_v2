@@ -34,10 +34,11 @@ import pandas as pd
 from rapidfuzz import process as rf_process
 from rapidfuzz.distance import JaroWinkler
 
-from .idf import PesosIDF
+from .idf import PesosIDF, construir_idf
 
 __all__ = [
     "SimilitudNombre",
+    "comparador_desde_corpus",
     "contencion_idf",
     "diferencia_informativa",
     "frecuencia_distintiva",
@@ -371,3 +372,63 @@ class SimilitudNombre:
         d = self.partes(left, right)
         mezcla = self.alfa * d["sim_tokens"] + (1.0 - self.alfa) * d["jaro_winkler"]
         return np.where(self.valid_mask(left, right), 2.0 * mezcla.to_numpy() - 1.0, 0.0)
+
+
+def comparador_desde_corpus(
+    nombres: Iterable[str],
+    *,
+    genericos_neutralizados: Iterable[str],
+    genericos_estructurales: Iterable[str],
+    peso_token_generico: float = 1.0,
+    alfa: float = 0.25,
+    prefix_weight: float = 0.10,
+    max_diferencia_informativa: int = 0,
+    min_informativos_compartidos: int = 1,
+    fraccion_max_distintivo: float = 0.01,
+    longitud_minima_token: int = 3,
+    ignorar_numericos: bool = True,
+) -> SimilitudNombre:
+    """Construye el :class:`SimilitudNombre` de un corpus, en un solo sitio.
+
+    Es la receta completa —vocabulario ordenado, IDF del corpus, genéricos
+    neutralizados, comparador— que ``flujo.importadores`` y la cobertura por
+    estrellas de L5 (F2.1, ``engine.cobertura``) comparten: una regla se
+    escribe una vez. El vocabulario se ordena con clave total para que el
+    comparador sea el mismo entre procesos (la semilla de hash de Python no
+    interviene).
+
+    Args:
+        nombres: razones sociales ya normalizadas, SIN nulos (repetidas o
+            no: se deduplican aquí). El IDF se calcula sobre los nombres
+            distintos, que es lo que ``importadores`` medía desde 0.22.0.
+        genericos_neutralizados: términos cuyo IDF baja a
+            ``peso_token_generico`` (:func:`neutralizar_genericos`).
+        genericos_estructurales: términos que cuentan como ruido al comparar
+            (puerta 1 de :class:`SimilitudNombre`).
+        peso_token_generico: peso destino de los genéricos neutralizados.
+        alfa: peso de la evidencia de tokens frente a la de cadena.
+        prefix_weight: peso del prefijo en Jaro-Winkler.
+        max_diferencia_informativa: puerta 1 de :class:`SimilitudNombre`.
+        min_informativos_compartidos: puerta 2.
+        fraccion_max_distintivo: puerta 3.
+        longitud_minima_token: mínimo para considerar un token informativo.
+        ignorar_numericos: excluir tokens de solo dígitos.
+
+    Returns:
+        El comparador; su IDF queda en ``comparador.pesos_idf``.
+    """
+    vocabulario = pd.Series(sorted(pd.Series(nombres).unique()))
+    pesos = construir_idf(vocabulario.reset_index(drop=True))
+    pesos = neutralizar_genericos(pesos, genericos_neutralizados, peso=peso_token_generico)
+    return SimilitudNombre(
+        pesos,
+        vocabulario.to_numpy(),
+        genericos_estructurales=genericos_estructurales,
+        alfa=alfa,
+        prefix_weight=prefix_weight,
+        max_diferencia_informativa=max_diferencia_informativa,
+        min_informativos_compartidos=min_informativos_compartidos,
+        fraccion_max_distintivo=fraccion_max_distintivo,
+        longitud_minima_token=longitud_minima_token,
+        ignorar_numericos=ignorar_numericos,
+    )

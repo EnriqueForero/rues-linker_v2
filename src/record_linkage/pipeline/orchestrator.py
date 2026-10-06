@@ -28,6 +28,10 @@ import psutil
 from ..config.auditoria import prioridad_del_perfil
 from ..engine.cannot_link import aplicar_cannot_link_identificador
 from ..engine.clusterer import OptimizedClusterer
+from ..engine.cobertura import (
+    ConfigCoberturaSinIdentificador,
+    aplicar_cobertura_sin_identificador,
+)
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
 from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
@@ -1891,6 +1895,33 @@ class Orchestrator:
             )
             if reporte_cl.hubo_cambios:
                 self.log.warning(f"   ⚠️ {reporte_cl.resumen()}")
+
+        # ── F2.1 (ADR-0011): cobertura por estrellas SIN identificador ──────
+        # El clustering une por componentes conexas (single-linkage). Con
+        # identificador válido el cannot-link de arriba corta los puentes; sin
+        # identificador nadie los corta y un prefijo genérico encadena
+        # empresas distintas (medido: grupo de 630 registros/198 entidades a
+        # 139k). Aquí cada grupo SIN identificador válido se reparte en
+        # estrellas con `SimilitudNombre` sobre el IDF de NOMBRE_LIMPIO; los
+        # grupos con identificador no se tocan. Perilla
+        # `cobertura_sin_identificador` del perfil; ausente o `activa: False`
+        # conserva la huella de 0.22.4. El reporte va al manifiesto de L5.
+        cfg_cobertura = ConfigCoberturaSinIdentificador.desde_perfil(
+            self.profile.get("cobertura_sin_identificador")
+        )
+        if cfg_cobertura.activa:
+            df_clustered, reporte_cob = aplicar_cobertura_sin_identificador(
+                df_clustered,
+                config=cfg_cobertura,
+                canonicalizar_dv=bool(self.profile.get("dv_es_mismo_identificador", True)),
+            )
+            self._meta_extra.setdefault(Phase.L5_GOLDEN.value, {})[
+                "cobertura_sin_identificador"
+            ] = reporte_cob.como_dict()
+            if reporte_cob.hubo_cambios:
+                self.log.warning(f"   ⚠️ {reporte_cob.resumen()}")
+            else:
+                self.log.info(f"   📊 {reporte_cob.resumen()}")
 
         # Prioridad de fuentes
         priority = self.prioridad_fuentes

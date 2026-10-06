@@ -42,10 +42,9 @@ from ..matching.genericos import (
     GENERICOS_SECTOR,
     SUFIJOS_INTERNACIONALES,
 )
-from ..matching.idf import construir_idf
 from ..matching.motor_bloqueo import BloqueoComponible, LSHTexto
 from ..matching.motor_multicampo import clusters_desde_decisiones, evaluar_esquema
-from ..matching.nombre_idf import SimilitudNombre, neutralizar_genericos
+from ..matching.nombre_idf import SimilitudNombre, comparador_desde_corpus
 from ..matching.normalizadores import LOCALES, normalizar_nombre
 from ..paises import (
     CATALOGO_PAISES,
@@ -666,13 +665,14 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
     )
     rep = rep[rep["NOMBRE_NORM"] != ""].reset_index(drop=True)
 
-    vocabulario = pd.Series(sorted(rep["NOMBRE_NORM"].unique()))
-    pesos = construir_idf(vocabulario.reset_index(drop=True))
-    pesos = neutralizar_genericos(pesos, cfg.genericos_todos, peso=cfg.peso_token_generico)
-    comparador = SimilitudNombre(
-        pesos,
-        vocabulario.to_numpy(),
+    # F2.1: la receta del comparador (vocabulario, IDF, genéricos) vive en
+    # `matching.nombre_idf.comparador_desde_corpus` y la comparte la cobertura
+    # por estrellas de L5 (una regla se escribe una vez).
+    comparador = comparador_desde_corpus(
+        rep["NOMBRE_NORM"],
+        genericos_neutralizados=cfg.genericos_todos,
         genericos_estructurales=cfg.genericos_estructurales,
+        peso_token_generico=cfg.peso_token_generico,
         alfa=cfg.alfa_idf,
         prefix_weight=cfg.prefix_weight,
         max_diferencia_informativa=cfg.max_diferencia_informativa,
@@ -681,6 +681,7 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
         longitud_minima_token=cfg.longitud_minima_token,
         ignorar_numericos=cfg.ignorar_numericos,
     )
+    pesos = comparador.pesos_idf
     if cfg.verboso:
         print(f"representantes únicos (país, nombre): {len(rep):,}")
         print(
