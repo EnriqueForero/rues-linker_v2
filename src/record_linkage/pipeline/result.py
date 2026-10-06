@@ -19,10 +19,18 @@ Compatibilidad hacia atrás:
     PipelineResult implementa __getitem__, get(), keys() y __contains__,
     por lo que `result["correlative_table"]` y `result.get("golden_records")`
     siguen funcionando como antes — pero ahora son lazy.
+
+Exportadores (F2.11):
+    `to_excel` y `to_csv` ya no escriben nada por su cuenta: son ALIAS de la
+    función libre del estándar `exporters.escritor.exportar_vistas` y avisan
+    con `DeprecationWarning`. Los notebooks que los usaban como exportador
+    genérico llaman a `exportar_vistas` directamente. La carga perezosa de
+    esta clase se retira junto con `RecordLinkagePipeline`.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -31,11 +39,8 @@ from typing import Any
 
 import pandas as pd
 
-from ..exporters._spreadsheet import (
-    prepare_spreadsheet_data,
-    safe_sheet_name,
-    validate_leaf_name,
-)
+from ..exporters.escritor import exportar_vistas
+from .errores import mensaje_accionable
 
 
 @dataclass
@@ -218,71 +223,77 @@ class PipelineResult:
         }
 
     # ──────────────────────────────────────────────────────────────────
-    # Exportadores (F6.4 — v2.1.0)
-    #
-    # Métodos de conveniencia para que callers no tengan que materializar
-    # los DataFrames manualmente. Internamente usan las cached_property,
-    # por lo que respetan la carga lazy: solo se lee del disco lo que se
-    # va a exportar.
+    # Exportadores (F6.4 — v2.1.0): desde F2.11 son alias de ``exportar_vistas``
     # ──────────────────────────────────────────────────────────────────
+    def _vistas(self, include: tuple[str, ...], metodo: str) -> dict[str, pd.DataFrame]:
+        """Las claves de ``include`` que resuelven a un DataFrame NO vacío, en orden."""
+        vistas: dict[str, pd.DataFrame] = {}
+        for key in include:
+            value = self.get(key)
+            if isinstance(value, pd.DataFrame) and not value.empty:
+                vistas[key] = value
+        if not vistas:
+            raise ValueError(
+                f"{metodo}: ninguna de las claves {include} produjo un DataFrame "
+                f"no vacío. Claves disponibles: {list(self.keys())}"
+            )
+        return vistas
+
+    @staticmethod
+    def _avisar(metodo: str) -> None:
+        warnings.warn(
+            f"PipelineResult.{metodo} es un alias y desaparece con RecordLinkagePipeline: "
+            "use record_linkage.exportar_vistas(tablas, carpeta, nombre, ...).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
     def to_excel(
         self,
         path: str | Path,
         include: tuple[str, ...] = ("golden_records", "correlative_table"),
         engine: str = "openpyxl",
     ) -> Path:
-        """Exportar resultados a un archivo Excel multi-hoja.
+        """Alias de ``exportar_vistas(..., libro=True)``: un libro con una hoja por clave.
 
-        Cada clave en `include` se escribe a una hoja con el mismo nombre
-        (truncado a 31 caracteres por la restricción de Excel). Los valores
-        None se omiten silenciosamente.
-
-        Args:
-            path: Ruta del .xlsx a crear.
-            include: Tupla de claves del resultado a exportar.
-                Default: golden_records y correlative_table.
-                Acepta cualquier clave que `__getitem__` resuelva a un DataFrame.
-            engine: Motor de pandas (`openpyxl` por defecto). Requiere
-                `pip install openpyxl`.
+        Cada clave de ``include`` que resuelva a un DataFrame no vacío es una
+        hoja (nombre saneado a 31 caracteres y único); ``path`` debe terminar
+        en ``.xlsx`` y el único motor es ``openpyxl`` (el del estándar). Una
+        tabla que no cabe en Excel va completa a ``<tronco>__<clave>.csv.gz``
+        al lado del libro, como en ``exportar_vistas``; nunca un recorte.
 
         Returns:
-            Path absoluto del archivo creado.
+            Ruta absoluta del libro (o del primer archivo escrito si ninguna
+            tabla cupo en Excel).
 
         Raises:
-            ValueError: si ninguna de las claves resulta en un DataFrame.
-
-        Example:
-            >>> result = pipeline.run(sources=...)
-            >>> result.to_excel("salida.xlsx")
-            >>> # también con sheets personalizados:
-            >>> result.to_excel("salida.xlsx", include=("golden_records",))
+            ValueError: si ninguna clave produce un DataFrame no vacío, si
+                ``path`` no es ``.xlsx`` o si ``engine`` no es ``openpyxl``.
         """
+        self._avisar("to_excel")
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Resolver pares (sheet_name, DataFrame) filtrando los None
-        sheets: list[tuple[str, pd.DataFrame]] = []
-        used_sheet_names: set[str] = set()
-        for key in include:
-            value = self.get(key)
-            if isinstance(value, pd.DataFrame) and not value.empty:
-                # Excel limita nombres a 31 chars, prohíbe varios caracteres y
-                # compara nombres sin distinguir mayúsculas. El helper también
-                # evita colisiones después de truncar/sanear.
-                sheet_name = safe_sheet_name(str(key), used_sheet_names)
-                sheets.append((sheet_name, value))
-
-        if not sheets:
+        if path.suffix.lower() != ".xlsx":
             raise ValueError(
-                f"to_excel: ninguna de las claves {include} produjo un DataFrame "
-                f"no vacío. Claves disponibles: {list(self.keys())}"
+                mensaje_accionable(
+                    f"to_excel recibió {path.name!r}, que no termina en .xlsx.",
+                    "exportar_vistas escribe <carpeta>/<nombre>.xlsx; otro sufijo "
+                    "produciría un archivo que no es el pedido.",
+                    "Pase una ruta .xlsx o llame a exportar_vistas(tablas, carpeta, nombre).",
+                )
             )
-
-        with pd.ExcelWriter(path, engine=engine) as writer:
-            for sheet_name, df in sheets:
-                prepare_spreadsheet_data(df).to_excel(writer, sheet_name=sheet_name, index=False)
-
-        return path.resolve()
+        if engine != "openpyxl":
+            raise ValueError(
+                mensaje_accionable(
+                    f"to_excel recibió engine={engine!r}.",
+                    "El estándar escribe los libros pequeños con openpyxl; otro motor "
+                    "no está probado con la neutralización de hoja de cálculo.",
+                    "Quite el parámetro engine (o use exportar_vistas).",
+                )
+            )
+        vistas = self._vistas(include, "to_excel")
+        escritas = exportar_vistas(vistas, path.parent, path.stem, libro=True)
+        libro = path.resolve()
+        return libro if libro in {r.resolve() for r in escritas} else escritas[0].resolve()
 
     def to_csv(
         self,
@@ -291,41 +302,32 @@ class PipelineResult:
         index: bool = False,
         encoding: str = "utf-8",
     ) -> dict[str, Path]:
-        """Exportar resultados a un directorio con un .csv por DataFrame.
+        """Alias de ``exportar_vistas(..., formato="csv")``: un ``<clave>.csv`` por clave.
 
-        Args:
-            output_dir: Directorio destino (se crea si no existe).
-            include: Claves del resultado a exportar.
-            index: Si True incluye el índice del DataFrame en el CSV.
-            encoding: Codificación de archivo (utf-8 por defecto).
+        Con ``index=True`` el índice entra como primera columna (``reset_index``)
+        y recibe la misma neutralización que el resto. Solo UTF-8: es lo que
+        ``exportar_vistas`` escribe.
 
         Returns:
             Dict {clave: Path} con las rutas absolutas de los archivos creados.
 
         Raises:
-            ValueError: si ninguna de las claves resulta en un DataFrame.
+            ValueError: si ninguna clave produce un DataFrame no vacío o si
+                ``encoding`` no es UTF-8.
         """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        written: dict[str, Path] = {}
-        output_root = output_dir.resolve()
-        for key in include:
-            safe_key = validate_leaf_name(key, "include")
-            value = self.get(key)
-            if isinstance(value, pd.DataFrame) and not value.empty:
-                csv_path = (output_root / f"{safe_key}.csv").resolve()
-                if csv_path.parent != output_root:
-                    raise ValueError(f"include sale del directorio de exportación: {key!r}")
-                prepare_spreadsheet_data(value, include_index=index).to_csv(
-                    csv_path, index=index, encoding=encoding
-                )
-                written[key] = csv_path.resolve()
-
-        if not written:
+        self._avisar("to_csv")
+        if encoding.lower().replace("_", "-") not in ("utf-8", "utf8"):
             raise ValueError(
-                f"to_csv: ninguna de las claves {include} produjo un DataFrame "
-                f"no vacío. Claves disponibles: {list(self.keys())}"
+                mensaje_accionable(
+                    f"to_csv recibió encoding={encoding!r}.",
+                    "exportar_vistas escribe UTF-8, la codificación del estándar; "
+                    "otra codificación produciría un archivo distinto del documentado.",
+                    "Quite el parámetro encoding; si necesita otra codificación, "
+                    "recodifique el archivo después.",
+                )
             )
-
-        return written
+        vistas = self._vistas(include, "to_csv")
+        if index:
+            vistas = {k: v.reset_index() for k, v in vistas.items()}
+        escritas = exportar_vistas(vistas, output_dir, formato="csv")
+        return {k: r.resolve() for k, r in zip(vistas, escritas, strict=True)}

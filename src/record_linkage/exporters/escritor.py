@@ -82,6 +82,12 @@ Reglas
   es la del paquete (``importlib.metadata``). ``config_auditoria.json`` queda
   en ``_trabajo/L6_reporting/`` como alias que remite aquí.
 
+``exportar_vistas`` es la función libre para las VISTAS derivadas que un
+notebook agrega al lado de la carpeta (``vistas/``): un ``.xlsx`` por vista
+—o un libro con una hoja por vista— si cabe, ``.csv.gz`` si no; la misma
+neutralización y el mismo límite que el estándar, escritos una vez. Hasta
+F2.11 vivía copiada en cuatro notebooks y como ``PipelineResult.to_excel``.
+
 ``leer_resultado`` hace el camino inverso: verifica las huellas del
 manifiesto (falla con mensaje accionable si un artefacto cambió o falta),
 lee las tablas y, con ``alias="es"``, renombra las columnas según
@@ -103,7 +109,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import pyarrow as pa
@@ -115,7 +121,8 @@ from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
 from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
-from ._spreadsheet import prepare_spreadsheet_data, validate_leaf_name
+from . import excel
+from ._spreadsheet import prepare_spreadsheet_data, safe_sheet_name, validate_leaf_name
 from .excel import (
     LIMITE_FILAS_EXCEL,
     escribir_excel_o_leeme,
@@ -138,6 +145,7 @@ __all__ = [
     "escribir_parquet",
     "escribir_resultado",
     "escribir_xlsx",
+    "exportar_vistas",
     "leeme_alias_v1",
     "leeme_no_cabe",
     "leer_resultado",
@@ -479,11 +487,172 @@ def escribir_xlsx(
     """
     if df is None and leeme is None:
         raise ValueError("escribir_xlsx: hace falta df, leeme o ambos.")
+    _escribir_libro([] if df is None else [(hoja, df)], ruta, leeme=leeme)
+
+
+def _escribir_libro(
+    hojas: Sequence[tuple[str, pd.DataFrame]], ruta: Path, *, leeme: pd.DataFrame | None = None
+) -> None:
+    """Punto ÚNICO de escritura openpyxl: ``hojas`` neutralizadas, ``LEEME`` primero si viene."""
     with pd.ExcelWriter(ruta, engine="openpyxl") as escritor:
         if leeme is not None:
             leeme.to_excel(escritor, sheet_name="LEEME", index=False, header=False)
-        if df is not None:
+        for hoja, df in hojas:
             prepare_spreadsheet_data(df).to_excel(escritor, sheet_name=hoja, index=False)
+
+
+#: Formatos de ``exportar_vistas``: ``auto`` = xlsx si cabe, csv.gz si no; ``csv`` = csv plano.
+FormatoVista = Literal["auto", "csv"]
+
+
+def _vistas_validadas(tablas: Mapping[str, pd.DataFrame]) -> list[tuple[str, pd.DataFrame]]:
+    """Las vistas en orden, o la excepción accionable ANTES de tocar el disco."""
+    if not tablas:
+        raise ValueError(
+            mensaje_accionable(
+                "exportar_vistas no recibió ninguna vista.",
+                "Sin tablas no hay nada que escribir y una carpeta vacía parece una "
+                "corrida que terminó bien.",
+                "Pase un dict {nombre_de_vista: DataFrame} con al menos una vista.",
+            )
+        )
+    vistas: list[tuple[str, pd.DataFrame]] = []
+    for vista, tabla in tablas.items():
+        if not isinstance(tabla, pd.DataFrame):
+            raise TypeError(
+                mensaje_accionable(
+                    f"La vista {vista!r} no es un DataFrame: es {type(tabla).__name__}.",
+                    "Una vista es una tabla que se abre en hoja de cálculo; otra cosa "
+                    "no tiene filas ni columnas que escribir.",
+                    "Pase solo DataFrames (las métricas escalares van en el manifiesto).",
+                )
+            )
+        vistas.append((str(vista), tabla))
+    return vistas
+
+
+def exportar_vistas(
+    tablas: Mapping[str, pd.DataFrame],
+    carpeta: str | Path,
+    nombre: str | None = None,
+    *,
+    libro: bool = False,
+    formato: FormatoVista = "auto",
+    limite: int | None = None,
+) -> list[Path]:
+    """Escribe las VISTAS derivadas (``tablas``) en ``carpeta``; devuelve las rutas escritas.
+
+    Es la función libre del estándar para lo que un notebook agrega al lado de
+    la carpeta de ``escribir_resultado`` (``vistas/``: DUPLICADOS, RESUMEN,
+    PARES_CRUZADOS…) y para los entregables de los flujos que aún no escriben
+    la carpeta (07 importadores, 09 vinculación). El manifiesto no las lista y
+    ``leer_resultado`` las ignora: no son parte del contrato.
+
+    Cómo escribe (las reglas del estándar, escritas una vez):
+
+    * ``formato="auto"`` (por defecto): cada vista va a
+      ``<carpeta>/<nombre>__<vista>.xlsx`` (hoja = vista) si cabe en Excel
+      (``limite`` filas de datos; ``None`` = ``LIMITE_FILAS_EXCEL``) y a
+      ``<nombre>__<vista>.csv.gz`` COMPLETA si no cabe —nunca un recorte—.
+    * ``libro=True``: UN ``<carpeta>/<nombre>.xlsx`` con una hoja por vista
+      (nombres saneados y únicos, ``safe_sheet_name``); la vista que no cabe
+      va a ``<nombre>__<vista>.csv.gz`` al lado, y si ninguna cabe no hay libro.
+    * ``formato="csv"``: un ``<nombre>__<vista>.csv`` plano por vista, sin
+      límite (no admite ``libro``).
+    * Sin ``nombre`` el archivo se llama ``<vista>.<ext>``; con ``libro`` hace falta.
+    * Todo lo que se abre en hoja de cálculo pasa por ``prepare_spreadsheet_data``
+      (apóstrofo ante ``=``, ``+``, ``-``, ``@``; sin caracteres de control; un
+      dict/list en una celda como texto) y NUNCA muta la tabla de entrada.
+    * Una vista vacía se escribe con su encabezado: «0 duplicados» es
+      información, no silencio.
+
+    Fail-fast, antes de tocar el disco: sin vistas (``ValueError``), un valor
+    que no es DataFrame (``TypeError``), un ``nombre`` o una vista que nombra
+    un archivo con separadores de ruta o caracteres de control (``ValueError``,
+    ``validate_leaf_name``), ``libro`` sin ``nombre`` o con ``formato="csv"``.
+
+    Hasta F2.11 vivía copiada en los notebooks 01–04 y como
+    ``PipelineResult.to_excel``/``to_csv`` (hoy alias de esta función).
+    """
+    if formato not in ("auto", "csv"):
+        raise ValueError(
+            mensaje_accionable(
+                f"exportar_vistas: formato {formato!r} desconocido.",
+                "Un formato que no se conoce no se ignora en silencio.",
+                'Use formato="auto" (xlsx si cabe, csv.gz si no) o formato="csv".',
+            )
+        )
+    if libro and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: libro=True no se combina con formato="csv".',
+                "Un libro es un .xlsx con una hoja por vista; un CSV no tiene hojas.",
+                'Quite libro=True para un .csv por vista, o use formato="auto".',
+            )
+        )
+    if libro and nombre is None:
+        raise ValueError(
+            mensaje_accionable(
+                "exportar_vistas: libro=True necesita nombre.",
+                "El libro se llama <carpeta>/<nombre>.xlsx; sin nombre no hay archivo.",
+                "Pase nombre='<tronco del archivo>' (sin extensión ni rutas).",
+            )
+        )
+    if nombre is not None:
+        validate_leaf_name(nombre, "nombre")
+    vistas = _vistas_validadas(tablas)
+    prefijo = "" if nombre is None else f"{nombre}__"
+    tope = excel._limite(limite)
+    # Se valida TODO antes de escribir: una vista mal nombrada no deja a medias
+    # las anteriores. En un libro la vista solo nombra una hoja (saneada), salvo
+    # que no quepa y tenga que nombrar su .csv.gz.
+    sueltas = [v for v, t in vistas if not libro or len(t) > tope]
+    for vista in sueltas:
+        validate_leaf_name(vista, "vista")
+
+    carpeta = Path(carpeta)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    escritas: list[Path] = []
+    if formato == "csv":
+        for vista, tabla in vistas:
+            ruta = carpeta / f"{prefijo}{vista}.csv"
+            prepare_spreadsheet_data(tabla).to_csv(ruta, index=False)
+            escritas.append(ruta)
+        logger.info("exportar_vistas: %d vistas en %s (csv)", len(escritas), carpeta)
+        return escritas
+
+    def _csv_gz(vista: str, tabla: pd.DataFrame) -> Path:
+        ruta = carpeta / f"{prefijo}{vista}.csv.gz"
+        escribir_csv_gz(tabla, ruta)
+        logger.info(
+            "exportar_vistas: la vista %r no cabe en Excel (%s > %s filas); va completa a %s",
+            vista,
+            miles(len(tabla)),
+            miles(tope),
+            ruta.name,
+        )
+        return ruta
+
+    if libro:
+        # Primero el libro (lo que cabe), después los .csv.gz de lo que no cabe.
+        usados: set[str] = set()
+        hojas = [(safe_sheet_name(v, usados), t) for v, t in vistas if len(t) <= tope]
+        if hojas:
+            ruta = carpeta / f"{nombre}.xlsx"
+            _escribir_libro(hojas, ruta)
+            escritas.append(ruta)
+        escritas += [_csv_gz(v, t) for v, t in vistas if len(t) > tope]
+    else:
+        # Un archivo por vista, en el orden en que llegaron.
+        for vista, tabla in vistas:
+            if len(tabla) <= tope:
+                ruta = carpeta / f"{prefijo}{vista}.xlsx"
+                escribir_xlsx(tabla, ruta, hoja=safe_sheet_name(vista, set()))
+                escritas.append(ruta)
+            else:
+                escritas.append(_csv_gz(vista, tabla))
+    logger.info("exportar_vistas: %d archivos en %s", len(escritas), carpeta)
+    return escritas
 
 
 def leeme_alias_v1(archivo_nuevo: str) -> pd.DataFrame:
