@@ -251,7 +251,44 @@ def test_casos_revision_completos_no_se_rotulan_como_muestra(correlativa, golden
 
     assert len(casos) == 50
     assert casos["ALCANCE"].unique().tolist() == ["COMPLETO (50 de 50)"]
-    assert metrics["muestras"] == {}
+    # Nada se recortó: no se escribe un registro vacío en las métricas.
+    assert "muestras" not in metrics
+
+
+def test_casos_revision_sobre_golden_recortado_nunca_dicen_completo(correlativa, golden):
+    # El llamador (orquestador bajo RAM crítica) recortó el golden a 50 filas y lo
+    # declaró. Que los 50 casos quepan en el tope NO los vuelve «completos»:
+    # son una muestra de una vista.
+    pocos = golden.head(50).copy()
+    pocos["CONFIDENCE_SCORE"] = 0.4
+    metrics: dict = {"muestras": {"golden": {"n": 50, "N": N_GRUPOS, "motivo": "memoria"}}}
+    reportes = _reportes(correlativa, pocos, metrics=metrics)
+    casos = reportes["casos_revision"]
+
+    assert len(casos) == 50
+    alcance = casos["ALCANCE"].unique().tolist()
+    assert len(alcance) == 1
+    assert not alcance[0].startswith("COMPLETO")
+    assert alcance[0] == f"MUESTRA (50 de 50, sobre una vista de 50 de {N_GRUPOS} del golden)"
+    assert metrics["muestras"]["casos_revision"] == {
+        "n": 50,
+        "N": 50,
+        "golden_vista": {"n": 50, "N": N_GRUPOS},
+    }
+
+
+@pytest.mark.parametrize("tope", [-5, 0, 2.5, "1000"])
+def test_tope_de_casos_revision_invalido_falla_rapido(correlativa, golden, tope):
+    with pytest.raises(ValueError, match="report_max_casos_revision") as exc:
+        ReportGenerator(
+            correlative_data=correlativa,
+            golden_records_data=golden,
+            metrics={},
+            config={"report_max_casos_revision": tope},
+        )
+    mensaje = str(exc.value)
+    assert "Por qué importa" in mensaje
+    assert "Qué hacer" in mensaje
 
 
 def test_report_sample_size_ya_no_aplica_y_se_avisa(correlativa, golden):
@@ -294,6 +331,19 @@ def test_vista_recortada_declarada_rotula_los_agregados_y_conserva_el_n_real(cor
             "golden": {"n": n_vista, "N": N_GRUPOS, "motivo": "memoria crítica"},
         },
     }
+    # Las mismas métricas que el orquestador calcula (_build_metrics) sobre las
+    # tablas completas ANTES de recortar las vistas.
+    puntajes = golden["CONFIDENCE_SCORE"]
+    multifuente = int((golden["SOURCES_COUNT"] > 1).sum())
+    metrics.update(
+        {
+            "multi_source_groups": multifuente,
+            "avg_confidence": float(puntajes.mean()),
+            "high_confidence_count": int((puntajes > 0.9).sum()),
+            "low_confidence_count": int((puntajes < 0.75).sum()),
+            "sources_count": 3,
+        }
+    )
     reportes = _reportes(correlativa.head(n_vista), golden.head(n_vista), metrics=metrics)
 
     rotulo_corr = f"MUESTRA ({n_vista} de {N_FILAS})"
@@ -305,17 +355,64 @@ def test_vista_recortada_declarada_rotula_los_agregados_y_conserva_el_n_real(cor
     resumen = reportes["resumen_ejecutivo"]
     assert _valor_resumen(resumen, "Total Registros Procesados") == f"{N_FILAS:,}"
     assert _valor_resumen(resumen, "Entidades Únicas Identificadas") == f"{N_GRUPOS:,}"
+    assert _valor_resumen(resumen, "Fuentes de Datos") == "3"
+    assert _valor_resumen(resumen, "Entidades Multi-fuente") == f"{multifuente:,}"
+    # La calidad sale de las métricas (calculadas sobre TODO el golden), no de la vista.
+    assert _valor_resumen(resumen, "Confidence Promedio") == f"{puntajes.mean():.3f}"
+    assert (
+        _valor_resumen(resumen, "Registros Alta Confianza (>0.9)") == f"{(puntajes > 0.9).sum():,}"
+    )
+    assert _valor_resumen(resumen, "Casos para Revisión (<0.75)") == f"{(puntajes < 0.75).sum():,}"
+    # Hubo recorte declarado: el resumen lleva ALCANCE y ninguna fila sale de la vista.
+    assert resumen["ALCANCE"].unique().tolist() == ["COMPLETO"]
     # Lo declarado arriba sobrevive; la entrada propia se añade sin pisarlo.
     assert set(metrics["muestras"]) == {"correlativa", "golden", "casos_revision"}
+    assert metrics["muestras"]["casos_revision"]["golden_vista"] == {"n": n_vista, "N": N_GRUPOS}
 
 
-def test_orquestador_declara_el_recorte_de_l6_bajo_presion_de_ram(tmp_path, monkeypatch):
+def test_vista_recortada_sin_metricas_usa_el_n_declarado_y_rotula_la_vista(correlativa, golden):
+    # Constructor público sin `total_records` ni cifras de calidad: el N real
+    # está en lo declarado y se usa; lo que solo puede salir de la vista se rotula.
+    n_vista = 50_000
+    metrics: dict = {
+        "muestras": {
+            "correlativa": {"n": n_vista, "N": N_FILAS},
+            "golden": {"n": n_vista, "N": N_GRUPOS},
+        }
+    }
+    vista_gold = golden.head(n_vista)
+    reportes = _reportes(correlativa.head(n_vista), vista_gold, metrics=metrics)
+    resumen = reportes["resumen_ejecutivo"].set_index("Métrica")
+
+    assert resumen.loc["Total Registros Procesados", "Valor"] == f"{N_FILAS:,}"
+    assert resumen.loc["Total Registros Procesados", "ALCANCE"] == "COMPLETO"
+    assert resumen.loc["Entidades Únicas Identificadas", "Valor"] == f"{N_GRUPOS:,}"
+    assert resumen.loc["Entidades Únicas Identificadas", "ALCANCE"] == "COMPLETO"
+
+    rotulo_gold = f"MUESTRA ({n_vista} de {N_GRUPOS})"
+    rotulo_corr = f"MUESTRA ({n_vista} de {N_FILAS})"
+    puntajes_vista = vista_gold["CONFIDENCE_SCORE"]
+    alta = resumen.loc["Registros Alta Confianza (>0.9)"]
+    assert alta["Valor"] == f"{(puntajes_vista > 0.9).sum():,}"
+    assert alta["ALCANCE"] == rotulo_gold
+    assert resumen.loc["Casos para Revisión (<0.75)", "ALCANCE"] == rotulo_gold
+    assert resumen.loc["Confidence Promedio", "ALCANCE"] == rotulo_gold
+    assert resumen.loc["Entidades Multi-fuente", "ALCANCE"] == rotulo_corr
+    assert resumen.loc["Fuentes de Datos", "ALCANCE"] == rotulo_corr
+
+
+def test_resumen_sin_recorte_no_lleva_columna_alcance(correlativa, golden):
+    resumen = _reportes(correlativa, golden)["resumen_ejecutivo"]
+    assert "ALCANCE" not in resumen.columns
+
+
+def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: int) -> dict:
+    """Corre ``Orchestrator._run_L6`` con estrategias espía y RAM simulada."""
     from types import SimpleNamespace
 
     from record_linkage.pipeline.orchestrator import Orchestrator
     from record_linkage.reporting.strategies import DataExportStrategy, Phase
 
-    n_filas = 50_003
     datos = pd.DataFrame({"ID_GRUPO": np.arange(n_filas, dtype="int64"), "SRC": "FUENTE_SINT"})
     visto: dict[str, object] = {}
 
@@ -331,6 +428,7 @@ def test_orquestador_declara_el_recorte_de_l6_bajo_presion_de_ram(tmp_path, monk
             visto["analitica_n"] = len(ctx.correlative_df)
             visto["muestras"] = ctx.metrics.get("muestras")
             visto["total_records"] = ctx.metrics.get("total_records")
+            visto["metrics"] = ctx.metrics
             return []
 
     class _Silencio:
@@ -348,10 +446,16 @@ def test_orquestador_declara_el_recorte_de_l6_bajo_presion_de_ram(tmp_path, monk
     orquestador.log = _Silencio()
     monkeypatch.setattr(
         "record_linkage.pipeline.orchestrator.psutil.virtual_memory",
-        lambda: SimpleNamespace(percent=90.0),
+        lambda: SimpleNamespace(percent=mem_percent),
     )
 
     orquestador._run_L6({"golden": datos[["ID_GRUPO"]], "correlative": datos})
+    return visto
+
+
+def test_orquestador_declara_el_recorte_de_l6_bajo_presion_de_ram(tmp_path, monkeypatch):
+    n_filas = 50_003
+    visto = _correr_l6_sintetico(tmp_path, monkeypatch, mem_percent=90.0, n_filas=n_filas)
 
     assert visto["export_n"] == n_filas
     assert visto["analitica_n"] == 50_000
@@ -362,3 +466,14 @@ def test_orquestador_declara_el_recorte_de_l6_bajo_presion_de_ram(tmp_path, monk
     assert muestras["correlativa"]["N"] == n_filas
     assert muestras["golden"] == {**muestras["golden"], "n": 50_000, "N": n_filas}
     assert "memoria crítica" in muestras["correlativa"]["motivo"]
+    # La bandera heredada se deriva del registro: una sola fuente de verdad.
+    assert visto["metrics"]["reporting_sampled"] is True
+    assert visto["metrics"]["reporting_sample_size"] == 50_000
+
+
+def test_orquestador_sin_presion_de_ram_no_registra_muestras(tmp_path, monkeypatch):
+    visto = _correr_l6_sintetico(tmp_path, monkeypatch, mem_percent=40.0, n_filas=50_003)
+
+    assert visto["analitica_n"] == 50_003
+    assert "muestras" not in visto["metrics"]
+    assert "reporting_sampled" not in visto["metrics"]

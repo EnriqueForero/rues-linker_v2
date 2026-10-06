@@ -1843,29 +1843,27 @@ class Orchestrator:
         full_correl_df = results_data["correlative"]
         golden_df = full_golden_df
         correl_df = full_correl_df
-        reporting_sampled = False
         full_metrics = self._build_metrics(golden_df, correl_df)
+
+        # F1.5: un recorte nunca viaja sin rótulo. `muestras` es el registro
+        # único de lo recortado: ReportGenerator lo lee para marcar ALCANCE en
+        # sus reportes y para no confundir el N real (en `total_records`) con la
+        # vista. Solo entra en las métricas si hay algo que registrar.
+        muestras: dict[str, dict[str, Any]] = {}
 
         if mem_percent > MEMORY_CRITICAL_THRESHOLD:
             self.log.warning(f"   ⚠️ MEMORIA CRÍTICA ({mem_percent:.1f}%). Modo conservador...")
-
-            # F1.5: un recorte nunca viaja sin rótulo. `metrics["muestras"]` es el
-            # registro que ReportGenerator lee para marcar ALCANCE en sus reportes
-            # y para no confundir el N real (en `total_records`) con la vista.
-            muestras = full_metrics.setdefault("muestras", {})
             motivo = f"memoria crítica ({mem_percent:.1f} % > {MEMORY_CRITICAL_THRESHOLD:.0f} %)"
 
             if len(golden_df) > SAMPLE_SIZE:
                 orig = len(golden_df)
                 golden_df = golden_df.head(SAMPLE_SIZE)
-                reporting_sampled = True
                 muestras["golden"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 golden_df: {orig:,} → {SAMPLE_SIZE:,}")
 
             if len(correl_df) > SAMPLE_SIZE:
                 orig = len(correl_df)
                 correl_df = correl_df.head(SAMPLE_SIZE)
-                reporting_sampled = True
                 muestras["correlativa"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 correlative_df: {orig:,} → {SAMPLE_SIZE:,}")
 
@@ -1879,7 +1877,10 @@ class Orchestrator:
 
         # 4. OBTENER DATAFRAMES Y MÉTRICAS
         metrics = full_metrics
-        if reporting_sampled:
+        if muestras:
+            metrics["muestras"] = muestras
+            # Banderas heredadas (las leen consumidores del JSON de métricas):
+            # se derivan del registro, no se mantienen aparte.
             metrics["reporting_sampled"] = True
             metrics["reporting_sample_size"] = SAMPLE_SIZE
 

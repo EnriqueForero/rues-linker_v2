@@ -83,8 +83,8 @@ def test_row_limit_rejects_non_integer_or_negative_values(invalid: object) -> No
 def test_all_reporting_loaders_support_quoted_catalog_table(reporting_db: Path) -> None:
     logger = _LoggerStub()
 
+    # ReportGenerator lee la tabla completa (F1.5): no hay tope de filas que montar.
     report = ReportGenerator.__new__(ReportGenerator)
-    report.sample_size = 10
     report.logger = logger
     report._create_empty_dataframe = lambda _name: pd.DataFrame()
 
@@ -99,7 +99,7 @@ def test_all_reporting_loaders_support_quoted_catalog_table(reporting_db: Path) 
     suite.logger = logger
 
     table_name = 'golden"records'
-    assert len(report._load_from_sqlite(str(reporting_db), table_name)) == 2
+    assert len(report._load_from_sqlite(str(reporting_db), table_name, columnas=None)) == 2
     assert len(visualizer._load_from_sqlite(str(reporting_db), table_name)) == 2
     assert len(dashboard._load_from_sqlite(str(reporting_db), table_name, 10)) == 2
     assert len(suite._load_smart_sample(str(reporting_db), table_name, 10)) == 2
@@ -107,7 +107,6 @@ def test_all_reporting_loaders_support_quoted_catalog_table(reporting_db: Path) 
 
 def test_table_name_injection_is_rejected_without_modifying_database(reporting_db: Path) -> None:
     report = ReportGenerator.__new__(ReportGenerator)
-    report.sample_size = 10
     report.logger = _LoggerStub()
     report._create_empty_dataframe = lambda _name: pd.DataFrame()
 

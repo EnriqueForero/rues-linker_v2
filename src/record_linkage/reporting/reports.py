@@ -4,16 +4,16 @@ reporting.reports — record_linkage_pipeline
 Componentes:
     - class ReportGenerator  (origen: notebook celda [136])
 
-NOTA: Lógica de negocio preservada exactamente como en el notebook
-fuente. Solo se agregan imports, docstring de módulo y se eliminan
-directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
-
-F1.5 (v2): los agregados (``analisis_fuentes``, ``estadisticas_grupos`` y los
-totales del ``resumen_ejecutivo``) se calculan sobre la tabla COMPLETA. Hasta
-aquí el generador cargaba una muestra de ``report_sample_size`` (100.000)
-filas y a 139k registros el reporte decía «total 99.997» sin rotularlo. Lo
-único que sigue recortado —los casos de revisión ilustrativos— lo declara con
-la columna ``ALCANCE`` y en ``metrics["muestras"]``.
+NOTA: el módulo nació como migración literal del notebook (celda [136]);
+la lógica de negocio ya NO es la del notebook. F1.5 (v2) cambió el alcance:
+los agregados (``analisis_fuentes``, ``estadisticas_grupos`` y los totales
+del ``resumen_ejecutivo``) se calculan sobre la tabla COMPLETA. Hasta aquí el
+generador cargaba una muestra de ``report_sample_size`` (100.000) filas y a
+139k registros el reporte decía «total 99.997» sin rotularlo. Lo único que
+sigue recortado —los casos de revisión ilustrativos— lo declara con la
+columna ``ALCANCE`` y en ``metrics["muestras"]``; y si quien llamó recortó
+las tablas (orquestador bajo RAM crítica) y lo declaró en
+``metrics["muestras"]``, ningún reporte presenta esa vista como total.
 """
 
 from __future__ import annotations
@@ -26,7 +26,12 @@ from typing import Any
 import pandas as pd
 
 from ..utils.logger import CustomLogger
-from ._sqlite import open_readonly_sqlite, quote_existing_table, quote_sqlite_identifier
+from ._sqlite import (
+    open_readonly_sqlite,
+    quote_existing_table,
+    quote_sqlite_identifier,
+    validate_row_limit,
+)
 
 # Columnas de la correlativa que los reportes consumen. Cuando la tabla llega
 # por archivo se leen SOLO estas: los agregados son groupby sobre SRC/ID_GRUPO
@@ -38,6 +43,17 @@ PERILLAS_MUESTRA_RETIRADAS: tuple[str, ...] = ("report_sample_size", "report_chu
 
 # Tope de casos de revisión ilustrativos (el único reporte que se recorta).
 MAX_CASOS_REVISION_POR_DEFECTO = 1000
+
+# Valor de ``ALCANCE`` cuando la cifra cubre toda la tabla (o viene de una
+# métrica calculada sobre ella). Lo demás lleva ``MUESTRA (n de N)``.
+ALCANCE_COMPLETO = "COMPLETO"
+
+# Métricas del resumen cuyo valor real, si falta la métrica y la tabla llegó
+# recortada, es el N declarado de esa tabla en ``metrics["muestras"]``.
+TOTAL_DECLARADO_POR_METRICA: dict[str, str] = {
+    "total_records": "correlativa",
+    "unique_groups": "golden",
+}
 
 
 class ReportGenerator:
@@ -60,6 +76,14 @@ class ReportGenerator:
       reporte lleva los ``max_casos_revision`` primeros. Si recorta, cada fila
       dice ``ALCANCE = MUESTRA (n de N)`` y ``metrics["muestras"]["casos_revision"]``
       registra ``{"n": n, "N": N}``; si no, ``ALCANCE = COMPLETO (N de N)``.
+    - Si quien llamó declaró en ``metrics["muestras"]["correlativa"|"golden"]``
+      que la tabla llegó recortada (``{"n": n, "N": N}``), ningún reporte dice
+      COMPLETO: los agregados llevan ``ALCANCE = MUESTRA (n de N)``, el resumen
+      toma los totales y la calidad de las métricas (calculadas antes del
+      recorte) o del N declarado, y rotula fila a fila lo que solo pudo salir
+      de la vista; ``casos_revision`` añade ``golden_vista`` a su registro.
+    - ``metrics["muestras"]`` solo existe si algo se recortó: ausente
+      significa «todo completo».
     """
 
     def __init__(
@@ -87,7 +111,7 @@ class ReportGenerator:
         self.config = config or {}
         self.logger = CustomLogger("ReportGenerator")
 
-        self.max_casos_revision = int(
+        self.max_casos_revision = self._validar_tope_casos_revision(
             self.config.get("report_max_casos_revision", MAX_CASOS_REVISION_POR_DEFECTO)
         )
         for perilla in PERILLAS_MUESTRA_RETIRADAS:
@@ -122,6 +146,31 @@ class ReportGenerator:
 
         self.logger.info(f"Datos listos - Correlativa: {len(self.correlativa):,} registros")
         self.logger.info(f"Datos listos - Golden: {len(self.golden_records):,} registros")
+
+    @staticmethod
+    def _validar_tope_casos_revision(valor: object) -> int:
+        """Exige un entero ≥ 1 para ``report_max_casos_revision``; si no, falla rápido.
+
+        Reutiliza ``validate_row_limit`` (rechaza no enteros y negativos) y añade
+        el cero: ``head(0)`` dejaría el reporte vacío y ``head(-5)`` lo rotularía
+        como «MUESTRA (N-5 de N)», un rótulo absurdo registrado como muestra.
+        """
+        try:
+            tope = validate_row_limit(valor, label="report_max_casos_revision")
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Qué pasó: report_max_casos_revision={valor!r} no es un entero ≥ 1 ({e}). "
+                "Por qué importa: el tope recorta los casos de revisión con head(); un "
+                "valor inválido produce un reporte vacío o un rótulo MUESTRA absurdo. "
+                "Qué hacer: configure un entero positivo (1000 por defecto)."
+            ) from e
+        if tope < 1:
+            raise ValueError(
+                f"Qué pasó: report_max_casos_revision={tope} es cero. Por qué importa: el "
+                "reporte de casos de revisión quedaría vacío sin aviso. Qué hacer: "
+                "configure un entero positivo (1000 por defecto)."
+            )
+        return tope
 
     def _validate_loaded_data(self):
         """Valida que los datos cargados tengan las columnas mínimas necesarias."""
@@ -267,14 +316,23 @@ class ReportGenerator:
             return None
         return int((self.correlativa.groupby("ID_GRUPO")["SRC"].nunique() > 1).sum())
 
-    def _alcance_declarado(self, tabla: str) -> str | None:
-        """Rótulo ``MUESTRA (n de N)`` si quien llamó declaró en ``metrics["muestras"]``
-        que la tabla (``"correlativa"`` o ``"golden"``) llegó recortada; si no, ``None``."""
+    def _muestra_declarada(self, tabla: str) -> dict[str, int] | None:
+        """``{"n", "N"}`` si quien llamó declaró en ``metrics["muestras"]`` que la
+        tabla (``"correlativa"`` o ``"golden"``) llegó recortada; si no, ``None``."""
         muestras = self.metrics.get("muestras")
         declarado = muestras.get(tabla) if isinstance(muestras, dict) else None
         if not isinstance(declarado, dict) or "n" not in declarado or "N" not in declarado:
             return None
-        return f"MUESTRA ({int(declarado['n'])} de {int(declarado['N'])})"
+        return {"n": int(declarado["n"]), "N": int(declarado["N"])}
+
+    @staticmethod
+    def _rotulo_muestra(muestra: dict[str, int]) -> str:
+        return f"MUESTRA ({muestra['n']} de {muestra['N']})"
+
+    def _alcance_declarado(self, tabla: str) -> str | None:
+        """Rótulo ``MUESTRA (n de N)`` de la tabla declarada recortada, o ``None``."""
+        declarado = self._muestra_declarada(tabla)
+        return None if declarado is None else self._rotulo_muestra(declarado)
 
     def _rotular_alcance(self, reporte: pd.DataFrame, tabla: str) -> pd.DataFrame:
         """Añade ``ALCANCE`` al reporte solo si la tabla que lo alimenta llegó recortada."""
@@ -283,25 +341,38 @@ class ReportGenerator:
             reporte["ALCANCE"] = alcance
         return reporte
 
-    def _total_desde_tabla(self, nombre_metrica: str, valor_tabla: int | None) -> int:
-        """Prefiere el conteo de la tabla completa y avisa si la métrica heredada discrepa.
+    def _cifra_del_resumen(
+        self, nombre_metrica: str, valor_tabla: int | float | None, tabla: str
+    ) -> tuple[int | float, str]:
+        """Cifra del resumen y su alcance: ``(valor, "COMPLETO" | "MUESTRA (n de N)")``.
 
-        Si quien llamó declaró que la correlativa llegó recortada, la tabla es la
-        vista y la métrica (calculada antes del recorte) es el N real: se usa esa.
+        - Tabla completa: se prefiere el conteo de la tabla y se avisa si la
+          métrica heredada discrepa (pudo salir de una muestra).
+        - Tabla declarada recortada en ``metrics["muestras"][tabla]``: la tabla es
+          una vista. Se usa la métrica (calculada antes del recorte); si falta y
+          la cifra es el total de una tabla (``TOTAL_DECLARADO_POR_METRICA``), el
+          N declarado; y si tampoco, el valor de la vista ROTULADO como muestra.
         """
         valor_metrica = self.metrics.get(nombre_metrica)
-        if valor_tabla is None or (
-            valor_metrica is not None and self._alcance_declarado("correlativa") is not None
-        ):
-            return int(valor_metrica or 0)
-        if valor_metrica is not None and int(valor_metrica) != valor_tabla:
+        declarado = self._muestra_declarada(tabla)
+        if declarado is not None:
+            if valor_metrica is not None:
+                return valor_metrica, ALCANCE_COMPLETO
+            tabla_total = TOTAL_DECLARADO_POR_METRICA.get(nombre_metrica)
+            total = self._muestra_declarada(tabla_total) if tabla_total else None
+            if total is not None:
+                return total["N"], ALCANCE_COMPLETO
+            return valor_tabla or 0, self._rotulo_muestra(declarado)
+        if valor_tabla is None:
+            return valor_metrica or 0, ALCANCE_COMPLETO
+        if valor_metrica is not None and valor_metrica != valor_tabla:
             self.logger.warning(
                 f"metrics['{nombre_metrica}']={valor_metrica:,} difiere de la tabla "
                 f"completa ({valor_tabla:,}); el resumen usa la tabla. Por qué importa: "
                 "la métrica heredada pudo salir de una muestra. Qué hacer: revise quién "
                 "la calcula."
             )
-        return valor_tabla
+        return valor_tabla, ALCANCE_COMPLETO
 
     def generate_all_reports(self) -> dict[str, pd.DataFrame]:
         """
@@ -310,10 +381,13 @@ class ReportGenerator:
         """
         self.logger.info("Iniciando generación de reportes...")
 
-        # Registro de lo que se recorta: vacío significa que todo es completo.
+        # Registro de lo que se recorta: ausente significa que todo es completo.
         # Se conserva lo que declaró quien llamó (p. ej. el orquestador bajo
-        # presión de RAM) y se regenera solo la entrada propia.
-        self.metrics.setdefault("muestras", {}).pop("casos_revision", None)
+        # presión de RAM), se regenera solo la entrada propia y la clave se crea
+        # únicamente cuando hay algo que registrar.
+        muestras = self.metrics.get("muestras")
+        if isinstance(muestras, dict):
+            muestras.pop("casos_revision", None)
 
         # Definir todos los reportes disponibles (orden optimizado)
         report_generators = [
@@ -379,55 +453,78 @@ class ReportGenerator:
     def _generate_executive_summary(self) -> pd.DataFrame:
         """
         Genera resumen ejecutivo con métricas principales.
-        Versión mejorada con más métricas y formato profesional.
+
+        F1.5: cada fila sabe de dónde sale su cifra. Si alguna tabla llegó
+        recortada y declarada, el reporte lleva la columna ``ALCANCE`` con
+        ``COMPLETO`` (tabla completa, métrica o N declarado) o ``MUESTRA (n de N)``
+        (la cifra solo pudo salir de la vista). Sin recorte no hay columna.
         """
         try:
-            summary_data = []
+            summary_data: list[dict[str, str]] = []
+            hay_recorte = any(
+                self._muestra_declarada(tabla) is not None for tabla in ("correlativa", "golden")
+            )
+
+            def fila(
+                categoria: str, metrica: str, valor: str, descripcion: str, alcance: str
+            ) -> dict[str, str]:
+                return {
+                    "Categoría": categoria,
+                    "Métrica": metrica,
+                    "Valor": valor,
+                    "Descripción": descripcion,
+                    "ALCANCE": alcance,
+                }
 
             # --- MÉTRICAS DE VOLUMEN (sobre la correlativa completa; F1.5) ---
             tamanos = self._tamanos_grupo
             hay_tabla = not tamanos.empty
-            total_records = self._total_desde_tabla(
-                "total_records", int(tamanos.sum()) if hay_tabla else None
+            total_records, alc_total = self._cifra_del_resumen(
+                "total_records", int(tamanos.sum()) if hay_tabla else None, "correlativa"
             )
-            unique_groups = self._total_desde_tabla(
-                "unique_groups", len(tamanos) if hay_tabla else None
+            unique_groups, alc_grupos = self._cifra_del_resumen(
+                "unique_groups", len(tamanos) if hay_tabla else None, "correlativa"
             )
-            multi_source_groups = self._total_desde_tabla(
-                "multi_source_groups", self._grupos_multifuente
+            multi_source_groups, alc_multi = self._cifra_del_resumen(
+                "multi_source_groups", self._grupos_multifuente, "correlativa"
             )
-
-            # Contar fuentes si están disponibles
-            num_sources = 0
+            fuentes_tabla = None
             if not self.correlativa.empty and "SRC" in self.correlativa.columns:
-                num_sources = self.correlativa["SRC"].nunique()
+                fuentes_tabla = int(self.correlativa["SRC"].nunique())
+            num_sources, alc_fuentes = self._cifra_del_resumen(
+                "sources_count", fuentes_tabla, "correlativa"
+            )
 
             summary_data.extend(
                 [
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Total Registros Procesados",
-                        "Valor": f"{total_records:,}",
-                        "Descripción": "Número total de registros de entrada",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Entidades Únicas Identificadas",
-                        "Valor": f"{unique_groups:,}",
-                        "Descripción": "Grupos únicos después del linkage",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Fuentes de Datos",
-                        "Valor": str(num_sources) if num_sources > 0 else "N/A",
-                        "Descripción": "Número de fuentes procesadas",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Entidades Multi-fuente",
-                        "Valor": f"{multi_source_groups:,}",
-                        "Descripción": "Grupos con registros de múltiples fuentes",
-                    },
+                    fila(
+                        "VOLUMEN",
+                        "Total Registros Procesados",
+                        f"{int(total_records):,}",
+                        "Número total de registros de entrada",
+                        alc_total,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Entidades Únicas Identificadas",
+                        f"{int(unique_groups):,}",
+                        "Grupos únicos después del linkage",
+                        alc_grupos,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Fuentes de Datos",
+                        str(int(num_sources)) if num_sources > 0 else "N/A",
+                        "Número de fuentes procesadas",
+                        alc_fuentes,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Entidades Multi-fuente",
+                        f"{int(multi_source_groups):,}",
+                        "Grupos con registros de múltiples fuentes",
+                        alc_multi,
+                    ),
                 ]
             )
 
@@ -435,59 +532,77 @@ class ReportGenerator:
             linkage_rate = self.metrics.get("linkage_rate", 0)
             reduction_rate = self.metrics.get("reduction_rate", 0)
 
+            # Las métricas de eficiencia vienen del proceso (L2/L3), no de las tablas.
             summary_data.extend(
                 [
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Tasa de Linkage",
-                        "Valor": f"{linkage_rate:.2%}",
-                        "Descripción": "Porcentaje de registros vinculados",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Tasa de Reducción",
-                        "Valor": f"{reduction_rate:.2%}",
-                        "Descripción": "Reducción lograda por deduplicación",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Candidatos Encontrados",
-                        "Valor": f"{self.metrics.get('candidates_found', 0):,}",
-                        "Descripción": "Pares candidatos identificados por LSH",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Pares Evaluados",
-                        "Valor": f"{self.metrics.get('pairs_scored', 0):,}",
-                        "Descripción": "Pares que pasaron scoring detallado",
-                    },
+                    fila(
+                        "EFICIENCIA",
+                        "Tasa de Linkage",
+                        f"{linkage_rate:.2%}",
+                        "Porcentaje de registros vinculados",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Tasa de Reducción",
+                        f"{reduction_rate:.2%}",
+                        "Reducción lograda por deduplicación",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Candidatos Encontrados",
+                        f"{self.metrics.get('candidates_found', 0):,}",
+                        "Pares candidatos identificados por LSH",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Pares Evaluados",
+                        f"{self.metrics.get('pairs_scored', 0):,}",
+                        "Pares que pasaron scoring detallado",
+                        ALCANCE_COMPLETO,
+                    ),
                 ]
             )
 
-            # --- MÉTRICAS DE CALIDAD ---
+            # --- MÉTRICAS DE CALIDAD (sobre todo el golden; si llegó recortado,
+            # de las métricas calculadas antes del recorte o rotuladas) ---
             if not self.golden_records.empty and "CONFIDENCE_SCORE" in self.golden_records.columns:
                 scores = self.golden_records["CONFIDENCE_SCORE"].dropna()
                 if len(scores) > 0:
+                    promedio, alc_prom = self._cifra_del_resumen(
+                        "avg_confidence", float(scores.mean()), "golden"
+                    )
+                    alta, alc_alta = self._cifra_del_resumen(
+                        "high_confidence_count", int((scores > 0.9).sum()), "golden"
+                    )
+                    baja, alc_baja = self._cifra_del_resumen(
+                        "low_confidence_count", int((scores < 0.75).sum()), "golden"
+                    )
                     summary_data.extend(
                         [
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Confidence Promedio",
-                                "Valor": f"{scores.mean():.3f}",
-                                "Descripción": "Score promedio de confianza",
-                            },
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Registros Alta Confianza (>0.9)",
-                                "Valor": f"{(scores > 0.9).sum():,}",
-                                "Descripción": "Grupos con confidence superior a 0.9",
-                            },
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Casos para Revisión (<0.75)",
-                                "Valor": f"{(scores < 0.75).sum():,}",
-                                "Descripción": "Grupos que requieren revisión manual",
-                            },
+                            fila(
+                                "CALIDAD",
+                                "Confidence Promedio",
+                                f"{promedio:.3f}",
+                                "Score promedio de confianza",
+                                alc_prom,
+                            ),
+                            fila(
+                                "CALIDAD",
+                                "Registros Alta Confianza (>0.9)",
+                                f"{int(alta):,}",
+                                "Grupos con confidence superior a 0.9",
+                                alc_alta,
+                            ),
+                            fila(
+                                "CALIDAD",
+                                "Casos para Revisión (<0.75)",
+                                f"{int(baja):,}",
+                                "Grupos que requieren revisión manual",
+                                alc_baja,
+                            ),
                         ]
                     )
 
@@ -506,28 +621,34 @@ class ReportGenerator:
 
                 summary_data.extend(
                     [
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Tiempo Total",
-                            "Valor": time_str,
-                            "Descripción": "Duración total del proceso",
-                        },
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Throughput",
-                            "Valor": f"{throughput:.0f} reg/s",
-                            "Descripción": "Velocidad de procesamiento",
-                        },
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Memoria Máxima",
-                            "Valor": f"{self.metrics.get('max_memory_gb', 0):.1f} GB",
-                            "Descripción": "Uso máximo de memoria",
-                        },
+                        fila(
+                            "RENDIMIENTO",
+                            "Tiempo Total",
+                            time_str,
+                            "Duración total del proceso",
+                            ALCANCE_COMPLETO,
+                        ),
+                        fila(
+                            "RENDIMIENTO",
+                            "Throughput",
+                            f"{throughput:.0f} reg/s",
+                            "Velocidad de procesamiento",
+                            alc_total,
+                        ),
+                        fila(
+                            "RENDIMIENTO",
+                            "Memoria Máxima",
+                            f"{self.metrics.get('max_memory_gb', 0):.1f} GB",
+                            "Uso máximo de memoria",
+                            ALCANCE_COMPLETO,
+                        ),
                     ]
                 )
 
-            return pd.DataFrame(summary_data)
+            resumen = pd.DataFrame(summary_data)
+            if not hay_recorte:
+                resumen = resumen.drop(columns="ALCANCE")
+            return resumen
 
         except Exception as e:
             self.logger.error(f"Error en resumen ejecutivo: {e!s}")
@@ -786,15 +907,23 @@ class ReportGenerator:
             final_report = final_report[columns_to_include].copy()
             final_report["RAZON_PRINCIPAL"] = razon_principal
 
-            if n_mostrados < n_total:
-                final_report["ALCANCE"] = f"MUESTRA ({n_mostrados} de {n_total})"
-                self.metrics.setdefault("muestras", {})["casos_revision"] = {
-                    "n": n_mostrados,
-                    "N": n_total,
-                }
+            # Si el golden mismo es una vista declarada por quien llamó, el
+            # total de casos también lo es: nunca se rotula COMPLETO.
+            golden_vista = self._muestra_declarada("golden")
+            if n_mostrados < n_total or golden_vista is not None:
+                rotulo = f"MUESTRA ({n_mostrados} de {n_total}"
+                registro: dict[str, Any] = {"n": n_mostrados, "N": n_total}
+                if golden_vista is not None:
+                    rotulo += (
+                        f", sobre una vista de {golden_vista['n']} de {golden_vista['N']} "
+                        "del golden"
+                    )
+                    registro["golden_vista"] = golden_vista
+                final_report["ALCANCE"] = rotulo + ")"
+                self.metrics.setdefault("muestras", {})["casos_revision"] = registro
                 self.logger.info(
-                    f"casos_revision recortado a {n_mostrados:,} de {n_total:,} casos "
-                    "(los de mayor prioridad); rotulado en la columna ALCANCE"
+                    f"casos_revision: {n_mostrados:,} de {n_total:,} casos (los de mayor "
+                    f"prioridad); ALCANCE = {final_report['ALCANCE'].iloc[0]}"
                 )
             else:
                 final_report["ALCANCE"] = f"COMPLETO ({n_total} de {n_total})"
