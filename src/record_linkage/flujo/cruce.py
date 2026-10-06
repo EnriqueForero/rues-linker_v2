@@ -48,6 +48,7 @@ from ..ingestion import (
 )
 from ..matching import MatchingProfile
 from ..pipeline.errores import ColumnasArrastreError, ContratoSalidaError, mensaje_accionable
+from ..resultado import ResultadoLinkage
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
 from .insumos import (
@@ -2057,6 +2058,48 @@ def ejecutar_cruce(config: ConfigCruce) -> ResultadoCruce | ResultadoCruceDisco:
         cronometro.cerrar()
 
 
+def _golden_de(salida: ResultadoLinkage) -> pd.DataFrame:
+    """El golden que ``linkage()`` publicó; sin él el cruce no tiene entregable."""
+    if salida.golden is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un resultado sin golden.",
+                    "el flujo de cruce publica golden y correlativa.",
+                    "revise la ruta de linkage/collapse_exact_duplicates usada por ejecutar_cruce.",
+                )
+            ]
+        )
+    return salida.golden
+
+
+def _conflictos_identificador_de(salida: ResultadoLinkage) -> int:
+    """QA de identificador (grupos que mezclan dos bases válidas) que dejó ``salida.completar``.
+
+    Lo calculó ``completar`` con las técnicas del motor; de aquí sale a
+    ``metricas``. No se recalcula desde la correlativa publicada, que ya no
+    trae columnas técnicas.
+    """
+    conflictos = (
+        salida.manifiesto.get("completar", {})
+        .get("identificador", {})
+        .get("grupos_con_bases_distintas")
+    )
+    if conflictos is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un manifiesto sin completar.identificador."
+                    "grupos_con_bases_distintas.",
+                    "el QA de identificador del cruce se toma de ahí, no se recalcula "
+                    "desde la correlativa publicada (sin columnas técnicas).",
+                    "revise que linkage() complete el contrato con salida.completar.",
+                )
+            ]
+        )
+    return int(conflictos)
+
+
 def _ejecutar_cruce_medido(
     config: ConfigCruce, log: Any, cronometro: _Cronometro
 ) -> ResultadoCruce | ResultadoCruceDisco:
@@ -2159,37 +2202,9 @@ def _ejecutar_cruce_medido(
     # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
     # dict viejo siguen funcionando pero avisan, y la librería no se avisa a
     # sí misma.
-    golden_compacta = salida.golden
+    golden_compacta = _golden_de(salida)
     correlativa_compacta = salida.correlativa
-    if golden_compacta is None:
-        raise ContratoSalidaError(
-            [
-                mensaje_accionable(
-                    "linkage() devolvió un resultado sin golden.",
-                    "el flujo de cruce publica golden y correlativa.",
-                    "revise la ruta de linkage/collapse_exact_duplicates usada por ejecutar_cruce.",
-                )
-            ]
-        )
-    # El QA de identificador (grupos que mezclan dos bases válidas) lo calculó
-    # salida.completar con las técnicas del motor; de aquí sale a `metricas`.
-    conflictos_identificador = (
-        salida.manifiesto.get("completar", {})
-        .get("identificador", {})
-        .get("grupos_con_bases_distintas")
-    )
-    if conflictos_identificador is None:
-        raise ContratoSalidaError(
-            [
-                mensaje_accionable(
-                    "linkage() devolvió un manifiesto sin completar.identificador."
-                    "grupos_con_bases_distintas.",
-                    "el QA de identificador del cruce se toma de ahí, no se recalcula "
-                    "desde la correlativa publicada (sin columnas técnicas).",
-                    "revise que linkage() complete el contrato con salida.completar.",
-                )
-            ]
-        )
+    conflictos_identificador = _conflictos_identificador_de(salida)
     publicacion: PublicacionResultadosDisco | None = None
     golden: pd.DataFrame | TablaParquet
     correlativa: pd.DataFrame | TablaParquet

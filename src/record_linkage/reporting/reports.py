@@ -21,6 +21,7 @@ from __future__ import annotations
 import gc
 import os
 from functools import cached_property
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -271,7 +272,7 @@ class ReportGenerator:
             return pd.read_hdf(ruta, key=table_name)
 
         raise ValueError(
-            f"Formato no reconocido para '{table_name}': {os.path.basename(ruta)}. "
+            f"Formato no reconocido para '{table_name}': {Path(ruta).name}. "
             "Se aceptan .db, .parquet, .csv(.gz|.zip), .xlsx/.xls y .h5."
         )
 

@@ -180,11 +180,13 @@ ignore = [
     "SIM117",
 ]
 
-# C901 (complejidad) no está en `select`: la vigilan el trinquete (scripts/deuda.py,
-# que ignora los noqa) y el paso «Reglas estrictas en código tocado» del CI
-# (máximo 15 sobre los archivos del PR, con --isolated). Un `# noqa: C901` en
-# una función heredada exime solo a ese paso; sin esta línea, RUF100 lo
-# reportaría aquí como «non-enabled» y la misma anotación rompería el lint.
+# C901 (complejidad) no está en `select`: la vigilan el trinquete de deuda
+# (scripts/deuda.py, que ignora los noqa) y el paso «Reglas estrictas en código
+# tocado» del CI (scripts/reglas_estrictas.py: por archivo y regla, HEAD no puede
+# superar a la base; máximo 15, con --isolated). Un `# noqa: C901` justificado en
+# el PR exime solo a ese paso (p. ej. una función heredada que un cambio mínimo
+# empuja sobre el máximo); sin esta línea, RUF100 lo reportaría aquí como
+# «non-enabled» y la misma anotación rompería el lint.
 # PTH105 (os.replace): dos sitios de ingestion/duckdb.py lo necesitan en 3.10
 # (pathlib enlaza os.replace al importar y las pruebas de fallo de commit no
 # lo interceptarían); el trinquete los sigue contando en os_path.

@@ -247,7 +247,7 @@ class EnhancedReportingSuite:
         """(filas, columnas) del insumo sin cargarlo; ``None`` donde no se puede saber."""
         if isinstance(data_ref, pd.DataFrame):
             return len(data_ref), list(data_ref.columns)
-        if not isinstance(data_ref, str) or not os.path.isfile(data_ref):
+        if not isinstance(data_ref, str) or not Path(data_ref).is_file():
             return None, None
         try:
             if data_ref.endswith(".db"):
@@ -1577,7 +1577,7 @@ class EnhancedReportingSuite:
                 self.logger.error(f"Error guardando reporte Excel: {e!s}")
                 # F1.4: no dejar un xlsx a medias ni perder el motivo.
                 with contextlib.suppress(OSError):
-                    os.unlink(output_path)
+                    Path(output_path).unlink()
                 raise
         else:
             self.logger.info("No se detectaron casos problemáticos significativos")
