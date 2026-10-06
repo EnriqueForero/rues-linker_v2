@@ -1,0 +1,266 @@
+"""Pruebas del trinquete de deuda técnica (F0.8, ``scripts/deuda.py``).
+
+Rápidas: la comparación trabaja con diccionarios sintéticos y la medición
+corre ruff (sin mypy) sobre un paquete diminuto creado en ``tmp_path``. La
+única prueba que lee el repositorio mide ``src/record_linkage`` contra la
+referencia versionada; no se incluye a sí misma (vive en ``tests/``).
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+RAIZ = Path(__file__).resolve().parents[1]
+RUTA_SCRIPT = RAIZ / "scripts" / "deuda.py"
+
+
+def _cargar_modulo():
+    spec = importlib.util.spec_from_file_location("deuda", RUTA_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    modulo = importlib.util.module_from_spec(spec)
+    # Los dataclasses con `from __future__ import annotations` resuelven el
+    # módulo por sys.modules: hay que registrarlo antes de ejecutarlo.
+    sys.modules[spec.name] = modulo
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+deuda = _cargar_modulo()
+
+
+def _medicion(conteos: dict[str, int], ubicaciones: dict[str, list[str]]) -> dict:
+    return {"conteos": conteos, "ubicaciones": ubicaciones}
+
+
+# ---------------------------------------------------------------------------
+# Comparación con diccionarios sintéticos
+# ---------------------------------------------------------------------------
+
+
+def test_comparar_sube_devuelve_1_y_nombra_la_ubicacion_nueva() -> None:
+    referencia = _medicion(
+        {"print": 2, "os_path": 1}, {"print": ["a.py:1", "a.py:2"], "os_path": ["b.py:9"]}
+    )
+    actual = _medicion(
+        {"print": 3, "os_path": 1},
+        {"print": ["a.py:1", "a.py:2", "c.py:7"], "os_path": ["b.py:9"]},
+    )
+    veredicto = deuda.comparar(actual, referencia, "ref.json")
+    assert veredicto.codigo == 1
+    assert "print" in veredicto.texto and "2 → 3" in veredicto.texto and "+1" in veredicto.texto
+    assert "c.py:7" in veredicto.texto, "debe listar la ubicación nueva (diferencia de conjuntos)"
+    assert "a.py:1" not in veredicto.texto, "las ubicaciones ya conocidas no son nuevas"
+    assert "FALLA" in veredicto.texto
+
+
+def test_comparar_igual_devuelve_0() -> None:
+    ref = _medicion({"print": 2, "mypy": 5}, {"print": ["a.py:1", "a.py:2"], "mypy": ["z.py:3"]})
+    veredicto = deuda.comparar(ref, ref)
+    assert veredicto.codigo == 0
+    assert "PASA" in veredicto.texto
+
+
+def test_comparar_baja_devuelve_0_y_sugiere_actualizar_la_referencia() -> None:
+    referencia = _medicion({"print": 2}, {"print": ["a.py:1", "a.py:2"]})
+    actual = _medicion({"print": 1}, {"print": ["a.py:1"]})
+    veredicto = deuda.comparar(actual, referencia, "docs/evidencia/deuda_f0.json")
+    assert veredicto.codigo == 0
+    assert "BAJA" in veredicto.texto and "2 → 1" in veredicto.texto
+    assert "--escribir docs/evidencia/deuda_f0.json" in veredicto.texto
+
+
+def test_comparar_mismo_total_con_ubicaciones_movidas_pasa() -> None:
+    referencia = _medicion({"print": 1}, {"print": ["a.py:1"]})
+    actual = _medicion({"print": 1}, {"print": ["a.py:40"]})
+    veredicto = deuda.comparar(actual, referencia)
+    assert veredicto.codigo == 0
+    assert "movidas" in veredicto.texto
+
+
+def test_comparar_basta_con_que_una_metrica_suba() -> None:
+    referencia = _medicion({"print": 5, "os_path": 5}, {"print": [], "os_path": []})
+    actual = _medicion({"print": 0, "os_path": 6}, {"print": [], "os_path": ["x.py:1"]})
+    veredicto = deuda.comparar(actual, referencia)
+    assert veredicto.codigo == 1
+    assert "BAJA  print" in veredicto.texto and "SUBE  os_path" in veredicto.texto
+
+
+def test_comparar_metrica_ausente_en_la_referencia_falla() -> None:
+    """Una referencia incompleta no es un techo: hay que regenerarla."""
+    referencia = _medicion({"print": 0}, {"print": []})
+    actual = _medicion({"print": 0, "os_path": 0}, {"print": [], "os_path": []})
+    veredicto = deuda.comparar(actual, referencia)
+    assert veredicto.codigo == 1
+    assert "FALTA os_path" in veredicto.texto
+
+
+def test_comparar_metrica_no_medida_se_omite_sin_fallar() -> None:
+    """``--sin-mypy`` compara lo que midió y avisa de lo que no."""
+    referencia = _medicion({"print": 0, "mypy": 108}, {"print": [], "mypy": []})
+    actual = _medicion({"print": 0}, {"print": []})
+    veredicto = deuda.comparar(actual, referencia)
+    assert veredicto.codigo == 0
+    assert "OMITE mypy" in veredicto.texto
+
+
+# ---------------------------------------------------------------------------
+# Medición sobre un paquete diminuto (sin mypy)
+# ---------------------------------------------------------------------------
+
+MODULO_DIMINUTO = '''
+"""Módulo de prueba: un except desnudo, un print y un os.path.join."""
+
+import os
+
+
+def saludar(nombre: str) -> str:
+    try:
+        ruta = os.path.join("carpeta", nombre)
+    except:
+        ruta = nombre
+    print(ruta)
+    return ruta
+'''
+
+
+def _crear_paquete(raiz: Path, codigo: str = MODULO_DIMINUTO) -> Path:
+    paquete = raiz / "src" / "paquetito"
+    paquete.mkdir(parents=True)
+    (paquete / "__init__.py").write_text('"""Paquete diminuto."""\n', encoding="utf-8")
+    (paquete / "modulo.py").write_text(textwrap.dedent(codigo).lstrip(), encoding="utf-8")
+    return Path("src") / "paquetito"
+
+
+def test_medir_paquete_diminuto_cuenta_1_1_1(tmp_path: Path) -> None:
+    objetivo = _crear_paquete(tmp_path)
+    medicion = deuda.medir(tmp_path, objetivo, sin_mypy=True)
+    assert medicion.conteos == {
+        "cc_ge_20": 0,
+        "except_sin_relanzar": 1,
+        "print": 1,
+        "os_path": 1,
+    }
+    assert "mypy" not in medicion.conteos and "mypy" not in medicion.ubicaciones
+    assert medicion.ubicaciones["except_sin_relanzar"] == ["src/paquetito/modulo.py:9"]
+    assert medicion.ubicaciones["print"] == ["src/paquetito/modulo.py:11"]
+    assert medicion.ubicaciones["os_path"] == ["src/paquetito/modulo.py:8"]
+
+
+def test_medir_cuenta_print_aliasado_que_ruff_t201_no_ve(tmp_path: Path) -> None:
+    """La razón de medir ``print`` con ``ast``: ``safe_print as print`` esconde el 94 %.
+
+    Reproduce el patrón real de la librería (``from ..utils.output import
+    safe_print as print``): ruff resuelve el nombre al alias y T201 calla.
+    """
+    codigo = """
+from .salida import safe_print as print
+
+
+def f() -> None:
+    print("hola")
+"""
+    objetivo = _crear_paquete(tmp_path, codigo)
+    (tmp_path / objetivo / "salida.py").write_text(
+        "import builtins\n\n\ndef safe_print(*args, **kwargs):\n    builtins.print(*args, **kwargs)\n",
+        encoding="utf-8",
+    )
+    medicion = deuda.medir(tmp_path, objetivo, sin_mypy=True)
+    # Cuenta la llamada aliasada y NO la `builtins.print` de la implementación.
+    assert medicion.ubicaciones["print"] == ["src/paquetito/modulo.py:5"]
+    # ruff T201, sobre el mismo paquete, no ve la llamada aliasada: por eso no se usa.
+    t201 = deuda.ubicaciones_ruff(tmp_path, objetivo, "T201")
+    assert all("modulo.py" not in u for u in t201), t201
+
+
+def test_medir_cc_ge_20_detecta_una_funcion_compleja(tmp_path: Path) -> None:
+    ramas = "\n".join(f"    if x == {i}:\n        return {i}" for i in range(21))
+    codigo = f"def compleja(x: int) -> int:\n{ramas}\n    return -1\n"
+    objetivo = _crear_paquete(tmp_path, codigo)
+    medicion = deuda.medir(tmp_path, objetivo, sin_mypy=True)
+    assert medicion.conteos["cc_ge_20"] == 1
+    assert medicion.ubicaciones["cc_ge_20"] == ["src/paquetito/modulo.py:1"]
+
+
+def test_medir_objetivo_inexistente_es_error_accionable(tmp_path: Path) -> None:
+    with pytest.raises(deuda.ErrorDeMedicion, match="No existe el directorio"):
+        deuda.medir(tmp_path, Path("src") / "nada", sin_mypy=True)
+
+
+# ---------------------------------------------------------------------------
+# CLI: --escribir y --referencia de punta a punta
+# ---------------------------------------------------------------------------
+
+
+def test_cli_escribir_y_referencia(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    objetivo = _crear_paquete(tmp_path)
+    base = ["--raiz", str(tmp_path), "--objetivo", str(objetivo), "--sin-mypy"]
+    assert deuda.main([*base, "--escribir", "ref.json"]) == 0
+    referencia = json.loads((tmp_path / "ref.json").read_text(encoding="utf-8"))
+    assert referencia["conteos"] == {
+        "cc_ge_20": 0,
+        "except_sin_relanzar": 1,
+        "print": 1,
+        "os_path": 1,
+    }
+    assert referencia["ubicaciones"]["print"] == ["src/paquetito/modulo.py:11"]
+    assert set(referencia) >= {"version", "commit", "fecha", "objetivo", "herramientas"}
+    assert referencia["herramientas"]["mypy"] == "no medido"
+
+    # Igual → 0.
+    assert deuda.main([*base, "--referencia", "ref.json"]) == 0
+    assert "PASA" in capsys.readouterr().out
+
+    # Un print más → 1, con la ubicación nueva en el mensaje.
+    modulo = tmp_path / objetivo / "modulo.py"
+    modulo.write_text(
+        modulo.read_text(encoding="utf-8") + '\n\ndef otro() -> None:\n    print("más")\n',
+        encoding="utf-8",
+    )
+    assert deuda.main([*base, "--referencia", "ref.json"]) == 1
+    salida = capsys.readouterr().out
+    assert "SUBE  print: 1 → 2 (+1)" in salida
+    assert "src/paquetito/modulo.py:16" in salida
+
+
+def test_cli_referencia_inexistente_es_error_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    objetivo = _crear_paquete(tmp_path)
+    codigo = deuda.main(
+        [
+            "--raiz",
+            str(tmp_path),
+            "--objetivo",
+            str(objetivo),
+            "--sin-mypy",
+            "--referencia",
+            "no.json",
+        ]
+    )
+    assert codigo == 2
+    assert "--escribir" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# La referencia versionada es un techo que el árbol actual respeta
+# ---------------------------------------------------------------------------
+
+
+def test_referencia_versionada_cubre_el_arbol_actual_sin_mypy() -> None:
+    """Las cuatro métricas rápidas del árbol no superan ``deuda_f0.json``.
+
+    Es la misma comparación que hace el job ``deuda`` del CI, sin mypy (que
+    tarda minutos). Si falla, o subió la deuda o alguien no regeneró la
+    referencia al bajarla: el mensaje dice cuál.
+    """
+    referencia = deuda.leer_referencia(RAIZ / deuda.REFERENCIA_POR_DEFECTO)
+    assert set(referencia["conteos"]) == set(deuda.METRICAS)
+    medicion = deuda.medir(RAIZ, deuda.OBJETIVO_POR_DEFECTO, sin_mypy=True)
+    veredicto = deuda.comparar(medicion.a_dict(), referencia)
+    assert veredicto.codigo == 0, veredicto.texto
