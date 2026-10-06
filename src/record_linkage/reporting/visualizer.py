@@ -23,6 +23,7 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
 from ..utils.logger import CustomLogger
+from ._fases import etiquetar, tiempos_por_fase
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 from ._text_utils import strip_emojis as _strip_emojis
 
@@ -452,8 +453,9 @@ class DataVisualizer:
                     successful += 1
                     self.logger.info(f"✓ Guardado: {viz_config['filename']}")
                 else:
-                    self.logger.warning(f"✗ Sin datos para: {viz_config['filename']}")
-                    failed += 1
+                    # La función ya dijo en el log por qué no hay figura.
+                    self.logger.info(f"⏭️  {viz_config['filename']}: Omitido (sin datos)")
+                    skipped += 1
 
             except Exception as e:
                 failed += 1
@@ -1489,24 +1491,21 @@ Grupos grandes (>20): {(group_sizes > 20).sum():,} ({(group_sizes > 20).sum() / 
 
     def plot_performance_timeline(self) -> plt.Figure | None:
         """
-        Visualiza línea de tiempo del rendimiento del proceso.
+        Línea de tiempo (Gantt + porcentajes) con los tiempos por fase.
+
+        F1.6: los tiempos son EXACTAMENTE ``metrics["phase_times"]`` (los del
+        orquestador). Sin tiempos devuelve ``None`` y lo dice en el log, y
+        ``save_all_visualizations`` registra el PNG como omitido; antes se
+        buscaban claves que nadie producía y el archivo nunca se generaba.
         """
         try:
-            # Recopilar tiempos de fases
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Generación Candidatos": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            # Filtrar fases con tiempo > 0
-            phase_times = {k: v for k, v in phase_times.items() if v > 0}
+            phase_times = etiquetar(tiempos_por_fase(self.metrics))
 
             if not phase_times:
+                self.logger.warning(
+                    "performance_timeline.png omitido: metrics['phase_times'] no trae "
+                    "tiempos por fase."
+                )
                 return None
 
             fig, (ax1, ax2) = plt.subplots(

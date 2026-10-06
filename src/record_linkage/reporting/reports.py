@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 
 from ..utils.logger import CustomLogger
+from ._fases import ETIQUETAS_FASE, formatear_segundos, tiempos_por_fase
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
 
@@ -302,8 +303,10 @@ class ReportGenerator:
                     successful += 1
                     self.logger.info(f"✓ {report_name}: {len(report_df)} filas generadas")
                 else:
-                    self.logger.warning(f"✗ {report_name}: Sin datos para generar")
-                    failed += 1
+                    # El generador ya dijo en el log por qué no hay datos (p. ej.
+                    # «sin tiempos por fase»); no se escribe ningún archivo.
+                    self.logger.info(f"⏭️  {report_name}: Omitido (sin datos)")
+                    skipped += 1
 
             except Exception as e:
                 failed += 1
@@ -970,86 +973,75 @@ class ReportGenerator:
             return self._generate_group_statistics()
 
     def _generate_performance_metrics(self) -> pd.DataFrame:
+        """Alias histórico de :meth:`reporte_metricas_performance`."""
+        return self.reporte_metricas_performance()
+
+    def reporte_metricas_performance(self) -> pd.DataFrame:
         """
-        Genera reporte de métricas de rendimiento del proceso.
-        Nuevo reporte que no estaba en la versión original.
+        Reporte ``reporte_metricas_performance.xlsx``: segundos por fase.
+
+        F1.6: los tiempos son EXACTAMENTE ``metrics["phase_times"]`` (los del
+        ``manifest.json``), una fila por fase medida más una fila ``TOTAL``
+        con la suma. Columnas: ``Fase`` (etiqueta humana), ``Clave`` (clave
+        de la fase en el manifiesto), ``Segundos`` (crudo, comparable),
+        ``Tiempo`` (legible), ``Porcentaje`` y ``Velocidad``.
+
+        Si no hay tiempos por fase devuelve un DataFrame vacío y
+        ``generate_all_reports`` omite el archivo: antes se escribía un Excel
+        con filas que buscaban claves inexistentes.
         """
-        try:
-            perf_data = []
-
-            # Tiempos por fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Generación Candidatos": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            total_time = sum(phase_times.values())
-
-            for phase, time_val in phase_times.items():
-                if time_val > 0:
-                    percentage = (time_val / total_time * 100) if total_time > 0 else 0
-
-                    # Formato adaptativo de tiempo
-                    if time_val < 1:
-                        time_str = f"{time_val * 1000:.0f} ms"
-                    elif time_val < 60:
-                        time_str = f"{time_val:.1f} seg"
-                    else:
-                        time_str = f"{time_val / 60:.1f} min"
-
-                    perf_data.append(
-                        {
-                            "Fase": phase,
-                            "Tiempo": time_str,
-                            "Porcentaje": f"{percentage:.1f}%",
-                            "Velocidad": self._calculate_phase_speed(phase, time_val),
-                        }
-                    )
-
-            # Agregar métricas generales
-            perf_data.extend(
-                [
-                    {
-                        "Fase": "--- TOTALES ---",
-                        "Tiempo": f"{total_time:.1f} seg"
-                        if total_time < 60
-                        else f"{total_time / 60:.1f} min",
-                        "Porcentaje": "100.0%",
-                        "Velocidad": f"{self.metrics.get('total_records', 0) / (total_time + 1):.0f} reg/seg",
-                    }
-                ]
+        tiempos = tiempos_por_fase(self.metrics)
+        if not tiempos:
+            self.logger.warning(
+                "reporte_metricas_performance omitido: metrics['phase_times'] no trae "
+                "tiempos por fase (el orquestador los cronometra en _exec_phase)."
             )
+            return pd.DataFrame()
 
-            return pd.DataFrame(perf_data)
-
-        except Exception as e:
-            self.logger.error(f"Error en métricas de performance: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas de performance: {e!s}"]})
+        total_time = sum(tiempos.values())
+        perf_data = [
+            {
+                "Fase": ETIQUETAS_FASE[clave],
+                "Clave": clave,
+                "Segundos": segundos,
+                "Tiempo": formatear_segundos(segundos),
+                "Porcentaje": f"{(segundos / total_time * 100) if total_time > 0 else 0:.1f}%",
+                "Velocidad": self._calculate_phase_speed(clave, segundos),
+            }
+            for clave, segundos in tiempos.items()
+        ]
+        total_records = self.metrics.get("total_records", 0)
+        perf_data.append(
+            {
+                "Fase": "TOTAL (fases medidas)",
+                "Clave": "TOTAL",
+                "Segundos": total_time,
+                "Tiempo": formatear_segundos(total_time),
+                "Porcentaje": "100.0%",
+                "Velocidad": f"{total_records / total_time:.0f} reg/seg"
+                if total_time > 0
+                else "N/A",
+            }
+        )
+        return pd.DataFrame(perf_data)
 
     def _calculate_phase_speed(self, phase: str, time_val: float) -> str:
-        """Calcula velocidad específica por fase."""
-        if time_val == 0:
+        """Velocidad por fase; ``phase`` es la clave del manifiesto (``L2_lsh_candidates``…).
+
+        Si la métrica de conteo de esa fase no viene en ``metrics`` (hoy
+        ``_build_metrics`` no entrega ``candidates_found`` ni ``pairs_scored``)
+        se responde ``N/A`` en vez de «0 por segundo».
+        """
+        if time_val <= 0:
             return "N/A"
 
-        total_records = self.metrics.get("total_records", 0)
-
-        if phase == "Generación Candidatos":
-            items = self.metrics.get("candidates_found", 0)
-            speed = items / time_val
-            return f"{speed:.0f} candidatos/seg"
-        elif phase == "Scoring":
-            items = self.metrics.get("pairs_scored", 0)
-            speed = items / time_val
-            return f"{speed:.0f} pares/seg"
-        elif phase == "Golden Records":
-            items = self.metrics.get("unique_groups", 0)
-            speed = items / time_val
-            return f"{speed:.0f} grupos/seg"
-        else:
-            speed = total_records / time_val
-            return f"{speed:.0f} reg/seg"
+        conteo_por_fase = {
+            "L2_lsh_candidates": ("candidates_found", "candidatos/seg"),
+            "L3_scoring": ("pairs_scored", "pares/seg"),
+            "L5_golden": ("unique_groups", "grupos/seg"),
+        }
+        clave_conteo, unidad = conteo_por_fase.get(phase, ("total_records", "reg/seg"))
+        items = self.metrics.get(clave_conteo)
+        if items is None:
+            return "N/A"
+        return f"{items / time_val:.0f} {unidad}"
