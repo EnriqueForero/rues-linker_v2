@@ -17,6 +17,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,10 @@ from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
 from .state_manager import StateManager
 from .storage import HybridStorageManager
+
+# Centinela para distinguir «clave ausente» de «clave con valor None» en la
+# configuración al restaurarla tras un L6 postprocesado.
+_AUSENTE: Any = object()
 
 
 class Orchestrator:
@@ -689,6 +694,62 @@ class Orchestrator:
             self.log.error(traceback.format_exc())
             raise
 
+    def ejecutar_reporting_postprocesado(
+        self, results_data: dict, postprocesado: Sequence[str]
+    ) -> list[Path]:
+        """Ejecuta L6 sobre un resultado postprocesado y lo registra en el manifiesto.
+
+        ``linkage()`` aplica el matcher multi-variable y la expansión del
+        colapso exacto DESPUÉS de ``run()``; los reportes deben describir ese
+        resultado y no el checkpoint de L5. Hasta F1.13 ese camino llamaba a
+        ``_run_L6`` directamente, así que L6 no quedaba en ``manifest.json``
+        (ni su estado, ni sus tiempos, ni sus artefactos): una corrida con
+        reportes era indistinguible de una sin ellos para quien auditaba el
+        manifiesto. Este método pasa por el mismo :meth:`_exec_phase` que el
+        camino normal.
+
+        El registro anterior de L6 se invalida antes de ejecutar: la huella de
+        fase no incorpora el matcher ni el plan de colapso, así que reutilizar
+        un L6 «válido» devolvería reportes de otro resultado.
+
+        Es el único camino para generar L6 fuera de :meth:`run`:
+        :meth:`export_reports` también delega aquí.
+
+        Args:
+            results_data: dict con ``golden`` y ``correlative`` ya
+                postprocesados.
+            postprocesado: etiquetas de lo que se aplicó tras L5 (p. ej.
+                ``["matcher", "colapso_exacto"]``, o ``["export_reports"]``
+                para la exportación manual); quedan en
+                ``manifest["L6_reporting"]["meta"]["postprocesado"]``.
+
+        Returns:
+            Los artefactos generados por L6.
+        """
+        # La bandera solo vive mientras corre L6: ``fingerprint_config`` hashea
+        # toda la configuración, así que dejarla en ``self.config`` cambiaría la
+        # huella de L1…L5 y un ``run()``/``estimate()`` posterior en el mismo
+        # Orchestrator daría la caché por inválida y re-ejecutaría todo.
+        clave = "reporting_use_checkpoints"
+        valor_previo = self.config.get(clave, _AUSENTE)
+        self.config[clave] = False
+        try:
+            self.state.invalidate_from(Phase.L6_REPORTING)
+            prev_hash = self.state.get_prev_hash(Phase.L6_REPORTING)
+            report_files, _ = self._exec_phase(
+                Phase.L6_REPORTING,
+                self._run_L6,
+                prev_hash,
+                results_data,
+                meta_extra={"postprocesado": list(postprocesado)},
+            )
+        finally:
+            if valor_previo is _AUSENTE:
+                self.config.pop(clave, None)
+            else:
+                self.config[clave] = valor_previo
+        return report_files
+
     def estimate(self, from_phase: Phase = None) -> dict[str, Any]:
         """
         Estima tiempo de ejecución y muestra estado de fases.
@@ -764,6 +825,10 @@ class Orchestrator:
         Útil cuando se ejecutó con skip_reporting=True y luego se quieren
         generar los reportes sin re-ejecutar todo el pipeline.
 
+        Pasa por :meth:`ejecutar_reporting_postprocesado`, así que L6 queda
+        en ``manifest.json`` con ``meta.postprocesado == ["export_reports"]``
+        (hasta F1.13 llamaba a ``_run_L6`` directamente y no dejaba rastro).
+
         Args:
             results: Dict con 'golden' y 'correlative'.
                     Si None, carga de los archivos de L5.
@@ -786,13 +851,9 @@ class Orchestrator:
                 "correlative": pd.read_parquet(corr_path),
             }
 
-        files, _ = self._run_L6(results)
-        # Este camino no pasa por _exec_phase/mark_done (no es un checkpoint:
-        # los resultados pueden venir postprocesados). El manifiesto debe
-        # decir igual qué se omitió y por qué (F1.4). Solo `omitidos`: la
-        # lista de archivos la devuelve esta función y no describe un checkpoint.
-        self.state.anotar_meta(Phase.L6_REPORTING, {"omitidos": list(self.l6_omitidos)})
-        return files
+        # F1.13: pasa por _exec_phase/mark_done, y ahí entran también los
+        # `omitidos` que _run_L6 deja en self._meta_extra (F1.4).
+        return self.ejecutar_reporting_postprocesado(results, ["export_reports"])
 
     def add_reporting_strategy(self, strategy: BaseReportingStrategy) -> None:
         """
@@ -811,7 +872,14 @@ class Orchestrator:
     # EJECUCIÓN DE FASES
     # ==========================================================================
 
-    def _exec_phase(self, phase: Phase, func, prev_hash: str, *args) -> tuple[Any, str]:
+    def _exec_phase(
+        self,
+        phase: Phase,
+        func,
+        prev_hash: str,
+        *args,
+        meta_extra: dict[str, Any] | None = None,
+    ) -> tuple[Any, str]:
         """
         Ejecuta una fase con validación de hash y checkpointing.
 
@@ -826,6 +894,9 @@ class Orchestrator:
             func: Función que implementa la fase
             prev_hash: Hash de la fase anterior
             *args: Argumentos adicionales para la función
+            meta_extra: Metadatos adicionales que se registran en el manifiesto
+                junto a ``duration`` y ``peak_rss_mib`` (p. ej. qué
+                postprocesamiento describe un L6 ejecutado fuera de ``run()``).
 
         Returns:
             Tupla (resultado, hash_de_esta_fase)
@@ -888,7 +959,10 @@ class Orchestrator:
             "duration": duration,
             "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
         }
+        # Lo que la propia fase dejó para el manifiesto (F1.4: `omitidos` de L6)
+        # y lo que pide el llamador (F1.13: `postprocesado` de un L6 fuera de run()).
         meta_fase.update(self._meta_extra.pop(phase.value, {}))
+        meta_fase.update(meta_extra or {})
         self.state.mark_done(phase, ph_hash, files, meta_fase)
         self.log.info(
             f"✅ {phase.value}: Completado en {_fmt_time(duration)} (hash: {ph_hash[:6]})"

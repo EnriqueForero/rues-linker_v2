@@ -21,7 +21,7 @@ Convenciones
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 
 def mensaje_accionable(que_paso: str, por_que_importa: str, que_hacer: str) -> str:
@@ -299,5 +299,114 @@ class ColumnasArrastreError(ErrorPipeline):
                     "si fuera completa"
                 ),
                 que_hacer=self.que_hacer,
+            )
+        )
+
+
+class ColapsoExactoError(ErrorPipeline):
+    """El colapso exacto de duplicados no pudo decidir qué filas son idénticas.
+
+    ``linkage(collapse_exact_duplicates=True)`` compara filas completas con la
+    tabla hash de pandas. Una celda con una lista o un dict no es hashable y
+    pandas levanta ``TypeError``. Hasta F1.13 ese error se atrapaba y la
+    fuente seguía «con todas las filas»: el usuario pedía colapsar, no se
+    colapsaba nada y ninguna cifra lo decía. Ahora la corrida falla aquí y el
+    mensaje nombra la fuente y las columnas que impiden el colapso.
+
+    Attributes:
+        fuente: nombre de la fuente afectada.
+        columnas: columnas con valores no hashables, en orden de la fuente
+            (vacía si pandas falló por otra razón; entonces ``causa`` lo dice).
+        causa: excepción original de pandas, si la hubo.
+    """
+
+    def __init__(
+        self, fuente: str, columnas: Sequence[str], *, causa: BaseException | None = None
+    ) -> None:
+        self.fuente = fuente
+        self.columnas = list(columnas)
+        self.causa = causa
+        if self.columnas:
+            lista = ", ".join(repr(c) for c in self.columnas)
+            que_paso = (
+                f"la fuente '{fuente}' tiene valores no hashables (listas o dicts) "
+                f"en la(s) columna(s) {lista}; el colapso exacto de duplicados "
+                f"no puede comparar esas filas"
+            )
+            # El remedio debe poder pegarse tal cual: df[['A', 'B']] indexa una
+            # lista de columnas; df['A', 'B'] indexaría una tupla (KeyError).
+            que_hacer = (
+                f"convierta esas columnas a texto antes de llamar (p. ej. "
+                f"df[{self.columnas!r}] = df[{self.columnas!r}].astype(str), o "
+                f"'|'.join(...) para listas) o desactive el colapso con "
+                f"collapse_exact_duplicates=False"
+            )
+        else:
+            detalle = f"{type(causa).__name__}: {causa}" if causa is not None else "sin causa"
+            que_paso = (
+                f"pandas no pudo comparar las filas de la fuente '{fuente}' para el "
+                f"colapso exacto de duplicados ({detalle})"
+            )
+            que_hacer = (
+                "revise la causa citada; convierta a texto las columnas con objetos "
+                "(listas o dicts) o desactive el colapso con "
+                "collapse_exact_duplicates=False"
+            )
+        super().__init__(
+            mensaje_accionable(
+                que_paso=que_paso,
+                por_que_importa=(
+                    "seguir sin colapsar entregaría una corrida que no hizo lo que se "
+                    "pidió y cuyas cifras (processed_rows, INPUT_ROW_COUNT) serían "
+                    "indistinguibles de una corrida sin duplicados"
+                ),
+                que_hacer=que_hacer,
+            )
+        )
+
+
+class CruceSinFuenteError(ErrorPipeline):
+    """La correlativa de ``link()`` no permite atribuir cada registro a su tabla.
+
+    ``link(df_a, df_b)`` cuenta entidades presentes en AMBAS tablas a partir
+    de la columna ``SRC``. Hasta F1.13, si ``SRC`` faltaba o no traía las dos
+    etiquetas, las métricas de cruce se rellenaban con ``-1`` y la corrida
+    terminaba «bien». Un centinela numérico en una métrica es una degradación
+    silenciosa: ahora se levanta esta excepción.
+
+    Attributes:
+        faltantes: etiquetas de fuente que no aparecen en ``SRC`` (vacío si la
+            columna misma falta).
+        columnas: columnas que sí trae la correlativa.
+    """
+
+    def __init__(
+        self, *, faltantes: Sequence[str], columnas: Sequence[str], nombre_a: str, nombre_b: str
+    ) -> None:
+        self.faltantes = list(faltantes)
+        self.columnas = list(columnas)
+        if "SRC" not in self.columnas:
+            que_paso = (
+                f"la correlativa devuelta por linkage() no trae la columna SRC "
+                f"(columnas: {self.columnas})"
+            )
+        else:
+            que_paso = (
+                f"la columna SRC de la correlativa no contiene la(s) fuente(s) "
+                f"{self.faltantes} (se cruzaron '{nombre_a}' y '{nombre_b}')"
+            )
+        super().__init__(
+            mensaje_accionable(
+                que_paso=que_paso,
+                por_que_importa=(
+                    "sin saber de qué tabla viene cada registro no se pueden contar "
+                    "los grupos cruzados ni los pares A↔B; una cifra inventada "
+                    "pasaría por resultado real"
+                ),
+                que_hacer=(
+                    "esto es un defecto del motor, no de sus datos: conserve work_dir "
+                    "y manifest.json y repórtelo con la versión de rues-linker; si "
+                    "parcheó linkage() en una prueba, devuelva una correlativa con SRC"
+                ),
             )
         )

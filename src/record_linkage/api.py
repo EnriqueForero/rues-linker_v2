@@ -146,6 +146,23 @@ def _prepare_sources(
     return prepared, reports
 
 
+def _columnas_no_hashables(frame: pd.DataFrame) -> list[str]:
+    """Columnas cuyas celdas no admiten la tabla hash de pandas (listas, dicts).
+
+    Sondea columna a columna (vectorizado por columna, nunca por fila) para
+    que el error del colapso exacto nombre exactamente qué convertir.
+    """
+    import pandas as pd
+
+    columnas: list[str] = []
+    for columna in frame.columns:
+        try:
+            pd.util.hash_pandas_object(frame[columna], index=False)
+        except TypeError:
+            columnas.append(str(columna))
+    return columnas
+
+
 def _collapse_exact_sources(
     sources: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -157,9 +174,15 @@ def _collapse_exact_sources(
     huella ``uint64`` sirve únicamente para reconstruir los códigos. Si dos
     filas *distintas* comparten huella, se vuelve al camino exacto con
     ``MultiIndex``; una colisión nunca puede fusionar registros silenciosamente.
+
+    Raises:
+        ColapsoExactoError: si una fuente trae celdas no hashables (listas o
+            dicts). No se «conservan todas las filas» en silencio.
     """
     import numpy as np
     import pandas as pd
+
+    from .pipeline.errores import ColapsoExactoError
 
     collapsed: dict[str, pd.DataFrame] = {}
     codes_by_source: dict[str, np.ndarray] = {}
@@ -189,11 +212,11 @@ def _collapse_exact_sources(
                         raise RuntimeError("No se pudo reconstruir el colapso exacto.")
             else:
                 codes = np.empty(0, dtype=np.int64)
-        except (TypeError, ValueError):
-            # Celdas con listas/dicts no son factorizables de forma exacta;
-            # conservar todas las filas es la única decisión segura.
-            codes = np.arange(len(frame), dtype=np.int64)
-            compact = frame.reset_index(drop=True)
+        except (TypeError, ValueError) as exc:
+            # Celdas con listas/dicts no son hashables y el colapso exacto no
+            # puede compararlas. Hasta F1.13 se «conservaban todas las filas»
+            # sin aviso: el usuario pedía colapsar y no se colapsaba nada.
+            raise ColapsoExactoError(name, _columnas_no_hashables(frame), causa=exc) from exc
         if len(compact) and int(codes.max()) + 1 != len(compact):
             raise RuntimeError("Invariante interna de colapso exacto violada.")
         collapsed[name] = compact
@@ -529,10 +552,21 @@ def linkage(
 
     if needs_postprocessing and reporting_requested:
         # Los checkpoints L5 pertenecen al resultado compacto/anterior al
-        # matcher. Exportar desde memoria evita reportes obsoletos.
-        config["reporting_use_checkpoints"] = False
-        # export_reports deja en el manifiesto los opcionales omitidos (F1.4).
-        result["report_files"] = orchestrator.export_reports(result)
+        # matcher. Exportar desde memoria evita reportes obsoletos, y pasar
+        # por el registro de fase deja L6 en manifest.json como cualquier
+        # otra fase (F1.13: antes se llamaba a _run_L6 y no quedaba rastro),
+        # incluidos los opcionales omitidos (F1.4).
+        postprocesado = [
+            etiqueta
+            for etiqueta, aplicado in (
+                ("matcher", matching_profile is not None),
+                ("colapso_exacto", collapse_plan is not None),
+            )
+            if aplicado
+        ]
+        result["report_files"] = orchestrator.ejecutar_reporting_postprocesado(
+            result, postprocesado
+        )
 
     return result
 
@@ -748,6 +782,40 @@ def dedupe(
     return ResultadoLinkage(correlativa=corr, golden=None, metricas=metricas, manifiesto=manifiesto)
 
 
+def _conteos_cruce(corr: pd.DataFrame, nombre_a: str, nombre_b: str) -> tuple[int, int]:
+    """Grupos con registros de AMBAS tablas y pares registro-a-registro implicados.
+
+    Raises:
+        CruceSinFuenteError: si la correlativa no trae ``SRC`` o ``SRC`` no
+            contiene las dos etiquetas. Hasta F1.13 se devolvía ``-1`` como
+            centinela y la corrida terminaba «bien».
+    """
+    from .pipeline.errores import CruceSinFuenteError
+
+    if "SRC" not in corr.columns:
+        # Sin columna no hay etiquetas que falten: ``faltantes`` queda vacío,
+        # como documenta CruceSinFuenteError; ``columnas`` dice qué sí hay.
+        raise CruceSinFuenteError(
+            faltantes=[],
+            columnas=[str(c) for c in corr.columns],
+            nombre_a=nombre_a,
+            nombre_b=nombre_b,
+        )
+    conteos = corr.groupby(["ID_GRUPO", "SRC"]).size().unstack(fill_value=0)
+    faltantes = [nombre for nombre in (nombre_a, nombre_b) if nombre not in conteos.columns]
+    if faltantes:
+        raise CruceSinFuenteError(
+            faltantes=faltantes,
+            columnas=[str(c) for c in corr.columns],
+            nombre_a=nombre_a,
+            nombre_b=nombre_b,
+        )
+    mask_cruz = (conteos[nombre_a] > 0) & (conteos[nombre_b] > 0)
+    n_cruzados = int(mask_cruz.sum())
+    n_pares = int((conteos.loc[mask_cruz, nombre_a] * conteos.loc[mask_cruz, nombre_b]).sum())
+    return n_cruzados, n_pares
+
+
 def link(
     df_a: pd.DataFrame,
     df_b: pd.DataFrame,
@@ -785,7 +853,9 @@ def link(
     Returns:
         ResultadoLinkage con ``golden`` multi-fuente y, en ``metricas``:
         ``n_grupos_cruzados`` (entidades presentes en AMBAS tablas) y
-        ``n_pares_a_b`` (pares registro-a-registro implicados).
+        ``n_pares_a_b`` (pares registro-a-registro implicados). Son conteos
+        reales siempre: si la correlativa no permite atribuir cada registro a
+        su tabla se levanta ``CruceSinFuenteError`` (F1.13; antes ``-1``).
 
     Ejemplo:
         >>> res = rl.link(df_rues, df_aduanas, nombre_a="RUES",
@@ -819,18 +889,7 @@ def link(
         collapse_exact_duplicates=collapse_exact_duplicates,
     )
     corr = res["correlative"]
-
-    conteos = (
-        corr.groupby(["ID_GRUPO", "SRC"]).size().unstack(fill_value=0)
-        if "SRC" in corr.columns
-        else None
-    )
-    if conteos is not None and nombre_a in conteos and nombre_b in conteos:
-        mask_cruz = (conteos[nombre_a] > 0) & (conteos[nombre_b] > 0)
-        n_cruzados = int(mask_cruz.sum())
-        n_pares = int((conteos.loc[mask_cruz, nombre_a] * conteos.loc[mask_cruz, nombre_b]).sum())
-    else:  # pragma: no cover - defensivo ante cambios del Orchestrator
-        n_cruzados, n_pares = -1, -1
+    n_cruzados, n_pares = _conteos_cruce(corr, nombre_a, nombre_b)
 
     metricas: dict[str, Any] = {
         "n_registros": len(corr),

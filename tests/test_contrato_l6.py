@@ -16,10 +16,10 @@ Qué exige
    ni un PNG con el texto del error, tampoco cuando el que falla es UN PANEL
    de una figura que sí se habría guardado (dashboard, tarjeta de calidad).
 5. El camino postprocesado de ``linkage()`` (matcher o
-   ``collapse_exact_duplicates``) pasa por ``Orchestrator.export_reports`` y
-   no por ``_exec_phase``: el manifiesto debe traer igual ``omitidos`` en
-   una entrada ``SIN_CHECKPOINT`` que ``is_valid`` rechaza
-   (``StateManager.anotar_meta``), sin mezclar dos corridas.
+   ``collapse_exact_duplicates``) pasa por
+   ``Orchestrator.ejecutar_reporting_postprocesado`` → ``_exec_phase`` (F1.13):
+   el manifiesto trae ``omitidos`` junto a ``status``, tiempos, artefactos y
+   ``postprocesado``, como cualquier otra fase, sin mezclar dos corridas.
 6. Una estrategia añadida con ``add_reporting_strategy`` que solo cumple el
    ``ReportingStrategy`` Protocol y lanza una excepción corriente recibe el
    mismo trato que una ``BaseReportingStrategy``: opcional → omitida con
@@ -46,7 +46,6 @@ from artefactos_l6 import NOMBRES_OBLIGATORIOS_L6, escribir_obligatorios_l6
 from record_linkage.api import linkage
 from record_linkage.pipeline.errores import ArtefactoObligatorioError, EstrategiaFallo
 from record_linkage.pipeline.orchestrator import Orchestrator
-from record_linkage.pipeline.state_manager import StateManager
 from record_linkage.reporting import contrato_l6, strategies
 from record_linkage.reporting.contrato_l6 import (
     ARTEFACTOS_OBLIGATORIOS,
@@ -259,16 +258,17 @@ def test_estrategia_obligatoria_que_lanza_falla_la_corrida(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Camino postprocesado: export_reports → StateManager.anotar_meta → manifiesto
+# Camino postprocesado: ejecutar_reporting_postprocesado → _exec_phase → manifiesto
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_camino_postprocesado_deja_omitidos_en_el_manifiesto_sin_checkpoint(
+def test_camino_postprocesado_deja_omitidos_en_el_manifiesto(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``collapse_exact_duplicates=True`` hace que ``linkage()`` genere L6 con
-    ``export_reports`` (fuera de ``_exec_phase``). El manifiesto debe traer
-    ``omitidos`` igual, en una entrada que NO es un checkpoint."""
+    """``collapse_exact_duplicates=True`` hace que ``linkage()`` genere L6 por
+    ``ejecutar_reporting_postprocesado`` (F1.13: pasa por ``_exec_phase`` y
+    queda en el manifiesto como cualquier fase). Los ``omitidos`` de F1.4
+    viajan en la misma entrada, junto a ``postprocesado``."""
 
     def _dashboard_roto(self: Any, ctx: Any, logger: logging.Logger) -> list[Path]:
         raise RuntimeError(MOTIVO_DASHBOARD)
@@ -281,11 +281,12 @@ def test_camino_postprocesado_deja_omitidos_en_el_manifiesto_sin_checkpoint(
 
     assert resultado["preprocessing"]["exact_duplicate_collapse"]["P2"]["collapsed_rows"] == 3
     fase = _leer_manifiesto(tmp_path)["L6_reporting"]
-    assert fase["status"] == "SIN_CHECKPOINT"
-    assert "hash" not in fase and "artifacts" not in fase
-    # Solo lo especificado: omitidos (y cuándo se anotó); la lista de archivos
-    # la devuelve linkage(), no se duplica en meta.
-    assert set(fase["meta"]) == {"omitidos", "anotado_en"}
+    assert fase["status"] == "DONE"
+    assert "hash" in fase and "artifacts" in fase
+    # Lo de la fase (duración, RSS), lo del llamador (postprocesado) y lo que
+    # L6 dejó para el manifiesto (omitidos): una sola entrada, un solo camino.
+    assert set(fase["meta"]) == {"duration", "peak_rss_mib", "postprocesado", "omitidos"}
+    assert fase["meta"]["postprocesado"] == ["colapso_exacto"]
     omitidos = {(e["estrategia"], e["artefacto"]): e["motivo"] for e in fase["meta"]["omitidos"]}
     assert ("DashboardStrategy", "dashboard_ejecutivo.png") in omitidos
     assert MOTIVO_DASHBOARD in omitidos[("DashboardStrategy", "dashboard_ejecutivo.png")]
@@ -294,43 +295,6 @@ def test_camino_postprocesado_deja_omitidos_en_el_manifiesto_sin_checkpoint(
     archivos = {Path(p).name for p in resultado["report_files"]}
     assert "dashboard_ejecutivo.png" not in archivos
     assert "golden_records.parquet" in archivos
-
-
-def test_anotar_meta_no_toca_el_checkpoint_y_no_fabrica_uno(tmp_path: Path) -> None:
-    from record_linkage.reporting.strategies import Phase
-
-    estado = StateManager(tmp_path)
-    omitidos = [{"artefacto": "x.png", "estrategia": "E", "motivo": "m"}]
-
-    # Sobre una fase sin entrada: se crea SIN_CHECKPOINT, sin hash ni artifacts,
-    # y is_valid la rechaza con cualquier hash.
-    estado.anotar_meta(Phase.L6_REPORTING, {"omitidos": omitidos})
-    entrada = estado.manifest["L6_reporting"]
-    assert entrada["status"] == "SIN_CHECKPOINT"
-    assert "hash" not in entrada and "artifacts" not in entrada and "timestamp" not in entrada
-    assert entrada["meta"]["omitidos"] == omitidos
-    assert "anotado_en" in entrada["meta"]
-    assert not estado.is_valid(Phase.L6_REPORTING, "")
-    assert not estado.is_valid(Phase.L6_REPORTING, "cualquiera")
-
-    # Sobre una entrada DONE: hash, status, timestamp, files y artifacts quedan
-    # intactos; meta conserva lo suyo y gana lo anotado.
-    artefacto = tmp_path / "golden_records.parquet"
-    artefacto.write_bytes(b"datos")
-    estado.mark_done(Phase.L6_REPORTING, "h1", [artefacto], meta={"duration": 1.5})
-    antes = json.loads(json.dumps(estado.manifest["L6_reporting"]))
-    assert estado.is_valid(Phase.L6_REPORTING, "h1")
-
-    estado.anotar_meta(Phase.L6_REPORTING, {"omitidos": omitidos})
-
-    despues = estado.manifest["L6_reporting"]
-    for clave in ("hash", "status", "timestamp", "files", "artifacts"):
-        assert despues[clave] == antes[clave], clave
-    assert despues["meta"]["duration"] == 1.5
-    assert despues["meta"]["omitidos"] == omitidos
-    assert estado.is_valid(Phase.L6_REPORTING, "h1")
-    # Persistido: otra instancia lee lo mismo.
-    assert StateManager(tmp_path).manifest["L6_reporting"] == despues
 
 
 # ─────────────────────────────────────────────────────────────────────────────
