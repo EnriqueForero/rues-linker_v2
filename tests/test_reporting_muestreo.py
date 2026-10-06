@@ -283,20 +283,9 @@ def _correlativa_con_src_nan(n: int = 1_000) -> pd.DataFrame:
     return pd.DataFrame({"ID_GRUPO": np.arange(n) // 3, "SRC": src, "NIT": np.arange(n)})
 
 
-def test_report_generator_stratified_sample_conserva_nan_y_columnas() -> None:
-    df = _correlativa_con_src_nan()
-    generador = ReportGenerator(df, df.head(5), metrics={}, config={"report_sample_size": 100})
-
-    muestra = generador.correlative_sample
-    assert 0 < len(muestra) <= 100
-    assert list(muestra.columns) == list(df.columns)
-    assert muestra["SRC"].isna().any(), "el estrato NaN se descartaba"
-    assert set(muestra["SRC"].dropna().unique()) == set(FUENTES)
-
-    pd.testing.assert_frame_equal(
-        generador._apply_sample_limit(df, "correlative_table"),
-        generador._stratified_sample(df, "SRC", 100),
-    )
+# ReportGenerator ya no muestrea: desde F1.5 calcula los reportes sobre la tabla
+# completa y `report_sample_size` es una perilla retirada (avisa, no recorta).
+# El muestreo estratificado de L6 vive solo en suite.py y visualizer.py, probados abajo.
 
 
 def test_visualizer_stratified_sample_conserva_nan_y_columnas() -> None:

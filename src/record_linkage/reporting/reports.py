@@ -57,6 +57,20 @@ TOTAL_DECLARADO_POR_METRICA: dict[str, str] = {
 from ._fases import ETIQUETAS_FASE, formatear_segundos, tiempos_por_fase
 
 
+def _entero_o_na(valor: int | None) -> str:
+    """Entero con separador de miles, o «N/A» si la métrica no se pudo medir.
+
+    Un conteo ausente (base SQLite no encontrada) no se muestra como 0: ese 0
+    es justo la cifra falsa que F1.7 elimina del resumen ejecutivo.
+    """
+    return "N/A" if valor is None else f"{int(valor):,}"
+
+
+def _gib_o_na(rss_mib: float | None) -> str:
+    """RSS pico en GiB con dos decimales, o «N/A» si ninguna fase lo midió."""
+    return "N/A" if rss_mib is None else f"{rss_mib / 1024:.2f} GiB"
+
+
 class ReportGenerator:
     """
     Generador de reportes V6.0 - Versión final con todas las mejoras.
@@ -555,15 +569,15 @@ class ReportGenerator:
                     fila(
                         "EFICIENCIA",
                         "Candidatos Encontrados",
-                        f"{self.metrics.get('candidates_found', 0):,}",
-                        "Pares candidatos identificados por LSH",
+                        _entero_o_na(self.metrics.get("candidatos")),
+                        "Pares candidatos generados por L2 (candidates.db)",
                         ALCANCE_COMPLETO,
                     ),
                     fila(
                         "EFICIENCIA",
                         "Pares Evaluados",
-                        f"{self.metrics.get('pairs_scored', 0):,}",
-                        "Pares que pasaron scoring detallado",
+                        _entero_o_na(self.metrics.get("pares_puntuados")),
+                        "Pares puntuados por L3 (scored.db)",
                         ALCANCE_COMPLETO,
                     ),
                 ]
@@ -641,8 +655,8 @@ class ReportGenerator:
                         fila(
                             "RENDIMIENTO",
                             "Memoria Máxima",
-                            f"{self.metrics.get('max_memory_gb', 0):.1f} GB",
-                            "Uso máximo de memoria",
+                            _gib_o_na(self.metrics.get("rss_pico_mib")),
+                            "RSS pico del proceso (máximo entre fases L1-L5)",
                             ALCANCE_COMPLETO,
                         ),
                     ]
@@ -1110,8 +1124,8 @@ class ReportGenerator:
             return "N/A"
 
         conteo_por_fase = {
-            "L2_lsh_candidates": ("candidates_found", "candidatos/seg"),
-            "L3_scoring": ("pairs_scored", "pares/seg"),
+            "L2_lsh_candidates": ("candidatos", "candidatos/seg"),
+            "L3_scoring": ("pares_puntuados", "pares/seg"),
             "L5_golden": ("unique_groups", "grupos/seg"),
         }
         clave_conteo, unidad = conteo_por_fase.get(phase, ("total_records", "reg/seg"))
