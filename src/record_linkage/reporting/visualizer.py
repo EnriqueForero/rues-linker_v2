@@ -23,6 +23,7 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
 from ..utils.logger import CustomLogger
+from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 from ._text_utils import strip_emojis as _strip_emojis
 
@@ -223,31 +224,13 @@ class DataVisualizer:
             return pd.DataFrame()
 
     def _stratified_sample(self, df: pd.DataFrame, stratify_col: str) -> pd.DataFrame:
-        """Muestreo estratificado preservando proporciones."""
-        try:
-            # Calcular tamaños por estrato
-            strata_sizes = df[stratify_col].value_counts()
-            total_size = len(df)
+        """Muestreo estratificado: delega en la regla única de ``reporting._muestreo``.
 
-            samples = []
-            for stratum, size in strata_sizes.items():
-                # Calcular proporción y número de muestras
-                prop = size / total_size
-                n_samples = max(1, int(self.sample_size * prop))
-
-                # Obtener muestra del estrato
-                stratum_df = df[df[stratify_col] == stratum]
-                if len(stratum_df) <= n_samples:
-                    samples.append(stratum_df)
-                else:
-                    samples.append(stratum_df.sample(n=n_samples, random_state=42))
-
-            result = pd.concat(samples, ignore_index=True)
-            return result.head(self.sample_size)  # Asegurar límite
-
-        except Exception as e:
-            self.logger.warning(f"Error en muestreo estratificado: {e!s}")
-            return df.sample(n=min(self.sample_size, len(df)), random_state=42)
+        La copia anterior perdía el estrato NaN (``value_counts`` lo omite y la
+        igualdad con NaN nunca acierta) y caía a una muestra simple dentro de
+        un ``except`` si era el único estrato (F1.3).
+        """
+        return muestra_estratificada(df, stratify_col, self.sample_size)
 
     def _weighted_sample(self, df: pd.DataFrame, weight_col: str) -> pd.DataFrame:
         """Muestreo ponderado para incluir más casos problemáticos."""

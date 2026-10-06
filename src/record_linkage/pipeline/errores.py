@@ -98,3 +98,55 @@ class ConsolidacionNitError(ErrorPipeline):
                 ),
             )
         )
+
+
+class MuestreoReportesError(ErrorPipeline):
+    """La muestra que alimenta los reportes L6 no representa al insumo.
+
+    Hasta F1.3 ``EnhancedReportingSuite`` muestreaba con
+    ``groupby("SRC").apply(sample)``: con pandas 3 la columna de agrupación
+    desaparecía del marco y las filas con ``SRC`` NaN se descartaban. Como el
+    golden trae ``SRC`` NaN casi siempre, con más de 30.000 filas la muestra
+    quedaba vacía y tres artefactos se omitían con un WARNING que nadie lee.
+    Ahora la suite falla aquí: un insumo con filas que produce una muestra
+    vacía, o una muestra a la que le faltan columnas del insumo, es una
+    degradación, no un caso borde.
+    """
+
+    @classmethod
+    def desde_muestra(
+        cls,
+        tabla: str,
+        *,
+        n_origen: int | None,
+        n_muestra: int,
+        columnas_perdidas: list[str],
+        causa: str | None = None,
+    ) -> MuestreoReportesError:
+        """Arma el mensaje con lo que se midió del insumo y de la muestra."""
+        if n_muestra == 0:
+            origen = f"{n_origen:,} filas" if n_origen is not None else "filas"
+            que_paso = f"el insumo '{tabla}' tiene {origen} y la muestra para reportes quedó vacía"
+        else:
+            que_paso = (
+                f"la muestra de '{tabla}' ({n_muestra:,} filas) perdió columnas del insumo: "
+                f"{', '.join(columnas_perdidas)}"
+            )
+        if causa:
+            que_paso += f" (la carga registró: {causa})"
+        return cls(
+            mensaje_accionable(
+                que_paso=que_paso,
+                por_que_importa=(
+                    "los reportes L6 (tarjeta de calidad, heatmap de intersección, casos "
+                    "problemáticos) se calculan sobre esa muestra; con una muestra vacía o "
+                    "incompleta se omiten o mienten, y la entrega saldría degradada sin que "
+                    "nadie lo vea"
+                ),
+                que_hacer=(
+                    "revise el insumo (tipo, columnas, ruta) y el registro de carga; si el "
+                    "insumo es correcto, el defecto está en reporting._muestreo o en la "
+                    "lectura del archivo y debe corregirse, no silenciarse"
+                ),
+            )
+        )

@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 
 from ..utils.logger import CustomLogger
+from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
 
@@ -220,25 +221,13 @@ class ReportGenerator:
     def _stratified_sample(
         self, df: pd.DataFrame, stratify_col: str, n_samples: int
     ) -> pd.DataFrame:
-        """Realiza muestreo estratificado preservando proporciones."""
-        try:
-            # Calcular proporción de cada estrato
-            strata_props = df[stratify_col].value_counts(normalize=True)
+        """Muestreo estratificado: delega en la regla única de ``reporting._muestreo``.
 
-            # Muestrear de cada estrato
-            samples = []
-            for stratum, prop in strata_props.items():
-                stratum_df = df[df[stratify_col] == stratum]
-                n_stratum_samples = max(1, int(n_samples * prop))
-                n_stratum_samples = min(n_stratum_samples, len(stratum_df))
-
-                samples.append(stratum_df.sample(n=n_stratum_samples, random_state=42))
-
-            return pd.concat(samples, ignore_index=True)
-
-        except Exception as e:
-            self.logger.warning(f"Error en muestreo estratificado: {e!s}")
-            return df.sample(n=min(n_samples, len(df)), random_state=42)
+        La copia anterior (``value_counts`` + ``df[df[col] == estrato]`` en
+        bucle) perdía el estrato NaN y, si era el único, caía a una muestra
+        aleatoria simple dentro de un ``except`` (F1.3).
+        """
+        return muestra_estratificada(df, stratify_col, n_samples)
 
     def _apply_sample_limit(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
         """Aplica límite de muestra a un DataFrame."""

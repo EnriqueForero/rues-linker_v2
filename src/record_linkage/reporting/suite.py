@@ -16,6 +16,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -24,7 +25,9 @@ import pandas as pd
 import seaborn as sns
 
 from ..exporters._spreadsheet import prepare_spreadsheet_data, safe_sheet_name
+from ..pipeline.errores import MuestreoReportesError
 from ..utils.logger import CustomLogger
+from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
 
@@ -111,7 +114,20 @@ class EnhancedReportingSuite:
         return logger
 
     def _validate_data(self):
-        """Valida que los datos tengan estructura mínima necesaria."""
+        """Valida que las muestras representen a sus insumos y tengan la estructura mínima.
+
+        Compuerta de F1.3: un insumo con filas que produce una muestra vacía, o
+        una muestra a la que le faltan columnas del insumo, lanza
+        :class:`MuestreoReportesError`. Antes la suite seguía con la muestra
+        vacía y omitía tres artefactos con un WARNING.
+        """
+        self._verificar_muestra(
+            "correlative_table", self.correlative_data_ref, self.correlative_sample
+        )
+        self._verificar_muestra(
+            "golden_records", self.golden_records_data_ref, self.golden_records_sample
+        )
+
         # Validar correlative
         if not self.correlative_sample.empty:
             required = ["ID_GRUPO"]
@@ -141,17 +157,10 @@ class EnhancedReportingSuite:
                 if len(data_ref) <= sample_size:
                     return data_ref
 
-                # Muestra estratificada si es posible
-                if "SRC" in data_ref.columns:
-                    # Intentar mantener proporción por fuente
-                    return data_ref.groupby("SRC", group_keys=False).apply(
-                        lambda x: x.sample(
-                            n=min(len(x), int(sample_size * len(x) / len(data_ref))),
-                            random_state=42,
-                        )
-                    )
-                else:
-                    return data_ref.sample(n=sample_size, random_state=42)
+                # Muestra estratificada por fuente (F1.3): regla única en
+                # reporting._muestreo — conserva columnas y el estrato NaN,
+                # piso de 1 por fuente, tope sample_size. Sin SRC, muestra simple.
+                return muestra_estratificada(data_ref, "SRC", sample_size)
 
             # Si es archivo SQLite
             if isinstance(data_ref, str) and data_ref.endswith(".db"):
@@ -191,9 +200,62 @@ class EnhancedReportingSuite:
 
         except Exception as e:
             self.logger.error(f"Error cargando muestra de {table_name}: {e!s}")
+            self._anotar_error_carga(table_name, e)
 
-        # Retornar DataFrame vacío si falla
+        # Retornar DataFrame vacío si falla; _validate_data decide si eso es
+        # una degradación (insumo con filas) o un insumo legítimamente vacío.
         return pd.DataFrame()
+
+    def _anotar_error_carga(self, table_name: str, error: BaseException) -> None:
+        """Guarda la causa de una carga fallida para citarla en la compuerta."""
+        errores = getattr(self, "_errores_carga", None)
+        if errores is None:
+            errores = self._errores_carga = {}
+        errores[table_name] = f"{type(error).__name__}: {error}"
+
+    def _verificar_muestra(
+        self, table_name: str, data_ref: pd.DataFrame | str, muestra: pd.DataFrame
+    ) -> None:
+        """Falla si un insumo con filas dio muestra vacía o si se perdieron columnas."""
+        n_origen, columnas_origen = self._describir_insumo(data_ref, table_name)
+        perdidas: list[str] = []
+        if columnas_origen is not None:
+            perdidas = [c for c in columnas_origen if c not in muestra.columns]
+        muestra_vacia = muestra.empty and n_origen is not None and n_origen > 0
+        if muestra_vacia or (perdidas and not muestra.empty):
+            raise MuestreoReportesError.desde_muestra(
+                table_name,
+                n_origen=n_origen,
+                n_muestra=len(muestra),
+                columnas_perdidas=perdidas,
+                causa=getattr(self, "_errores_carga", {}).get(table_name),
+            )
+
+    @staticmethod
+    def _describir_insumo(
+        data_ref: pd.DataFrame | str, table_name: str
+    ) -> tuple[int | None, list[str] | None]:
+        """(filas, columnas) del insumo sin cargarlo; ``None`` donde no se puede saber."""
+        if isinstance(data_ref, pd.DataFrame):
+            return len(data_ref), list(data_ref.columns)
+        if not isinstance(data_ref, str) or not os.path.isfile(data_ref):
+            return None, None
+        try:
+            if data_ref.endswith(".db"):
+                from ..evaluation.banco import _contar_filas_sqlite
+
+                return _contar_filas_sqlite(Path(data_ref), table_name), None
+            if data_ref.endswith(".parquet"):
+                import pyarrow.parquet as pq
+
+                archivo = pq.ParquetFile(data_ref)
+                return archivo.metadata.num_rows, list(archivo.schema_arrow.names)
+            if data_ref.endswith((".csv", ".csv.gz")):
+                return None, list(pd.read_csv(data_ref, nrows=0).columns)
+        except Exception:
+            # Describir el insumo es diagnóstico: si no se puede, no se juzga.
+            return None, None
+        return None, None
 
     def _setup_visualization_style(self):
         """Configura estilo moderno para visualizaciones."""
