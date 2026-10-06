@@ -562,7 +562,8 @@ class ExcelReportsStrategy(BaseReportingStrategy):
 
         reports = generator.generate_all_reports()
         # Los reportes que el generador no pudo producir ya vienen con motivo.
-        self.omitidos.extend(generator.omitidos)
+        for archivo, motivo in generator.omitidos:
+            self.omitir(archivo, motivo)
         generated = []
 
         for report_name, df_report in reports.items():

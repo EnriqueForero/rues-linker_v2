@@ -785,11 +785,9 @@ class Orchestrator:
         files, _ = self._run_L6(results)
         # Este camino no pasa por _exec_phase/mark_done (no es un checkpoint:
         # los resultados pueden venir postprocesados). El manifiesto debe
-        # decir igual qué se omitió y por qué (F1.4).
-        self.state.anotar_meta(
-            Phase.L6_REPORTING,
-            {"omitidos": list(self.l6_omitidos), "files": [str(f) for f in files]},
-        )
+        # decir igual qué se omitió y por qué (F1.4). Solo `omitidos`: la
+        # lista de archivos la devuelve esta función y no describe un checkpoint.
+        self.state.anotar_meta(Phase.L6_REPORTING, {"omitidos": list(self.l6_omitidos)})
         return files
 
     def add_reporting_strategy(self, strategy: BaseReportingStrategy) -> None:
@@ -1949,7 +1947,16 @@ class Orchestrator:
             strategy_ctx = export_ctx if is_data_export else ctx
             try:
                 files = strategy.execute(strategy_ctx, self.log)
-            except EstrategiaFallo as exc:
+            except Exception as exc_cruda:
+                # BaseReportingStrategy.execute ya relanza EstrategiaFallo; una
+                # estrategia que solo cumple el Protocol (add_reporting_strategy)
+                # o que sobreescribe execute lanza lo que sea. Misma regla para
+                # ambas: obligatoria → falla la corrida; opcional → omitida.
+                if isinstance(exc_cruda, EstrategiaFallo):
+                    exc = exc_cruda
+                else:
+                    exc = EstrategiaFallo(strategy.name, exc_cruda)
+                    exc.__cause__ = exc_cruda  # misma cadena que BaseReportingStrategy
                 if obligatoria:
                     raise ArtefactoObligatorioError(
                         artefactos_de(strategy) or (strategy.name,),

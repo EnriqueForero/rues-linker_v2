@@ -19,7 +19,6 @@ import pandas as pd
 
 from ..utils.logger import CustomLogger
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
-from .contrato_l6 import ArtefactoOmitido
 
 
 class ReportGenerator:
@@ -73,7 +72,9 @@ class ReportGenerator:
 
         # F1.4: reportes que no se produjeron, con motivo. Se vacía en cada
         # generate_all_reports(); ExcelReportsStrategy lo lleva al manifiesto.
-        self.omitidos: list[ArtefactoOmitido] = []
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió;
+        # la estrategia que lo usa lo etiqueta con su propia clase.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Cargar datos con gestión inteligente de memoria
         self.correlative_sample = self._load_data_sample(correlative_data, "correlative_table")
@@ -272,7 +273,7 @@ class ReportGenerator:
         Un reporte que falla o no tiene datos NO entra al diccionario: hasta
         F1.4 se devolvía un DataFrame con una sola celda «Error generando
         reporte: …» que terminaba escrito como xlsx. Ahora se omite y queda en
-        ``self.omitidos`` (artefacto, estrategia, motivo).
+        ``self.omitidos`` como ``(archivo, motivo)``.
         """
         self.logger.info("Iniciando generación de reportes...")
         self.omitidos = []
@@ -334,9 +335,7 @@ class ReportGenerator:
         return reports
 
     def _omitir(self, report_name: str, motivo: str) -> None:
-        self.omitidos.append(
-            ArtefactoOmitido(f"reporte_{report_name}.xlsx", "ExcelReportsStrategy", motivo)
-        )
+        self.omitidos.append((f"reporte_{report_name}.xlsx", motivo))
 
     def _should_skip_report(self, report_name: str) -> bool:
         """Determina si un reporte debe omitirse por falta de datos."""

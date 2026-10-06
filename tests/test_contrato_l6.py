@@ -13,12 +13,22 @@ Qué exige
    (hasta F1.4 el orquestador verificaba por prefijo y eso pasaba).
 4. Ningún archivo escrito contiene «Error generando»: un reporte que falla se
    omite y queda en ``omitidos``; no se escribe un xlsx con una celda «Error»
-   ni un PNG con el texto del error.
+   ni un PNG con el texto del error, tampoco cuando el que falla es UN PANEL
+   de una figura que sí se habría guardado (dashboard, tarjeta de calidad).
+5. El camino postprocesado de ``linkage()`` (matcher o
+   ``collapse_exact_duplicates``) pasa por ``Orchestrator.export_reports`` y
+   no por ``_exec_phase``: el manifiesto debe traer igual ``omitidos`` en
+   una entrada ``SIN_CHECKPOINT`` que ``is_valid`` rechaza
+   (``StateManager.anotar_meta``), sin mezclar dos corridas.
+6. Una estrategia añadida con ``add_reporting_strategy`` que solo cumple el
+   ``ReportingStrategy`` Protocol y lanza una excepción corriente recibe el
+   mismo trato que una ``BaseReportingStrategy``: opcional → omitida con
+   motivo; obligatoria → ``ArtefactoObligatorioError``.
 
 Las corridas usan ``tests/data_sintetica/dataset_sintetico_p2_extra_features.csv``
 (29 filas, empresas inventadas) con ``skip_reporting=False``. Cada corrida
 cuesta ≈ 20 s, así que las pruebas 1 y 4 comparten una corrida (fixture de
-módulo) y la 2 usa otra.
+módulo), la 2 usa otra y la 5 una tercera por el camino postprocesado.
 """
 
 from __future__ import annotations
@@ -34,6 +44,8 @@ import pytest
 
 from record_linkage.api import linkage
 from record_linkage.pipeline.errores import ArtefactoObligatorioError, EstrategiaFallo
+from record_linkage.pipeline.orchestrator import Orchestrator
+from record_linkage.pipeline.state_manager import StateManager
 from record_linkage.reporting import contrato_l6, strategies
 from record_linkage.reporting.contrato_l6 import (
     ARTEFACTOS_OBLIGATORIOS,
@@ -48,18 +60,60 @@ RUTA_DATASET = (
 )
 TEXTO_PROHIBIDO = "Error generando"
 MOTIVO_DASHBOARD = "matplotlib inventó un fallo en el dashboard"
+MOTIVO_RADAR = "el radar de calidad inventó un fallo en su panel"
 MOTIVO_REPORTE = "el reporte de métricas de calidad reventó a propósito"
+OBLIGATORIOS = (
+    "tabla_correlativa.parquet",
+    "tabla_correlativa.csv.gz",
+    "golden_records.parquet",
+    "golden_records.csv.gz",
+    "config_auditoria_prueba.json",
+)
 
 
-def _correr_linkage(work_dir: Path) -> dict[str, Any]:
+def _correr_linkage(work_dir: Path, **extra: Any) -> dict[str, Any]:
     df = pd.read_csv(RUTA_DATASET, dtype=str, keep_default_na=False)
+    fuente = extra.pop("fuente", df)
     return linkage(
-        {"P2": df},
+        {"P2": fuente},
         work_dir=str(work_dir),
         skip_reporting=False,
         trusted_sources=set(),
         col_ciudad="CIUDAD",
+        **extra,
     )
+
+
+class _MetricasQueRevientan(dict):
+    """``metrics`` cuyo ``get("load_validate")`` lanza: esa clave solo la lee el
+    panel de rendimiento del dashboard, DENTRO de su ``try``. Así el fallo
+    nace donde antes se capturaba y se pintaba «Error generando métricas»."""
+
+    def get(self, clave: Any, valor: Any = None) -> Any:
+        if clave == "load_validate":
+            raise RuntimeError(MOTIVO_DASHBOARD)
+        return super().get(clave, valor)
+
+
+def _romper_paneles(mp: pytest.MonkeyPatch) -> None:
+    """Hace fallar, desde adentro, el panel de rendimiento del dashboard y el
+    radar de la tarjeta de calidad (``Axes.fill`` solo lo llama el radar en
+    ``reporting/``, dentro de su ``try``; matplotlib no lo usa al crear ejes)."""
+    from matplotlib.axes import Axes
+
+    from record_linkage.reporting.dashboard import ExecutiveDashboard
+
+    init_original = ExecutiveDashboard.__init__
+
+    def _init_con_metricas_rotas(self: Any, *args: Any, **kwargs: Any) -> None:
+        init_original(self, *args, **kwargs)
+        self.metrics = _MetricasQueRevientan(self.metrics)
+
+    def _radar_roto(self: Any, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError(MOTIVO_RADAR)
+
+    mp.setattr(ExecutiveDashboard, "__init__", _init_con_metricas_rotas)
+    mp.setattr(Axes, "fill", _radar_roto)
 
 
 def _leer_manifiesto(work_dir: Path) -> dict[str, Any]:
@@ -87,7 +141,11 @@ def _texto_de(ruta: Path) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Corrida compartida: dashboard (estrategia opcional) y un reporte Excel fallan
+# Corrida compartida: un panel del dashboard, un panel de la tarjeta de calidad
+# y un reporte Excel fallan. Los paneles son el caso traicionero: hasta la
+# corrección cada uno capturaba su excepción, pintaba «Error generando …» y la
+# figura se guardaba igual (un PNG con un error dentro que ninguna búsqueda de
+# texto detecta).
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -97,14 +155,11 @@ def corrida_con_opcionales_rotos(tmp_path_factory: pytest.TempPathFactory) -> di
 
     work_dir = tmp_path_factory.mktemp("l6_opcionales")
 
-    def _dashboard_roto(self: Any, ctx: Any, logger: logging.Logger) -> list[Path]:
-        raise RuntimeError(MOTIVO_DASHBOARD)
-
     def _reporte_roto(self: Any) -> pd.DataFrame:
         raise ValueError(MOTIVO_REPORTE)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(strategies.DashboardStrategy, "_execute_impl", _dashboard_roto)
+        _romper_paneles(mp)
         mp.setattr(ReportGenerator, "_generate_quality_metrics", _reporte_roto)
         resultado = _correr_linkage(work_dir)
 
@@ -131,9 +186,13 @@ def test_estrategia_opcional_que_lanza_no_tumba_la_corrida_y_queda_en_omitidos(
     assert (
         MOTIVO_REPORTE in por_estrategia[("ExcelReportsStrategy", "reporte_metricas_calidad.xlsx")]
     )
+    # El panel roto de la tarjeta de calidad (suite.py) también se omite con motivo.
+    assert ("EnhancedInsightsStrategy", "tarjeta_calidad_datos.png") in por_estrategia
+    assert MOTIVO_RADAR in por_estrategia[("EnhancedInsightsStrategy", "tarjeta_calidad_datos.png")]
 
     salida = work_dir / "L6_reporting"
     assert not (salida / "dashboard_ejecutivo.png").exists()
+    assert not (salida / "tarjeta_calidad_datos.png").exists()
     assert not (salida / "reporte_metricas_calidad.xlsx").exists()
     # Los obligatorios siguen ahí, por nombre exacto.
     for nombre in ("tabla_correlativa.parquet", "golden_records.parquet", "golden_records.csv.gz"):
@@ -152,6 +211,13 @@ def test_ningun_archivo_escrito_contiene_error_generando(
     assert archivos, "L6 no escribió nada"
     culpables = [str(p.relative_to(salida)) for p in archivos if TEXTO_PROHIBIDO in _texto_de(p)]
     assert culpables == [], f"Archivos con un error dentro: {culpables}"
+    # Un PNG no contiene la cadena como bytes: la figura cuyo panel falló NO
+    # debe existir (antes se guardaba con «Error generando métricas» pintado).
+    nombres = {str(p.relative_to(salida)) for p in archivos}
+    assert "dashboard_ejecutivo.png" not in nombres
+    assert "tarjeta_calidad_datos.png" not in nombres
+    # Las figuras cuyos paneles no fallaron sí están (el fallo no es global).
+    assert "heatmap_interseccion_mejorado.png" in nombres
     # Ninguna hoja Excel con la columna «Error» de la versión anterior.
     for ruta in archivos:
         if ruta.suffix == ".xlsx":
@@ -187,6 +253,150 @@ def test_estrategia_obligatoria_que_lanza_falla_la_corrida(
     manifiesto = _leer_manifiesto(tmp_path)
     assert manifiesto.get("L6_reporting", {}).get("status") != "DONE"
     assert manifiesto["L5_golden"]["status"] == "DONE"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Camino postprocesado: export_reports → StateManager.anotar_meta → manifiesto
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_camino_postprocesado_deja_omitidos_en_el_manifiesto_sin_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``collapse_exact_duplicates=True`` hace que ``linkage()`` genere L6 con
+    ``export_reports`` (fuera de ``_exec_phase``). El manifiesto debe traer
+    ``omitidos`` igual, en una entrada que NO es un checkpoint."""
+
+    def _dashboard_roto(self: Any, ctx: Any, logger: logging.Logger) -> list[Path]:
+        raise RuntimeError(MOTIVO_DASHBOARD)
+
+    monkeypatch.setattr(strategies.DashboardStrategy, "_execute_impl", _dashboard_roto)
+    df = pd.read_csv(RUTA_DATASET, dtype=str, keep_default_na=False)
+    con_duplicados = pd.concat([df, df.head(3)], ignore_index=True)
+
+    resultado = _correr_linkage(tmp_path, fuente=con_duplicados, collapse_exact_duplicates=True)
+
+    assert resultado["preprocessing"]["exact_duplicate_collapse"]["P2"]["collapsed_rows"] == 3
+    fase = _leer_manifiesto(tmp_path)["L6_reporting"]
+    assert fase["status"] == "SIN_CHECKPOINT"
+    assert "hash" not in fase and "artifacts" not in fase
+    # Solo lo especificado: omitidos (y cuándo se anotó); la lista de archivos
+    # la devuelve linkage(), no se duplica en meta.
+    assert set(fase["meta"]) == {"omitidos", "anotado_en"}
+    omitidos = {(e["estrategia"], e["artefacto"]): e["motivo"] for e in fase["meta"]["omitidos"]}
+    assert ("DashboardStrategy", "dashboard_ejecutivo.png") in omitidos
+    assert MOTIVO_DASHBOARD in omitidos[("DashboardStrategy", "dashboard_ejecutivo.png")]
+    salida = tmp_path / "L6_reporting"
+    assert not (salida / "dashboard_ejecutivo.png").exists()
+    archivos = {Path(p).name for p in resultado["report_files"]}
+    assert "dashboard_ejecutivo.png" not in archivos
+    assert "golden_records.parquet" in archivos
+
+
+def test_anotar_meta_no_toca_el_checkpoint_y_no_fabrica_uno(tmp_path: Path) -> None:
+    from record_linkage.reporting.strategies import Phase
+
+    estado = StateManager(tmp_path)
+    omitidos = [{"artefacto": "x.png", "estrategia": "E", "motivo": "m"}]
+
+    # Sobre una fase sin entrada: se crea SIN_CHECKPOINT, sin hash ni artifacts,
+    # y is_valid la rechaza con cualquier hash.
+    estado.anotar_meta(Phase.L6_REPORTING, {"omitidos": omitidos})
+    entrada = estado.manifest["L6_reporting"]
+    assert entrada["status"] == "SIN_CHECKPOINT"
+    assert "hash" not in entrada and "artifacts" not in entrada and "timestamp" not in entrada
+    assert entrada["meta"]["omitidos"] == omitidos
+    assert "anotado_en" in entrada["meta"]
+    assert not estado.is_valid(Phase.L6_REPORTING, "")
+    assert not estado.is_valid(Phase.L6_REPORTING, "cualquiera")
+
+    # Sobre una entrada DONE: hash, status, timestamp, files y artifacts quedan
+    # intactos; meta conserva lo suyo y gana lo anotado.
+    artefacto = tmp_path / "golden_records.parquet"
+    artefacto.write_bytes(b"datos")
+    estado.mark_done(Phase.L6_REPORTING, "h1", [artefacto], meta={"duration": 1.5})
+    antes = json.loads(json.dumps(estado.manifest["L6_reporting"]))
+    assert estado.is_valid(Phase.L6_REPORTING, "h1")
+
+    estado.anotar_meta(Phase.L6_REPORTING, {"omitidos": omitidos})
+
+    despues = estado.manifest["L6_reporting"]
+    for clave in ("hash", "status", "timestamp", "files", "artifacts"):
+        assert despues[clave] == antes[clave], clave
+    assert despues["meta"]["duration"] == 1.5
+    assert despues["meta"]["omitidos"] == omitidos
+    assert estado.is_valid(Phase.L6_REPORTING, "h1")
+    # Persistido: otra instancia lee lo mismo.
+    assert StateManager(tmp_path).manifest["L6_reporting"] == despues
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Estrategias añadidas con add_reporting_strategy que solo cumplen el Protocol
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _ExportacionDePrueba(strategies.DataExportStrategy):
+    """Escribe los obligatorios sin pasar por el pipeline (como las capturas
+    de tests/test_api_postprocessing.py)."""
+
+    def execute(self, ctx: Any, logger: logging.Logger) -> list[Path]:
+        return [_tocar(ctx.output_dir, nombre) for nombre in OBLIGATORIOS]
+
+
+class _SoloProtocolQueLanza:
+    """Cumple ``ReportingStrategy`` (name + execute) sin heredar de la base."""
+
+    name = "analítica externa"
+
+    def execute(self, ctx: Any, logger: logging.Logger) -> list[Path]:
+        raise ValueError("fallo opcional inventado")
+
+
+class _ExportacionQueLanzaSinTipar(strategies.DataExportStrategy):
+    def execute(self, ctx: Any, logger: logging.Logger) -> list[Path]:
+        raise OSError("fallo obligatorio sin tipar")
+
+
+def _orquestador_parcial(tmp_path: Path, estrategias: list[Any]) -> Orchestrator:
+    orq = object.__new__(Orchestrator)
+    orq.config = {"reporting_use_checkpoints": False}
+    orq.dirs = {strategies.Phase.L6_REPORTING: tmp_path / "reports"}
+    orq._start_time = 1.0
+    orq._phase_times = {}
+    orq._meta_extra = {}
+    orq._reporting_strategies = estrategias
+    orq.log = logging.getLogger("prueba_l6")
+    return orq
+
+
+def _datos_minimos() -> dict[str, pd.DataFrame]:
+    data = pd.DataFrame({"ID_GRUPO": [1], "SRC": ["F"]})
+    return {"golden": data[["ID_GRUPO"]], "correlative": data}
+
+
+def test_estrategia_de_solo_protocol_que_lanza_se_omite_con_motivo(tmp_path: Path) -> None:
+    orq = _orquestador_parcial(tmp_path, [_ExportacionDePrueba(), _SoloProtocolQueLanza()])
+
+    archivos, _ = orq._run_L6(_datos_minimos())
+
+    assert {p.name for p in archivos} == set(OBLIGATORIOS)
+    assert orq.l6_omitidos == [
+        {
+            "artefacto": "analítica externa",
+            "estrategia": "_SoloProtocolQueLanza",
+            "motivo": "ValueError: fallo opcional inventado",
+        }
+    ]
+    assert orq._meta_extra["L6_reporting"] == {"omitidos": orq.l6_omitidos}
+
+
+def test_estrategia_obligatoria_que_lanza_sin_tipar_falla_la_corrida(tmp_path: Path) -> None:
+    orq = _orquestador_parcial(tmp_path, [_ExportacionQueLanzaSinTipar()])
+
+    with pytest.raises(ArtefactoObligatorioError, match="fallo obligatorio sin tipar") as info:
+        orq._run_L6(_datos_minimos())
+    assert isinstance(info.value.__cause__, EstrategiaFallo)
+    assert isinstance(info.value.__cause__.__cause__, OSError)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,9 +559,41 @@ def test_report_generator_omite_el_reporte_roto_en_vez_de_escribir_error(
     for nombre, df in reportes.items():
         assert "Error" not in df.columns, nombre
         assert TEXTO_PROHIBIDO not in df.to_string(), nombre
-    assert [o.artefacto for o in generador.omitidos] == ["reporte_metricas_calidad.xlsx"]
-    assert MOTIVO_REPORTE in generador.omitidos[0].motivo
-    assert isinstance(generador.omitidos[0], ArtefactoOmitido)
+    # (archivo, motivo), como visualizer/suite: quien etiqueta la estrategia es
+    # la estrategia, no el generador.
+    assert [archivo for archivo, _ in generador.omitidos] == ["reporte_metricas_calidad.xlsx"]
+    assert MOTIVO_REPORTE in generador.omitidos[0][1]
+
+
+def test_excel_strategy_etiqueta_las_omisiones_del_generador_con_su_propia_clase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from record_linkage.reporting.reports import ReportGenerator
+
+    class ReportesPersonalizados(strategies.ExcelReportsStrategy):
+        pass
+
+    def _roto(self: Any) -> pd.DataFrame:
+        raise ValueError(MOTIVO_REPORTE)
+
+    monkeypatch.setattr(ReportGenerator, "_generate_quality_metrics", _roto)
+    ctx = strategies.ReportingContext(
+        golden_df=pd.DataFrame({"ID_GRUPO": [1, 2], "CONFIDENCE_SCORE": [0.9, 0.5]}),
+        correlative_df=pd.DataFrame(
+            {"ID_GRUPO": [1, 1, 2], "SRC": ["A", "B", "A"], "CONFIDENCE_SCORE": [0.9, 0.9, 0.5]}
+        ),
+        config={},
+        output_dir=tmp_path,
+        metrics={},
+        start_time=0.0,
+    )
+    estrategia = ReportesPersonalizados()
+    estrategia.execute(ctx, logging.getLogger("prueba"))
+
+    omision = next(o for o in estrategia.omitidos if o.artefacto == "reporte_metricas_calidad.xlsx")
+    assert isinstance(omision, ArtefactoOmitido)
+    assert omision.estrategia == "ReportesPersonalizados"
+    assert MOTIVO_REPORTE in omision.motivo
 
 
 def test_dashboard_no_escribe_png_de_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -373,3 +615,53 @@ def test_dashboard_no_escribe_png_de_error(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(RuntimeError, match="inventó"):
         tablero.generate_dashboard(str(destino))
     assert not destino.exists()
+
+
+def test_un_panel_del_dashboard_que_falla_no_deja_png(tmp_path: Path) -> None:
+    """El panel de rendimiento capturaba su excepción, pintaba «Error generando
+    métricas» y la figura se guardaba igual: un PNG con un error dentro que
+    ninguna búsqueda de texto detecta. El fallo nace dentro del panel
+    (``self.metrics.get("load_validate")``), no en un método parcheado."""
+    from record_linkage.reporting.dashboard import ExecutiveDashboard
+
+    correl = pd.DataFrame({"ID_GRUPO": [1, 1], "SRC": ["A", "B"], "CONFIDENCE_SCORE": [0.9, 0.9]})
+    golden = pd.DataFrame({"ID_GRUPO": [1], "CONFIDENCE_SCORE": [0.9]})
+    tablero = ExecutiveDashboard(
+        correlative_data=correl,
+        golden_records_data=golden,
+        # execution_time > 0 para que el único lector de «load_validate» sea el panel.
+        metrics={"total_records": 2, "execution_time": 1.0},
+    )
+    tablero.metrics = _MetricasQueRevientan(tablero.metrics)
+
+    destino = tmp_path / "dashboard_ejecutivo.png"
+    with pytest.raises(RuntimeError, match="inventó"):
+        tablero.generate_dashboard(str(destino))
+    assert not destino.exists()
+
+
+def test_un_panel_de_la_tarjeta_de_calidad_que_falla_se_omite_con_motivo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lo mismo para suite.py: el radar pintaba «Error generando radar» y la
+    tarjeta se guardaba. Ahora la tarjeta no existe y queda en ``omitidos``."""
+    from record_linkage.reporting.suite import EnhancedReportingSuite
+
+    _romper_paneles(monkeypatch)
+    correl = pd.DataFrame(
+        {"ID_GRUPO": [1, 1, 2], "SRC": ["A", "B", "A"], "CONFIDENCE_SCORE": [0.9, 0.9, 0.5]}
+    )
+    golden = pd.DataFrame({"ID_GRUPO": [1, 2], "CONFIDENCE_SCORE": [0.9, 0.5]})
+    suite = EnhancedReportingSuite(
+        correlative_data=correl, golden_records_data=golden, metrics={"total_records": 3}
+    )
+
+    with pytest.raises(RuntimeError, match="radar"):
+        suite.generate_quality_card(str(tmp_path))
+    assert not (tmp_path / "tarjeta_calidad_datos.png").exists()
+
+    suite.generate_all_enhanced_reports(str(tmp_path))
+    omitidos = dict(suite.omitidos)
+    assert "tarjeta_calidad_datos.png" in omitidos
+    assert MOTIVO_RADAR in omitidos["tarjeta_calidad_datos.png"]
+    assert not (tmp_path / "tarjeta_calidad_datos.png").exists()

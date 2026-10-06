@@ -812,107 +812,102 @@ class ExecutiveDashboard:
         Métricas de rendimiento del proceso.
         Versión corregida con el método _show_no_data_message.
         """
-        try:
-            # Obtener tiempos de cada fase
+        # Obtener tiempos de cada fase
+        phase_times = {
+            "Carga y Validación": self.metrics.get("load_validate", 0),
+            "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
+            "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
+            "Scoring": self.metrics.get("scoring_time", 0),
+            "Clustering": self.metrics.get("clustering_time", 0),
+            "Golden Records": self.metrics.get("golden_records_time", 0),
+            "Exportación": self.metrics.get("export_time", 0),
+        }
+
+        # Si no hay tiempos individuales, usar el tiempo total y estimaciones
+        total_time = self.metrics.get("execution_time", self.metrics.get("total_time", 0))
+
+        # Verificar si tenemos tiempos reales
+        sum_times = sum(phase_times.values())
+
+        if sum_times == 0 and total_time > 0:
+            # No tenemos tiempos por fase, hacer estimación proporcional
+            self.logger.warning("No se encontraron tiempos por fase, usando estimaciones")
             phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
+                "Carga y Validación": total_time * 0.15,
+                "Preprocesamiento": total_time * 0.10,
+                "Candidatos (LSH)": total_time * 0.25,
+                "Scoring": total_time * 0.15,
+                "Clustering": total_time * 0.10,
+                "Golden Records": total_time * 0.15,
+                "Exportación": total_time * 0.10,
             }
+        elif sum_times > 0 and sum_times < total_time * 0.8:
+            # Tenemos algunos tiempos pero no todos
+            total_time - sum_times
+            # Distribuir el tiempo faltante proporcionalmente
+            factor = total_time / (sum_times + 0.001)
+            phase_times = {k: v * factor for k, v in phase_times.items()}
 
-            # Si no hay tiempos individuales, usar el tiempo total y estimaciones
-            total_time = self.metrics.get("execution_time", self.metrics.get("total_time", 0))
+        # Filtrar fases con tiempo > 0
+        phase_series = pd.Series(phase_times).sort_values(ascending=True)
+        phase_series = phase_series[phase_series > 0.01]  # Filtrar tiempos muy pequeños
 
-            # Verificar si tenemos tiempos reales
-            sum_times = sum(phase_times.values())
+        if phase_series.empty:
+            self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
+            return
 
-            if sum_times == 0 and total_time > 0:
-                # No tenemos tiempos por fase, hacer estimación proporcional
-                self.logger.warning("No se encontraron tiempos por fase, usando estimaciones")
-                phase_times = {
-                    "Carga y Validación": total_time * 0.15,
-                    "Preprocesamiento": total_time * 0.10,
-                    "Candidatos (LSH)": total_time * 0.25,
-                    "Scoring": total_time * 0.15,
-                    "Clustering": total_time * 0.10,
-                    "Golden Records": total_time * 0.15,
-                    "Exportación": total_time * 0.10,
-                }
-            elif sum_times > 0 and sum_times < total_time * 0.8:
-                # Tenemos algunos tiempos pero no todos
-                total_time - sum_times
-                # Distribuir el tiempo faltante proporcionalmente
-                factor = total_time / (sum_times + 0.001)
-                phase_times = {k: v * factor for k, v in phase_times.items()}
+        # Crear gráfico de barras horizontales
+        colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
+        bars = ax.barh(phase_series.index, phase_series.values, color=colors)
 
-            # Filtrar fases con tiempo > 0
-            phase_series = pd.Series(phase_times).sort_values(ascending=True)
-            phase_series = phase_series[phase_series > 0.01]  # Filtrar tiempos muy pequeños
+        # Añadir etiquetas con valores y porcentajes
+        total = phase_series.sum()
+        for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
+            width = bar.get_width()
+            percentage = (time_val / total * 100) if total > 0 else 0
 
-            if phase_series.empty:
-                self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
-                return
+            # Formato del tiempo
+            if time_val < 1:
+                time_str = f"{time_val * 1000:.0f}ms"
+            elif time_val < 60:
+                time_str = f"{time_val:.1f}s"
+            else:
+                time_str = f"{time_val / 60:.1f}min"
 
-            # Crear gráfico de barras horizontales
-            colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
-            bars = ax.barh(phase_series.index, phase_series.values, color=colors)
+            # Etiqueta con tiempo y porcentaje
+            label = f"{time_str} ({percentage:.0f}%)"
+            ax.text(
+                width + 0.01 * phase_series.max(),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
 
-            # Añadir etiquetas con valores y porcentajes
-            total = phase_series.sum()
-            for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
-                width = bar.get_width()
-                percentage = (time_val / total * 100) if total > 0 else 0
+        # Configuración del gráfico
+        ax.set_xlabel("Tiempo", fontsize=11)
+        ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
+        ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
 
-                # Formato del tiempo
-                if time_val < 1:
-                    time_str = f"{time_val * 1000:.0f}ms"
-                elif time_val < 60:
-                    time_str = f"{time_val:.1f}s"
-                else:
-                    time_str = f"{time_val / 60:.1f}min"
+        # Agregar línea de tiempo total
+        ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
+        if total > 0:
+            total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
+            ax.text(
+                total,
+                len(phase_series) - 0.5,
+                f"Total: {total_str}",
+                ha="right",
+                va="center",
+                fontsize=9,
+                color="red",
+            )
 
-                # Etiqueta con tiempo y porcentaje
-                label = f"{time_str} ({percentage:.0f}%)"
-                ax.text(
-                    width + 0.01 * phase_series.max(),
-                    bar.get_y() + bar.get_height() / 2,
-                    label,
-                    va="center",
-                    ha="left",
-                    fontsize=9,
-                )
-
-            # Configuración del gráfico
-            ax.set_xlabel("Tiempo", fontsize=11)
-            ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
-            ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
-
-            # Agregar línea de tiempo total
-            ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
-            if total > 0:
-                total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
-                ax.text(
-                    total,
-                    len(phase_series) - 0.5,
-                    f"Total: {total_str}",
-                    ha="right",
-                    va="center",
-                    fontsize=9,
-                    color="red",
-                )
-
-            # Limpiar bordes
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-
-        except Exception as e:
-            self.logger.error(f"Error en _plot_performance_metrics: {e!s}")
-            self._show_no_data_message(ax, "Error generando métricas")
+        # Limpiar bordes
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
     def _plot_group_distribution(self, ax):
         """Distribución de tamaños de grupo."""
