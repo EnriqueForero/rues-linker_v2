@@ -27,6 +27,7 @@ import seaborn as sns
 from ..exporters._spreadsheet import prepare_spreadsheet_data, safe_sheet_name
 from ..pipeline.errores import MuestreoReportesError
 from ..utils.logger import CustomLogger
+from ._fases import MENSAJE_SIN_TIEMPOS, etiquetar, formatear_segundos, tiempos_por_fase
 from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
@@ -769,40 +770,21 @@ class EnhancedReportingSuite:
 
     def _plot_performance_metrics(self, ax):
         """
-        Métricas de rendimiento del proceso - VERSIÓN CORREGIDA.
+        Tiempo por fase, tal como lo cronometró el orquestador (F1.6).
+
+        Sin ``metrics["phase_times"]`` el panel dice «Sin tiempos por fase»;
+        antes repartía el tiempo total con porcentajes fijos.
         """
         try:
-            # Obtener tiempos de cada fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            # Si no hay tiempos individuales, intentar calcular desde el total
-            total_time = self.metrics.get("total_time", self.metrics.get("execution_time", 0))
-            if sum(phase_times.values()) == 0 and total_time > 0:
-                # Estimación basada en proporciones típicas
-                phase_times = {
-                    "Carga y Validación": total_time * 0.15,
-                    "Preprocesamiento": total_time * 0.10,
-                    "Candidatos (LSH)": total_time * 0.30,
-                    "Scoring": total_time * 0.15,
-                    "Clustering": total_time * 0.10,
-                    "Golden Records": total_time * 0.10,
-                    "Exportación": total_time * 0.10,
-                }
-
-            # Filtrar fases con tiempo > 0
-            phase_series = pd.Series(phase_times).sort_values(ascending=True)
-            phase_series = phase_series[phase_series > 0]
+            phase_series = pd.Series(
+                etiquetar(tiempos_por_fase(self.metrics)), dtype="float64"
+            ).sort_values(ascending=True)
 
             if phase_series.empty:
-                self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
+                self.logger.warning(
+                    "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+                )
+                self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
                 return
 
             # Crear gráfico de barras horizontales
@@ -815,16 +797,8 @@ class EnhancedReportingSuite:
                 width = bar.get_width()
                 percentage = (time_val / total * 100) if total > 0 else 0
 
-                # Formato del tiempo
-                if time_val < 1:
-                    time_str = f"{time_val * 1000:.0f}ms"
-                elif time_val < 60:
-                    time_str = f"{time_val:.1f}s"
-                else:
-                    time_str = f"{time_val / 60:.1f}min"
-
                 # Etiqueta con tiempo y porcentaje
-                label = f"{time_str} ({percentage:.0f}%)"
+                label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
                 ax.text(
                     width + 0.01 * phase_series.max(),
                     bar.get_y() + bar.get_height() / 2,

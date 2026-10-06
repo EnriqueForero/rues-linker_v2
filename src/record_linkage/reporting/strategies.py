@@ -579,10 +579,8 @@ class DashboardStrategy(BaseReportingStrategy):
         metrics_enriched = ctx.metrics.copy()
         metrics_enriched["phase_times"] = ctx.phase_times
         metrics_enriched["execution_time"] = time.time() - ctx.start_time if ctx.start_time else 0
-
-        # Agregar tiempos individuales de cada fase
-        for phase_name, duration in ctx.phase_times.items():
-            metrics_enriched[f"{phase_name}_time"] = duration
+        # F1.6: el dashboard lee ``phase_times`` con reporting._fases; ya no se
+        # duplican como ``<fase>_time`` (nadie los leía).
 
         dashboard = ExecutiveDashboard(
             correlative_data=ctx.correlative_df,

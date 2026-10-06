@@ -61,20 +61,19 @@ El plan de ejecución (F0.4) cita 30 columnas de correlativa, 40 de golden y
 Sobre este dataset sintético de 5 columnas (NIT, RAZON_SOCIAL, CIUDAD,
 TELEFONO, ID_GROUP) la foto es: 18 columnas de correlativa (5 de entrada +
 SRC, ORIGINAL_INDEX, 6 derivadas de L1, ID_GRUPO y 4 de L5), 13 de golden y
-29 archivos de L1…L6 más ``manifest.json`` (30 en total). Las diferencias
+30 archivos de L1…L6 más ``manifest.json`` (31 en total). Las diferencias
 tienen explicación:
 
 * columnas: la correlativa arrastra todas las columnas de entrada (18 en el
   banco, 5 aquí) y el golden de F1.1 pega columnas de la correlativa al
   consolidar por NIT, cosa que no ocurre en este dataset;
-* archivos: faltan dos de los 31 del plan y en ambos casos es por diseño
-  actual, no por azar: ``L6_reporting/visualizaciones/performance_timeline.png``
-  no se genera nunca (el visualizador busca ``load_validate``… y el
-  orquestador entrega ``L1_prep``…; es la tarea F1.6) y
+* archivos: falta uno de los 31 del plan, por diseño actual:
   ``L6_reporting/casos_problematicos_detallado.xlsx`` solo se escribe cuando
-  la suite detecta casos problemáticos (aquí no hay). Ambas ausencias quedan
-  congeladas tal cual: cuando F1 las corrija, el fixture cambiará y el diff
-  lo mostrará.
+  la suite detecta casos problemáticos (aquí no hay). La ausencia queda
+  congelada tal cual: cuando se corrija, el fixture cambiará y el diff lo
+  mostrará. ``L6_reporting/visualizaciones/performance_timeline.png`` faltaba
+  hasta F1.6 (el visualizador buscaba ``load_validate``… y el orquestador
+  entrega ``L1_prep``…); desde F1.6 se genera y el fixture lo incluye.
 
 El dataset tiene 28 filas de datos (29 líneas contadas con el encabezado): la
 prueba no fija «29» a mano sino que exige correlativa == filas leídas, y el

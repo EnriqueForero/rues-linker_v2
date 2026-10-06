@@ -25,8 +25,21 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 from ..utils.logger import CustomLogger
+from ._fases import MENSAJE_SIN_TIEMPOS, etiquetar, formatear_segundos, tiempos_por_fase
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 from ._text_utils import strip_emojis as _strip_emojis
+
+
+def _serie_tiempos(metrics: dict[str, Any] | None) -> pd.Series:
+    """Serie que dibuja el panel «Tiempo por Fase»: etiqueta humana → segundos.
+
+    Función pura (F1.6): son EXACTAMENTE los ``phase_times`` del orquestador,
+    sin escalar ni repartir. Sin ``phase_times`` la serie es vacía y el panel
+    dice «Sin tiempos por fase»; antes se inventaban porcentajes fijos sobre
+    el tiempo total.
+    """
+    tiempos = etiquetar(tiempos_por_fase(metrics))
+    return pd.Series(tiempos, dtype="float64")
 
 
 class ExecutiveDashboard:
@@ -538,16 +551,9 @@ class ExecutiveDashboard:
         if exec_time == 0 and self.pipeline_start_time:
             exec_time = time.time() - self.pipeline_start_time
 
-        # Fallback: sumar tiempos parciales
+        # Fallback: sumar los tiempos por fase que sí cronometró el orquestador
         if exec_time == 0:
-            phase_times = [
-                "load_validate",
-                "preprocessing_time",
-                "linkage_time",
-                "golden_records_time",
-                "export_time",
-            ]
-            exec_time = sum(self.metrics.get(t, 0) for t in phase_times)
+            exec_time = sum(tiempos_por_fase(self.metrics).values())
 
         return exec_time
 
@@ -805,52 +811,19 @@ class ExecutiveDashboard:
 
     def _plot_performance_metrics(self, ax):
         """
-        Métricas de rendimiento del proceso.
-        Versión corregida con el método _show_no_data_message.
+        Tiempo por fase del pipeline, tal como lo cronometró el orquestador.
+
+        F1.6: la serie sale de ``_serie_tiempos`` (``metrics["phase_times"]``).
+        Si no hay tiempos, el panel lo dice; no se estima ni se reparte.
         """
         try:
-            # Obtener tiempos de cada fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            # Si no hay tiempos individuales, usar el tiempo total y estimaciones
-            total_time = self.metrics.get("execution_time", self.metrics.get("total_time", 0))
-
-            # Verificar si tenemos tiempos reales
-            sum_times = sum(phase_times.values())
-
-            if sum_times == 0 and total_time > 0:
-                # No tenemos tiempos por fase, hacer estimación proporcional
-                self.logger.warning("No se encontraron tiempos por fase, usando estimaciones")
-                phase_times = {
-                    "Carga y Validación": total_time * 0.15,
-                    "Preprocesamiento": total_time * 0.10,
-                    "Candidatos (LSH)": total_time * 0.25,
-                    "Scoring": total_time * 0.15,
-                    "Clustering": total_time * 0.10,
-                    "Golden Records": total_time * 0.15,
-                    "Exportación": total_time * 0.10,
-                }
-            elif sum_times > 0 and sum_times < total_time * 0.8:
-                # Tenemos algunos tiempos pero no todos
-                total_time - sum_times
-                # Distribuir el tiempo faltante proporcionalmente
-                factor = total_time / (sum_times + 0.001)
-                phase_times = {k: v * factor for k, v in phase_times.items()}
-
-            # Filtrar fases con tiempo > 0
-            phase_series = pd.Series(phase_times).sort_values(ascending=True)
-            phase_series = phase_series[phase_series > 0.01]  # Filtrar tiempos muy pequeños
+            phase_series = _serie_tiempos(self.metrics).sort_values(ascending=True)
 
             if phase_series.empty:
-                self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
+                self.logger.warning(
+                    "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+                )
+                self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
                 return
 
             # Crear gráfico de barras horizontales
@@ -863,16 +836,8 @@ class ExecutiveDashboard:
                 width = bar.get_width()
                 percentage = (time_val / total * 100) if total > 0 else 0
 
-                # Formato del tiempo
-                if time_val < 1:
-                    time_str = f"{time_val * 1000:.0f}ms"
-                elif time_val < 60:
-                    time_str = f"{time_val:.1f}s"
-                else:
-                    time_str = f"{time_val / 60:.1f}min"
-
                 # Etiqueta con tiempo y porcentaje
-                label = f"{time_str} ({percentage:.0f}%)"
+                label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
                 ax.text(
                     width + 0.01 * phase_series.max(),
                     bar.get_y() + bar.get_height() / 2,
@@ -1379,14 +1344,15 @@ class ExecutiveDashboard:
         if max_memory > 0:
             metrics.append(f"💾 Memoria máxima: {max_memory:.1f} GB")
 
-        # Velocidad por fase
+        # Velocidad por fase (tiempos reales de L2 y L3, F1.6)
         phase_speeds = []
-        if candidates > 0 and self.metrics.get("candidate_generation_time", 0) > 0:
-            speed = candidates / self.metrics["candidate_generation_time"]
+        tiempos = tiempos_por_fase(self.metrics)
+        if candidates > 0 and tiempos.get("L2_lsh_candidates", 0) > 0:
+            speed = candidates / tiempos["L2_lsh_candidates"]
             phase_speeds.append(f"LSH: {speed:.0f} cand/s")
 
-        if pairs_scored > 0 and self.metrics.get("scoring_time", 0) > 0:
-            speed = pairs_scored / self.metrics["scoring_time"]
+        if pairs_scored > 0 and tiempos.get("L3_scoring", 0) > 0:
+            speed = pairs_scored / tiempos["L3_scoring"]
             phase_speeds.append(f"Scoring: {speed:.0f} pares/s")
 
         if phase_speeds:
