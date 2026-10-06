@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 from lineas_base import BANCO_F0, LineaBaseBanco, discrepancias_con_linea_base
 
-from record_linkage.evaluation.banco import EspecificacionBanco, correr_banco
+from record_linkage.evaluation.banco import SEMILLA, EspecificacionBanco, correr_banco
 
 RAIZ = Path(__file__).resolve().parents[1]
 DATOS = RAIZ / BANCO_F0.datos
@@ -86,6 +86,10 @@ def test_el_json_de_evidencia_se_midio_con_la_misma_especificacion() -> None:
     assert espec["variables_extra"] is None
     assert espec["ajustes_perfil"] is None
     assert espec["perfil_multicampo"] is None
+    assert espec["semilla"] == SEMILLA, (
+        f"el JSON se midió con la semilla {espec['semilla']} y el banco usa {SEMILLA}: "
+        "otra semilla es otra partición y no es esta línea base"
+    )
 
 
 # ── El comparador detecta la deriva (prueba de la prueba) ────────────────
@@ -172,6 +176,13 @@ def test_el_banco_reproduce_la_linea_base_f0(tmp_path: Path) -> None:
     )
     assert not discrepancias, "\n".join(discrepancias)
     assert calidad.registros == 30486, "el conjunto de referencia cambió de tamaño"
-    assert not (RAIZ / "docs" / "evidencia" / "corrida_linea_base_f0.json").exists(), (
+    # `correr_banco` no escribe el JSON de la corrida (eso lo hace `Corrida.guardar`,
+    # desde scripts/banco.py); lo que sí deposita en `dir_evidencia` es la predicción
+    # en parquet. Se vigila ese artefacto real: que esté en el temporal y no en el repo.
+    prediccion = "prediccion_linea_base_f0.parquet"
+    assert (tmp_path / "evidencia" / prediccion).is_file(), (
+        "correr_banco debía dejar la predicción en el directorio temporal"
+    )
+    assert not (RAIZ / "docs" / "evidencia" / prediccion).exists(), (
         "la prueba escribió en docs/evidencia: debe usar solo directorios temporales"
     )
