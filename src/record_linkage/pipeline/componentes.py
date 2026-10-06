@@ -32,6 +32,11 @@ def modo_limpieza(config: Mapping[str, Any], perfil: str | None) -> str:
     manda el ``cleaning_mode`` del perfil; si el perfil no lo declara (o no
     existe), el ``cleaning_mode`` del nivel superior de la configuración; y
     si tampoco está, ``BALANCEADO``.
+
+    Un valor vacío o ``None`` cuenta como NO declarado y cae al nivel
+    siguiente. Es la única diferencia con el pipeline heredado, que devolvía
+    la clave tal cual si existía y construía ``TextProcessor(None)``; ningún
+    perfil del repositorio lo hace y la huella del banco es idéntica (F2.9).
     """
     perfiles = config.get("profiles") or {}
     del_perfil = (perfiles.get(perfil) or {}).get("cleaning_mode") if perfil else None

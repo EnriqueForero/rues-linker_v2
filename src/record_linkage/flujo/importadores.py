@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from .. import contrato
-from ..engine.cobertura import cobertura_estrella
+from ..engine.cobertura import ReglaLider, cobertura_estrella
 from ..golden.metricas import confianza_de_grupo
 from ..matching.campos import CampoSpec, EsquemaCampos, PoliticaFaltante, TipoCampo
 from ..matching.genericos import (
@@ -266,7 +266,7 @@ class ConfigImportadores:
 
     # ── Postproceso ─────────────────────────────────────────────────────
     refinar_cohesion: bool = True
-    regla_nombre_final: str = "cobertura"
+    regla_nombre_final: ReglaLider = "cobertura"
 
     # ── Control de calidad ──────────────────────────────────────────────
     paises_auditoria_bloqueo: tuple[str, ...] = ()

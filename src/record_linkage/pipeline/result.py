@@ -43,6 +43,34 @@ from ..exporters.escritor import exportar_vistas
 from .errores import mensaje_accionable
 
 
+def _con_indice(clave: str, df: pd.DataFrame) -> pd.DataFrame:
+    """``df.reset_index()`` que falla con remedio si el índice se llama como una columna.
+
+    Los nombres que ``reset_index`` insertaría son los de pandas: el del nivel,
+    o ``index`` si no tiene nombre (``level_0`` si ``index`` ya es columna;
+    ``level_<i>`` en un MultiIndex). Si uno choca, pandas lanzaría «cannot
+    insert …, already exists» sin decir qué hacer.
+    """
+    nombres = list(df.index.names)
+    if len(nombres) == 1:
+        sin_nombre = "index" if "index" not in df.columns else "level_0"
+        inserta = [nombres[0] if nombres[0] is not None else sin_nombre]
+    else:
+        inserta = [n if n is not None else f"level_{i}" for i, n in enumerate(nombres)]
+    chocan = [n for n in inserta if n in df.columns]
+    if chocan:
+        raise ValueError(
+            mensaje_accionable(
+                f"to_csv(index=True): en {clave!r} el índice se llama {chocan} y ya hay "
+                "columna(s) con ese nombre.",
+                "reset_index no puede insertar dos columnas iguales y el CSV no se "
+                "escribiría (pandas lanzaría «cannot insert …, already exists», sin remedio).",
+                "renombre el índice (df.rename_axis('fila')) o use index=False.",
+            )
+        )
+    return df.reset_index()
+
+
 @dataclass
 class PipelineResult:
     """Resultado del pipeline de record linkage con carga lazy de DataFrames.
@@ -234,8 +262,12 @@ class PipelineResult:
                 vistas[key] = value
         if not vistas:
             raise ValueError(
-                f"{metodo}: ninguna de las claves {include} produjo un DataFrame "
-                f"no vacío. Claves disponibles: {list(self.keys())}"
+                mensaje_accionable(
+                    f"{metodo}: ninguna de las claves {include} produjo un DataFrame no vacío.",
+                    "sin tablas no hay nada que escribir.",
+                    f"pase en include alguna de: {list(self.keys())}, o llame a "
+                    "exportar_vistas con sus propias tablas.",
+                )
             )
         return vistas
 
@@ -304,16 +336,19 @@ class PipelineResult:
     ) -> dict[str, Path]:
         """Alias de ``exportar_vistas(..., formato="csv")``: un ``<clave>.csv`` por clave.
 
-        Con ``index=True`` el índice entra como primera columna (``reset_index``)
-        y recibe la misma neutralización que el resto. Solo UTF-8: es lo que
-        ``exportar_vistas`` escribe.
+        Con ``index=True`` el índice entra como primera columna (``reset_index``:
+        se llama como el índice, o ``index`` si no tiene nombre) y recibe la
+        misma neutralización que el resto; el índice debe llamarse distinto de
+        las columnas. Solo UTF-8: es lo que ``exportar_vistas`` escribe.
 
         Returns:
             Dict {clave: Path} con las rutas absolutas de los archivos creados.
 
         Raises:
-            ValueError: si ninguna clave produce un DataFrame no vacío o si
-                ``encoding`` no es UTF-8.
+            ValueError: si ninguna clave produce un DataFrame no vacío, si
+                ``encoding`` no es UTF-8 o si, con ``index=True``, el índice de
+                alguna tabla se llama como una de sus columnas (antes de
+                escribir nada; el mensaje dice cómo renombrarlo).
         """
         self._avisar("to_csv")
         if encoding.lower().replace("_", "-") not in ("utf-8", "utf8"):
@@ -328,6 +363,6 @@ class PipelineResult:
             )
         vistas = self._vistas(include, "to_csv")
         if index:
-            vistas = {k: v.reset_index() for k, v in vistas.items()}
+            vistas = {k: _con_indice(k, v) for k, v in vistas.items()}
         escritas = exportar_vistas(vistas, output_dir, formato="csv")
         return {k: r.resolve() for k, r in zip(vistas, escritas, strict=True)}

@@ -152,6 +152,40 @@ def test_to_csv_raises_on_empty_include(result_with_data: PipelineResult, tmp_pa
         result_with_data.to_csv(tmp_path / "csvs", include=("inexistente",))
 
 
+def test_vistas_vacias_fallan_con_el_formato_del_modulo_de_errores(
+    result_with_data: PipelineResult, tmp_path: Path
+):
+    """El error de ``_vistas`` se arma con ``mensaje_accionable`` (qué pasó · por
+    qué importa · qué hacer) y cita las claves disponibles."""
+    with pytest.raises(ValueError, match=r"\nQué hacer: ") as exc:
+        result_with_data.to_csv(tmp_path / "csvs", include=("inexistente",))
+    texto = str(exc.value)
+    assert texto.startswith("Qué pasó: to_csv: ninguna de las claves")
+    assert "golden_records" in texto and "exportar_vistas" in texto
+
+
+def test_to_csv_con_indice_que_choca_con_una_columna_falla_con_remedio(tmp_path: Path):
+    """Con ``index=True`` y un índice llamado como una columna, ``reset_index``
+    lanzaría el ``ValueError`` crudo de pandas («cannot insert a, already
+    exists»); el alias lo detecta antes y dice qué hacer. No deja archivo."""
+    df = pd.DataFrame({"a": [1, 2], "b": [3, 4]}, index=pd.Index([10, 20], name="a"))
+    result = PipelineResult(work_dir=tmp_path, extra={"payload": df})
+    with pytest.raises(ValueError, match="rename_axis") as exc:
+        result.to_csv(tmp_path / "csvs", include=("payload",), index=True)
+    texto = str(exc.value)
+    assert texto.startswith("Qué pasó: ") and "index=False" in texto
+    assert "'payload'" in texto and "['a']" in texto
+    assert not (tmp_path / "csvs" / "payload.csv").exists()
+
+
+def test_to_csv_con_indice_sin_nombre_lo_llama_index(tmp_path: Path):
+    """Documentado: con ``index=True`` un índice sin nombre sale como la
+    columna ``index`` (lo que hace ``reset_index``), no como encabezado vacío."""
+    result = PipelineResult(work_dir=tmp_path, extra={"payload": pd.DataFrame({"a": [1, 2]})})
+    ruta = result.to_csv(tmp_path / "csvs", include=("payload",), index=True)["payload"]
+    assert ruta.read_text(encoding="utf-8").splitlines()[0] == "index,a"
+
+
 def test_exports_neutralize_spreadsheet_formulas_without_mutating_input(tmp_path: Path):
     dangerous = pd.DataFrame(
         {

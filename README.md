@@ -77,7 +77,7 @@ cfg = ConfigImportadores(
     col_peso_economico="VALOR_FOB_USD_TOTAL",
 )
 r = deduplicar_importadores(df, cfg)
-assert r.todo_ok                     # diez invariantes; si falla, no use nada
+assert r.todo_ok                     # once invariantes; si falla, no use nada
 r.correlativa.to_parquet("correlativa.parquet")
 print(r.resumen())
 ```
@@ -89,7 +89,8 @@ se parecen y son distintos.
 
 Sobre la base de referencia: 211.949 registros → 100.008 importadores (−52,8 %;
 99.897 hasta 0.22.3, antes de tratar `A LA ORDEN`/`TO ORDER` como sin nombre),
-con las 10 invariantes en OK, y **el mismo resultado bit a bit en procesos con
+con las 10 invariantes en OK (desde F2.12 son 11: se añadió la de `CONFIANZA`),
+y **el mismo resultado bit a bit en procesos con
 distinta semilla de hash** (desde 0.22.3; antes variaba ±1). Tiempos: 226 s en
 el contenedor de desarrollo, 396 s en Colab Free. Precisión ponderada **0,966** sobre 160 asignaciones revisadas a mano;
 recall del bloqueo **1,000** medido por fuerza bruta. Ver
@@ -704,7 +705,7 @@ Resumen de la política de versionamiento (detalle en `CHANGELOG.md`):
 | [`notebooks/04_multicampo_y_evaluacion.ipynb`](notebooks/04_multicampo_y_evaluacion.ipynb) | Esquema multicampo y evaluación etiquetada con presupuesto |
 | [`notebooks/05_general_cruce_configurable.ipynb`](notebooks/05_general_cruce_configurable.ipynb) | **General (v0.17.3)**: cualquier par de bases por contrato, con preflight, smoke test, invariantes y metadatos |
 | [`notebooks/06_orquestador_configurable.ipynb`](notebooks/06_orquestador_configurable.ipynb) | **Producción disk-first (v0.17.3)**: lista declarativa de N fuentes, DuckDB con presupuesto explícito, payload separado, salida Parquet lazy y QA N-fuente sin materialización masiva |
-| [`notebooks/07_deduplicar_importadores_razon_social_pais.ipynb`](notebooks/07_deduplicar_importadores_razon_social_pais.ipynb) | **Sin identificador (v0.22.0, revisado en 0.22.4)**: empalme por razón social y país; perfiles de columnas por fuente (`snowflake_v2`, `destinatarios_dian`); catálogo de países y listas de limpieza editables; cobertura del catálogo comprobada **antes** del smoke test (`detener`/`aislar`); diez invariantes; cronómetro por fase y exportación con metadata; scoring por lotes (0.22.4): la base real de 355.681 filas termina en 17 min con 4,8 GiB de pico |
+| [`notebooks/07_deduplicar_importadores_razon_social_pais.ipynb`](notebooks/07_deduplicar_importadores_razon_social_pais.ipynb) | **Sin identificador (v0.22.0, revisado en 0.22.4)**: empalme por razón social y país; perfiles de columnas por fuente (`snowflake_v2`, `destinatarios_dian`); catálogo de países y listas de limpieza editables; cobertura del catálogo comprobada **antes** del smoke test (`detener`/`aislar`); diez invariantes (once desde F2.12); cronómetro por fase y exportación con metadata; scoring por lotes (0.22.4): la base real de 355.681 filas termina en 17 min con 4,8 GiB de pico |
 | [`notebooks/08_PUBLICAR_GITHUB.ipynb`](notebooks/08_PUBLICAR_GITHUB.ipynb) | **Publicación (v0.22.4)**: empaqueta, verifica compuertas de calidad y publica el paquete a GitHub con tag y release |
 
 ---

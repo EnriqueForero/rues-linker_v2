@@ -10,6 +10,7 @@ aviso que no puede atender.
 
 from __future__ import annotations
 
+import copy
 import warnings
 
 import pandas as pd
@@ -19,10 +20,8 @@ from record_linkage.deduplication.unified import (
     AjustesDeduplicacion,
     deduplicate_unified,
 )
-from record_linkage.pipeline import (
-    componentes as modulo_componentes,
-    orchestrator as modulo_orquestador,
-)
+from record_linkage.evaluation.banco import huella_particion
+from record_linkage.pipeline import orchestrator as modulo_orquestador
 from record_linkage.pipeline.componentes import (
     ComponentesPreparacion,
     fabricar_componentes,
@@ -55,6 +54,16 @@ def test_modo_limpieza_cae_al_nivel_superior_y_luego_a_balanceado() -> None:
     assert modo_limpieza(_config(cleaning_mode="CONSERVADOR"), "p") == "CONSERVADOR"
     assert modo_limpieza(_config(), "p") == "BALANCEADO"
     assert modo_limpieza({}, None) == "BALANCEADO"
+    # Un valor vacío o None cuenta como NO declarado (lo declara el docstring):
+    # el pipeline heredado devolvía la clave tal cual y construía
+    # TextProcessor(None); la fábrica cae al nivel siguiente.
+    cfg = _config(cleaning_mode="CONSERVADOR")
+    cfg["profiles"]["p"]["cleaning_mode"] = None
+    assert modo_limpieza(cfg, "p") == "CONSERVADOR"
+    cfg["profiles"]["p"]["cleaning_mode"] = ""
+    cfg["cleaning_mode"] = None
+    assert modo_limpieza(cfg, "p") == "BALANCEADO"
+    assert "None" in (modo_limpieza.__doc__ or "")  # la conducta está declarada
 
 
 def test_modo_limpieza_de_un_perfil_que_no_existe_usa_el_nivel_superior() -> None:
@@ -210,8 +219,24 @@ def test_ajustes_perfil_llega_al_perfil_activo(tmp_path) -> None:
     assert estricta["ID_GRUPO"].nunique() == 4
 
 
-def test_ajustes_por_defecto_son_inertes() -> None:
-    ajustes = AjustesDeduplicacion()
-    assert ajustes.motor is None
-    assert ajustes.perfil == {}
-    assert modulo_componentes.__doc__  # el módulo documenta por qué existe
+def test_ajustes_por_defecto_son_inertes(tmp_path) -> None:
+    """``AjustesDeduplicacion()`` deja la misma partición que no pasar ajustes.
+
+    La huella (``evaluation.banco.huella_particion``) compara las dos corridas.
+    Medido: en 4 filas la huella no distingue ``default`` de ``disk_based``,
+    así que la inercia de ``aplicar()`` se afirma además sobre la configuración
+    misma — es lo que fallaría si escribiera ``linkage_engine_class`` con
+    ``motor=None``.
+    """
+    sin_ajustes, _ = deduplicate_unified(_df_chico(), output_dir=str(tmp_path / "a"))
+    con_ajustes, _ = deduplicate_unified(
+        _df_chico(), output_dir=str(tmp_path / "b"), ajustes=AjustesDeduplicacion()
+    )
+    huella_sin = huella_particion(sin_ajustes["ORIGINAL_INDEX"], sin_ajustes["ID_GRUPO"])
+    huella_con = huella_particion(con_ajustes["ORIGINAL_INDEX"], con_ajustes["ID_GRUPO"])
+    assert huella_sin == huella_con
+
+    config = {"profile": "p", "profiles": {"p": {"score_threshold": 0.5}}}
+    antes = copy.deepcopy(config)
+    AjustesDeduplicacion().aplicar(config)
+    assert config == antes

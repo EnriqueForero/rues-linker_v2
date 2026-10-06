@@ -213,3 +213,65 @@ def test_validate_against_legacy_true_falla_porque_no_valida_nada(
                 output_dir=tmpdir,
                 validate_against_legacy=True,
             )
+
+
+def test_los_errores_de_unified_usan_el_formato_del_modulo_de_errores(
+    df_single_source_with_duplicates: pd.DataFrame,
+):
+    """Los dos mensajes de tres secciones de ``unified.py`` se arman con
+    ``pipeline.errores.mensaje_accionable`` (una regla se escribe una vez):
+    una sección por línea, no un texto a mano en una sola línea."""
+    from record_linkage.deduplication.unified import _generate_non_trivial_connections
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with pytest.raises(ValueError) as exc_legacy:
+            deduplicate_unified(
+                df_input=df_single_source_with_duplicates,
+                output_dir=tmpdir,
+                validate_against_legacy=True,
+            )
+    with pytest.raises(ValueError) as exc_conexiones:
+        _generate_non_trivial_connections(pd.DataFrame({"ID_GRUPO": [1, 1]}))
+
+    for exc in (exc_legacy, exc_conexiones):
+        texto = str(exc.value)
+        assert texto.startswith("Qué pasó: "), texto
+        assert "\nPor qué importa: " in texto and "\nQué hacer: " in texto, texto
+    assert "ORIGINAL_INDEX" in str(exc_conexiones.value)  # dice cuáles faltan
+
+
+def test_fallo_de_parquet_se_relanza_nombrando_este_camino(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    """``escribir_parquet`` falla con ``EscrituraSalidaError`` cuyo remedio habla
+    de ``linkage()`` y de ``validar()``; en este camino la tabla es la de
+    trabajo de ``dedupe()``/``deduplicate_unified`` y el remedio es sobre
+    ``df_input``. Hasta F2.10 ``SmartExporter`` degradaba a CSV.gz en silencio.
+    El motor normaliza a texto las columnas mixtas (medido), así que el fallo
+    se provoca en la primitiva."""
+    import pyarrow as pa
+
+    from record_linkage.deduplication import unified
+    from record_linkage.pipeline.errores import EscrituraSalidaError
+
+    def _falla(df: pd.DataFrame, ruta, columnas=()) -> None:
+        try:
+            raise pa.ArrowInvalid("Conversion failed for column EXTRA with type object")
+        except pa.ArrowInvalid as causa:
+            raise EscrituraSalidaError("pyarrow no pudo convertir la tabla a parquet") from causa
+
+    monkeypatch.setattr(unified, "escribir_parquet", _falla)
+    df = pd.DataFrame(
+        {
+            "NIT": ["900100200", "900100200"],
+            "RAZON_SOCIAL": ["FERRETERIA INVENTADA SAS", "FERRETERIA INVENTADA S.A.S."],
+        }
+    )
+    with pytest.raises(EscrituraSalidaError, match="deduplicate_unified") as exc:
+        deduplicate_unified(df, output_dir=str(tmp_path))
+    texto = str(exc.value)
+    assert "correlativa.parquet" in texto
+    assert "column EXTRA" in texto  # cita la causa de pyarrow, que nombra la columna
+    assert "dedupe()" in texto and "\nQué hacer: " in texto
+    assert "linkage()" not in texto
+    assert isinstance(exc.value.__cause__, EscrituraSalidaError)

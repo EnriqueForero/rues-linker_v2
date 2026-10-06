@@ -35,6 +35,7 @@ F2.10 — contrato corregido y salidas por el escritor único
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,7 @@ import pandas as pd
 from .. import contrato
 from ..exporters.escritor import escribir_parquet
 from ..pipeline._internal import DEDUPLICATION_PROFILES
-from ..pipeline.errores import mensaje_accionable
+from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ..pipeline.linkage_pipeline import RecordLinkagePipeline
 from ..processing.nit import AdvancedNitProcessor
 from ..processing.text import EnhancedTextProcessor
@@ -222,6 +223,11 @@ def deduplicate_unified(
         ValueError: si alguna columna referida en ``extra_features`` no existe
             en ``df_input`` (fail-fast: mejor un error claro que un feature
             silenciosamente inerte).
+        EscrituraSalidaError: si una columna de ``df_input`` mezcla tipos y
+            parquet no la acepta al escribir las dos tablas en ``output_dir``
+            (hasta F2.10 ``SmartExporter`` se degradaba a CSV.gz en silencio).
+            El mensaje nombra la tabla y cita la causa de pyarrow, que dice la
+            columna; el remedio es convertirla a texto en ``df_input``.
     """
     logger = setup_logger("deduplicate_unified")
     start_time = time.time()
@@ -234,10 +240,13 @@ def deduplicate_unified(
         raise ValueError(f"Columnas requeridas {col_nit}, {col_name} no encontradas")
     if validate_against_legacy:
         raise ValueError(
-            "Qué pasó: se pidió validate_against_legacy=True. Por qué importa: el motor "
-            "heredado contra el que validaba ya no existe y aceptarlo en silencio "
-            "prometería una validación que no ocurre. Qué hacer: quite el parámetro (o "
-            "pase False); para medir calidad use scripts/banco.py o scripts/conformidad.py."
+            mensaje_accionable(
+                "se pidió validate_against_legacy=True.",
+                "el motor heredado contra el que validaba ya no existe y aceptarlo en "
+                "silencio prometería una validación que no ocurre.",
+                "quite el parámetro (o pase False); para medir calidad use "
+                "scripts/banco.py o scripts/conformidad.py.",
+            )
         )
 
     # v0.7.4 (cierre de deuda): advertir sobre uso en mezcla CON_NIT/SIN_NIT.
@@ -438,8 +447,8 @@ def deduplicate_unified(
     # conexiones sí son tabla del contrato y llevan sus tipos y el metadato.
     rutas = rutas_salida(output_dir)
     rutas["correlativa"].parent.mkdir(parents=True, exist_ok=True)
-    escribir_parquet(correlativa_df, rutas["correlativa"])
-    escribir_parquet(conexiones_no_triviales, rutas["conexiones"], contrato.CONEXIONES)
+    _escribir_salida(correlativa_df, rutas["correlativa"])
+    _escribir_salida(conexiones_no_triviales, rutas["conexiones"], contrato.CONEXIONES)
 
     elapsed_time = time.time() - start_time
     logger.info(
@@ -448,6 +457,34 @@ def deduplicate_unified(
     )
 
     return correlativa_df, conexiones_no_triviales
+
+
+def _escribir_salida(
+    df: pd.DataFrame, ruta: Path, columnas: Sequence[contrato.ColumnaContrato] = ()
+) -> None:
+    """``escribir_parquet`` relanzado con el remedio de ESTE camino.
+
+    La primitiva falla con ``EscrituraSalidaError`` cuyo «Qué hacer» habla de
+    ``linkage()`` y de ``validar()``; aquí la tabla es la de trabajo de
+    ``dedupe()``/``deduplicate_unified`` y el remedio es sobre ``df_input``.
+    Se cita la causa de pyarrow (``__cause__``), que nombra la columna.
+    """
+    try:
+        escribir_parquet(df, ruta, columnas)
+    except EscrituraSalidaError as exc:
+        causa = exc.__cause__
+        detalle = f"{type(causa).__name__}: {causa}" if causa is not None else str(exc)
+        raise EscrituraSalidaError(
+            mensaje_accionable(
+                f"deduplicate_unified no pudo escribir {ruta.name} en {ruta.parent} ({detalle}).",
+                "sin esa tabla en output_dir dedupe() no tiene la salida de trabajo que "
+                "publica en su manifiesto (rutas_salida); hasta F2.10 este fallo se "
+                "degradaba a CSV.gz en silencio.",
+                "convierta a texto en df_input la columna que cita la causa "
+                "(df[col] = df[col].astype('string')) y vuelva a llamar a "
+                "dedupe()/deduplicate_unified.",
+            )
+        ) from exc
 
 
 def _tipos_de_comparador_validos() -> frozenset[str]:
@@ -642,10 +679,13 @@ def _generate_non_trivial_connections(correlativa_df: pd.DataFrame) -> pd.DataFr
     faltan = [c for c in faltan if c != "RECORD_COUNT"]
     if faltan:
         raise ValueError(
-            f"Qué pasó: la correlativa no trae {faltan}. Por qué importa: son columnas "
-            f"fijas de la tabla conexiones (contrato.CONEXIONES) y sin ellas no se puede "
-            f"armar. Qué hacer: pase la correlativa tal como la devuelve el motor "
-            f"(RecordLinkagePipeline / deduplicate_unified); trae {list(correlativa_df.columns)}."
+            mensaje_accionable(
+                f"la correlativa no trae {faltan}.",
+                "son columnas fijas de la tabla conexiones (contrato.CONEXIONES) y sin "
+                "ellas no se puede armar.",
+                "pase la correlativa tal como la devuelve el motor (RecordLinkagePipeline / "
+                f"deduplicate_unified); trae {list(correlativa_df.columns)}.",
+            )
         )
     if "RECORD_COUNT" in correlativa_df.columns:
         tamanos = correlativa_df["RECORD_COUNT"]

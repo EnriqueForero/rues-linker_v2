@@ -52,7 +52,9 @@ SIMBOLOS_RETIRADOS = [
     "OptimizationVisualizerLite",
     "ParameterSpace",
     "GroundTruthGenerator",
-    "cross_validate",
+    # ``cross_validate`` no está: es el nombre de sklearn.model_selection y un
+    # uso legítimo futuro haría fallar la prueba sin que nada retirado volviera.
+    # Su retiro lo fija ``test_evaluador_separado_sigue_disponible`` (hasattr).
 ]
 
 
@@ -116,9 +118,20 @@ def _identificadores(ruta: Path) -> set[str]:
     return ids
 
 
+@pytest.fixture(scope="module")
+def identificadores_vivos() -> dict[str, set[str]]:
+    """``{ruta relativa: identificadores}`` de todo el código vivo, parseado UNA vez.
+
+    Parsear los ~400 archivos con ``ast`` por cada símbolo costaba ≈1,4 s por
+    caso (≈13 s el archivo); el dict se calcula una vez por módulo y cada caso
+    parametrizado solo lo consulta.
+    """
+    return {p.relative_to(RAIZ).as_posix(): _identificadores(p) for p in _archivos_vivos()}
+
+
 @pytest.mark.parametrize("simbolo", SIMBOLOS_RETIRADOS)
-def test_simbolo_retirado_no_se_usa_en_codigo_vivo(simbolo: str) -> None:
-    con_uso = [
-        p.relative_to(RAIZ).as_posix() for p in _archivos_vivos() if simbolo in _identificadores(p)
-    ]
+def test_simbolo_retirado_no_se_usa_en_codigo_vivo(
+    simbolo: str, identificadores_vivos: dict[str, set[str]]
+) -> None:
+    con_uso = [ruta for ruta, ids in identificadores_vivos.items() if simbolo in ids]
     assert not con_uso, f"{simbolo} sigue en uso en: {con_uso}"
