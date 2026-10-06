@@ -1097,6 +1097,28 @@ def _aplicar_alias(df: pd.DataFrame, diccionario: pd.DataFrame, tabla: str, alia
         df.rename(columns=mapa, inplace=True)
 
 
+def _enteros_nulos_del_contrato(
+    df: pd.DataFrame, columnas: Sequence[contrato.ColumnaContrato]
+) -> pd.DataFrame:
+    """Devuelve a entero nulable (``Int64``) las columnas enteras del contrato
+    que pandas leyó como ``float64`` por traer nulos (F2.6).
+
+    El parquet las escribió ``int64`` (el escritor fija el esquema del
+    contrato) y así las declara el contrato; es ``pd.read_parquet`` quien las
+    convierte a flotante cuando hay nulos (p. ej. ``NIT_DISTANCE`` en una
+    corrida de importadores, donde la base no trae identificador). No es una
+    reparación: es la lectura fiel del tipo escrito.
+    """
+    for col in columnas:
+        if (
+            col.nombre in df.columns
+            and contrato.familia_tipo(col.tipo) == "entero"
+            and pd.api.types.is_float_dtype(df[col.nombre])
+        ):
+            df[col.nombre] = df[col.nombre].astype("Int64")
+    return df
+
+
 def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     """Lee una carpeta del estándar y devuelve el ``ResultadoLinkage``.
 
@@ -1139,14 +1161,16 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
                 "escribir_resultado() o linkage(carpeta_salida=...).",
             )
         )
-    correlativa = pd.read_parquet(carpeta / "correlativa.parquet")
+    correlativa = _enteros_nulos_del_contrato(
+        pd.read_parquet(carpeta / "correlativa.parquet"), contrato.CORRELATIVA
+    )
     golden = (
-        pd.read_parquet(carpeta / "golden.parquet")
+        _enteros_nulos_del_contrato(pd.read_parquet(carpeta / "golden.parquet"), contrato.GOLDEN)
         if (carpeta / "golden.parquet").is_file()
         else None
     )
     enlaces = (
-        pd.read_parquet(carpeta / "enlaces.parquet")
+        _enteros_nulos_del_contrato(pd.read_parquet(carpeta / "enlaces.parquet"), contrato.ENLACES)
         if (carpeta / "enlaces.parquet").is_file()
         else None
     )

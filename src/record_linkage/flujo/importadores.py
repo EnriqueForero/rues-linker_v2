@@ -17,24 +17,76 @@ Uso típico::
     from record_linkage.flujo import ConfigImportadores, deduplicar_importadores
 
     cfg = ConfigImportadores(col_razon_social="RAZON_SOCIAL", col_pais="PAIS")
-    resultado = deduplicar_importadores(df, cfg)
-    resultado.correlativa.to_parquet("correlativa.parquet")
+    resultado = deduplicar_importadores(df, cfg, carpeta_salida="salidas")
     print(resultado.metricas.to_string(index=False))
+    resultado.carpeta_salida  # <salidas>/<AAAA-MM-DD_HHMM>_importadores/
 
 Todos los valores por defecto salen de una corrida medida sobre 211.949
 destinatarios de exportación colombianos; ver ``docs/ANALISIS_IMPORTADORES.md``.
+
+El estándar de salida (F2.6)
+----------------------------
+Desde F2.6 las tablas tienen la forma del contrato 1.0 (``contrato.py``) y la
+carpeta se escribe con ``exporters.escritor.escribir_resultado`` (el único
+escritor del estándar), igual que ``linkage()``:
+
+* ``correlativa``: las 12 columnas fijas primero (``ID_REGISTRO``, ``SRC``,
+  ``ORIGINAL_INDEX``, ``ID_GRUPO``, ``ID_ENTIDAD``, ``NIT_FINAL``,
+  ``RAZON_SOCIAL_FINAL``, ``NAME_SIMILARITY_SCORE``, ``NIT_DISTANCE``,
+  ``SCORE_PAR``, ``METODO_UNION``, ``CONFIANZA``), después TODAS las columnas
+  de la fuente sin cambios y al final las propias de este flujo
+  (``COLUMNAS_PROPIAS``: ``ID_IMPORTADOR``, ``ID_EMPRESA_GLOBAL``, ``PAIS_*``,
+  ``SIM_AL_FINAL``…), que se conservan como columnas adicionales documentadas
+  en ``diccionario.csv``. La partición (``ID_IMPORTADOR``) no cambia: el
+  estándar se añade encima (ADR-0009 sigue igual).
+* ``ID_GRUPO``: entero por orden de primera aparición en ``ORIGINAL_INDEX``
+  (la misma regla que ``salida.completar`` aplica a las etiquetas de texto de
+  ``dedupe``); uno por ``ID_IMPORTADOR``. ``ID_ENTIDAD``: la base no trae
+  identificador, así que SIEMPRE es ``ENT-<16 hex de SHA-256 de los
+  ID_REGISTRO del grupo ordenados>`` (``salida.completar._id_entidad``,
+  determinista por contenido). ``NIT_FINAL`` y ``NIT_DISTANCE`` quedan nulos.
+* ``METODO_UNION``: ``sin_pareja`` en grupos de un registro; ``nombre`` en el
+  resto (el nombre es toda la evidencia). ``SCORE_PAR``: la similitud 0–1 del
+  nombre normalizado del registro con el del líder de su estrella (la misma
+  que ``SIM_AL_FINAL``); para el líder, la mejor arista que lo une a un
+  miembro; ``1.0`` cuando otro registro del grupo comparte su nombre
+  normalizado (unión por igualdad exacta); nulo en ``sin_pareja``.
+* ``golden``: las 13 columnas de v1 más ``ID_ENTIDAD`` con la regla ÚNICA de
+  ``golden.metricas`` (``metricas_de_grupo`` + ``metricas_de_calidad``; con
+  una sola fuente y sin identificador, ``CONFIANZA`` es MEDIA hasta 5
+  registros y BAJA después; F2.12 unifica la regla), después las propias
+  (``ID_IMPORTADOR``, ``N_FILAS_ORIGEN``, ``N_VARIANTES_NOMBRE``,
+  ``SIM_MINIMA`` y las sumas de ``cols_metricas`` con su nombre de entrada).
+* ``revision``: la forma del archivo de decisiones (``contrato.REVISION``):
+  un par ``(líder, miembro)`` por arista de estrella de cada grupo marcado
+  (``grupo_grande`` o ``cohesion_baja``), con ``CLAVE_*`` = ``ID_REGISTRO``
+  del primer registro de cada representante y ``RAZON`` con el motivo y la
+  similitud. La tabla de grupos de v0.22 (con ``MOTIVO_REVISION``, incluidos
+  los ``sin_nombre_utilizable``, que no forman par) sigue en
+  ``revision_grupos``. ``paises`` sigue en memoria (es un agrupado de la
+  correlativa; no es un artefacto del estándar).
+* Una columna de la fuente que choca con una columna del contrato o de las
+  propias se conserva renombrada ``<col>_FUENTE`` (``renombres_por_colision``)
+  y el renombre va al manifiesto y al diccionario; una columna DECLARADA en
+  la configuración que choca detiene la corrida con mensaje accionable.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, fields
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
+from .. import contrato
+from ..config.auditoria import ParametrosMotor
 from ..engine.cobertura import cobertura_estrella
+from ..golden.metricas import metricas_de_calidad, metricas_de_grupo
 from ..matching.campos import CampoSpec, EsquemaCampos, PoliticaFaltante, TipoCampo
 from ..matching.genericos import (
     GENERICOS_ESTRUCTURALES,
@@ -53,24 +105,34 @@ from ..paises import (
     canonizar_pais,
     sugerir_alias_pais,
 )
+from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
 from ..processing.saneamiento import (
     PRELIMPIEZA_COMERCIO_EXTERIOR,
     ascii_mayusculas,
     sanear_texto,
     unir_iniciales,
 )
+from ..resultado import ResultadoLinkage
+from ..salida.completar import _asignar_id_registro, _id_entidad, _recodificar_id_grupo
+
+if TYPE_CHECKING:  # pragma: no cover - solo para tipar sin importar el escritor
+    from ..exporters.escritor import Manifiesto
 
 __all__ = [
+    "COLUMNAS_PROPIAS",
     "ConfigImportadores",
     "ResultadoImportadores",
     "construir_entregables",
     "deduplicar_importadores",
+    "diccionario_importadores",
     "ejecutar",
+    "escribir_importadores",
     "metricas",
     "muestra_para_revision",
     "preparar",
     "recall_del_bloqueo",
     "registrar_locale",
+    "renombres_por_colision",
     "sensibilidad_umbral",
     "verificar_invariantes",
 ]
@@ -79,6 +141,76 @@ __all__ = [
 #: mojibake o entidades HTML mal decodificadas y penaliza esa grafía al elegir
 #: el nombre final.
 _ESPERADOS = r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ \.,&()\-/'\"]"
+
+#: Columnas que ``preparar`` añade a la base (país canónico y nombre normalizado).
+_COLUMNAS_PREPARACION: tuple[str, ...] = (
+    "PAIS_ISO3",
+    "PAIS_FINAL",
+    "PAIS_METODO",
+    "PAIS_NORMALIZADO",
+    "NOMBRE_NORM",
+)
+
+#: Columnas propias de este flujo que van en la correlativa DESPUÉS de las
+#: fijas del contrato y de las de la fuente, y en el golden después de las
+#: fijas. Se conservan como adicionales documentadas (``diccionario.csv``).
+COLUMNAS_PROPIAS: tuple[str, ...] = (
+    "ID_IMPORTADOR",
+    "ID_EMPRESA_GLOBAL",
+    "PAIS_FINAL",
+    "PAIS_ISO3",
+    "PAIS_METODO",
+    "PAIS_NORMALIZADO",
+    "SIM_AL_FINAL",
+    "CAMBIO_NOMBRE",
+    "CAMBIO_PAIS",
+    "NOMBRE_NORM",
+    "N_FILAS_ORIGEN",
+    "N_VARIANTES_NOMBRE",
+    "SIM_MINIMA",
+)
+
+#: Sufijo con el que se conserva una columna de la fuente que choca con el
+#: contrato o con las propias (la misma convención que ``salida.completar``).
+_SUFIJO_COLISION = "_FUENTE"
+
+#: Qué significa cada columna propia, para ``diccionario.csv``.
+_SIGNIFICADOS_PROPIOS: dict[str, str] = {
+    "ID_IMPORTADOR": "Importador por país (v0.22): <ISO3>-<grupo local> o SINNOMBRE-<n> para "
+    "nombres sin contenido utilizable. Uno por ID_GRUPO; el país es bloqueo duro.",
+    "ID_EMPRESA_GLOBAL": "Identificador que IGNORA el país: G<n> une solo coincidencias EXACTAS "
+    "del nombre normalizado final entre importadores; sin emparejamiento difuso entre países.",
+    "PAIS_FINAL": "País canónico del catálogo (paises.canonizar_pais); SIN CLASIFICAR: <grafía> "
+    "si se aisló; zona franca marcada aparte.",
+    "PAIS_ISO3": "Código ISO 3166-1 alfa-3 del país final (ZZF zona franca, ZZZ sin clasificar).",
+    "PAIS_METODO": "Cómo se canonizó el país: catalogo_exacto · catalogo_laxo · zona_franca · "
+    "sin_clasificar.",
+    "PAIS_NORMALIZADO": "Grafía del país saneada (sin tildes, mayúsculas) con la que se buscó en "
+    "el catálogo.",
+    "SIM_AL_FINAL": "Similitud 0–1 del nombre normalizado del registro con el del líder de su "
+    "estrella (igual a NAME_SIMILARITY_SCORE; nombre de v0.22 que lee el notebook 07).",
+    "CAMBIO_NOMBRE": "True si RAZON_SOCIAL_FINAL difiere de la grafía original.",
+    "CAMBIO_PAIS": "True si PAIS_FINAL difiere de la grafía original del país.",
+    "NOMBRE_NORM": "Nombre normalizado (sin sufijos legales, saneado) que vio el comparador.",
+    "N_FILAS_ORIGEN": "Filas de entrada del grupo (igual a RECORD_COUNT; nombre de v0.22).",
+    "N_VARIANTES_NOMBRE": "Grafías originales distintas en el grupo (igual a NAME_VARIATIONS; "
+    "nombre de v0.22).",
+    "SIM_MINIMA": "Menor SIM_AL_FINAL del grupo: la arista más débil de la estrella.",
+}
+
+#: Matices de este flujo sobre columnas fijas del contrato (se AÑADEN al
+#: significado del contrato, no lo sustituyen).
+_MATICES_CONTRATO: dict[str, str] = {
+    "ID_GRUPO": "En importadores: entero por orden de primera aparición en ORIGINAL_INDEX, "
+    "uno por ID_IMPORTADOR.",
+    "ID_ENTIDAD": "En importadores la base no trae identificador: siempre ENT-….",
+    "NIT_FINAL": "En importadores siempre vacío: la base no trae identificador.",
+    "NIT_DISTANCE": "En importadores siempre vacío: la base no trae identificador.",
+    "SCORE_PAR": "En importadores: similitud 0–1 del nombre con el líder de la estrella "
+    "(SIM_AL_FINAL); para el líder, la mejor arista que lo une a un miembro; 1.0 si otro "
+    "registro del grupo comparte su nombre normalizado; nulo en sin_pareja.",
+    "METODO_UNION": "En importadores solo nombre (el nombre es toda la evidencia) y sin_pareja.",
+}
 
 
 #: Modos admitidos para ``ConfigImportadores.paises_sin_clasificar``.
@@ -134,6 +266,11 @@ class ConfigImportadores:
         col_pais: columna del país.
         cols_metricas: columnas numéricas que se suman por grupo.
         col_peso_economico: cuál de ellas manda al desempatar. "" = ninguna.
+        nombre_fuente: nombre de la base en el estándar (``SRC`` de la
+            correlativa y prefijo de ``ID_REGISTRO``; F2.6).
+        col_id: columna de la fuente única por fila para ``ID_REGISTRO`` =
+            ``<SRC>-<id nativo>``; "" = ninguna (``<SRC>-F<fila>``). Si trae
+            vacíos o repetidos se cae a la fila y el manifiesto lo dice.
         umbral_nombre: **la perilla principal**, en escala 0–1. Medido sobre
             160 asignaciones revisadas a mano: 0,84 → precisión ponderada
             0,966; 0,88 → más precisión pero pierde ~7.000 empalmes correctos;
@@ -190,6 +327,10 @@ class ConfigImportadores:
     col_pais: str = "PAIS"
     cols_metricas: tuple[str, ...] = ()
     col_peso_economico: str = ""
+    #: ``SRC`` del estándar (F2.6). Una sola fuente por corrida.
+    nombre_fuente: str = "IMPORTADORES"
+    #: Columna de la fuente única por fila para ``ID_REGISTRO``; "" = por fila.
+    col_id: str = ""
 
     # ── Decisión ────────────────────────────────────────────────────────
     umbral_nombre: float = 0.84
@@ -310,6 +451,20 @@ class ConfigImportadores:
                 f"para desempatar el nombre final y debe venir agregada. "
                 f"Qué hacer: añádala a cols_metricas o déjela en ''."
             )
+        if not str(self.nombre_fuente).strip() or "-" in self.nombre_fuente:
+            raise ValueError(
+                mensaje_accionable(
+                    f"nombre_fuente={self.nombre_fuente!r} no sirve como SRC.",
+                    "es el prefijo de ID_REGISTRO (<SRC>-<id>) y el guion lo haría ambiguo.",
+                    "use un nombre no vacío sin guiones (p. ej. 'IMPORTADORES', 'DIAN').",
+                )
+            )
+
+    @property
+    def columnas_declaradas(self) -> tuple[str, ...]:
+        """Las columnas de la fuente que la configuración nombra."""
+        extra = (self.col_id,) if self.col_id else ()
+        return (self.col_razon_social, self.col_pais, *self.cols_metricas, *extra)
 
     @property
     def sim_minima(self) -> float:
@@ -350,11 +505,24 @@ class ResultadoImportadores:
     """Salida completa del flujo.
 
     Attributes:
-        correlativa: una fila por fila de entrada, con el nombre y país
-            finales. **Es el entregable.**
-        golden: una fila por importador consolidado.
-        paises: correlativa de la canonización del país.
-        revision: grupos que merecen ojo humano.
+        correlativa: una fila por fila de entrada, con la forma del contrato
+            1.0 (las 12 fijas, la fuente completa y las propias del flujo).
+            **Es el entregable.**
+        golden: una fila por importador consolidado (13 de v1 + ``ID_ENTIDAD``
+            y las propias).
+        paises: correlativa de la canonización del país (en memoria; no es un
+            artefacto del estándar).
+        revision: pares por decidir con la forma del archivo de decisiones
+            (``contrato.REVISION``): una arista (líder, miembro) por estrella
+            de los grupos marcados.
+        revision_grupos: la tabla de grupos de v0.22 (golden del grupo +
+            ``MOTIVO_REVISION``), incluidos los ``sin_nombre_utilizable``.
+        diccionario: tabla · columna · tipo · significado · origen · alias_es
+            de las tablas del estándar, con las columnas propias explicadas.
+        manifiesto: trazabilidad de la corrida (función, parámetros y su hash,
+            huella del insumo, versiones, ``configuracion`` efectiva,
+            reporte ``completar``); lo que ``escribir_resultado`` publica.
+        carpeta_salida: la carpeta del estándar si se escribió.
         muestra: muestra estratificada lista para etiquetar a mano.
         metricas: indicadores de la corrida.
         invariantes: lo que siempre debe cumplirse, con su veredicto.
@@ -384,6 +552,10 @@ class ResultadoImportadores:
     n_candidatos: int = 0
     n_cortes_cohesion: int = 0
     extra: dict = field(default_factory=dict)
+    revision_grupos: pd.DataFrame = field(default_factory=pd.DataFrame)
+    diccionario: pd.DataFrame = field(default_factory=pd.DataFrame)
+    manifiesto: dict[str, Any] = field(default_factory=dict)
+    carpeta_salida: Path | None = None
 
     @property
     def todo_ok(self) -> bool:
@@ -397,11 +569,61 @@ class ResultadoImportadores:
             "GOLDEN": self.golden,
             "PAISES": self.paises,
             "REVISION": self.revision,
+            "REVISION_GRUPOS": self.revision_grupos,
             "MUESTRA_REVISION": self.muestra,
             "METRICAS": self.metricas,
             "INVARIANTES": self.invariantes,
             **{k: v for k, v in self.extra.items()},
         }
+
+    def a_resultado_linkage(self) -> ResultadoLinkage:
+        """El ``ResultadoLinkage`` del contrato 1.0 que ``escribir_resultado`` publica.
+
+        El diccionario se construye aquí si no vino (``diccionario_importadores``);
+        el manifiesto NO: lo arma ``deduplicar_importadores`` con la huella del
+        insumo y sin él ``validar()`` no puede comprobar «una fila por registro
+        de entrada» ni el escritor reproducir la corrida.
+
+        Raises:
+            ContratoSalidaError: si el resultado no trae manifiesto.
+        """
+        if not self.manifiesto:
+            raise ContratoSalidaError(
+                [
+                    "el resultado no trae manifiesto (funcion, parametros, entradas…): "
+                    "constrúyalo con deduplicar_importadores(), que lo arma con la huella "
+                    "del insumo, o asigne resultado.manifiesto antes de escribir."
+                ]
+            )
+        diccionario = self.diccionario
+        if diccionario is None or diccionario.empty:
+            diccionario = diccionario_importadores(
+                self.correlativa,
+                self.golden,
+                self.revision,
+                renombres=(self.manifiesto.get("completar") or {}).get("renombres"),
+            )
+        metricas_escalares: dict[str, Any] = {
+            "n_registros": len(self.correlativa),
+            "n_grupos": int(self.correlativa["ID_GRUPO"].nunique()),
+            "n_fuentes": 1,
+            "n_importadores": int(self.correlativa["ID_IMPORTADOR"].nunique()),
+            "n_empresas_globales": int(self.correlativa["ID_EMPRESA_GLOBAL"].nunique()),
+            "n_candidatos": int(self.n_candidatos),
+            "n_cortes_cohesion": int(self.n_cortes_cohesion),
+            "segundos_emparejamiento": float(self.segundos),
+            "invariantes_ok": self.todo_ok,
+        }
+        return ResultadoLinkage(
+            correlativa=self.correlativa,
+            golden=self.golden,
+            metricas=metricas_escalares,
+            manifiesto=dict(self.manifiesto),
+            enlaces=None,
+            revision=self.revision,
+            diccionario=diccionario,
+            dir_trabajo=None,
+        )
 
     def resumen(self) -> str:
         """Resumen de una línea por indicador, para imprimir."""
@@ -494,24 +716,77 @@ def exigir_cobertura_paises(tabla: pd.DataFrame, cfg: ConfigImportadores) -> Non
         raise PaisesSinClasificar(pendientes.reset_index(drop=True), cfg)
 
 
+def renombres_por_colision(df: pd.DataFrame, cfg: ConfigImportadores) -> dict[str, str]:
+    """``{columna_de_la_fuente: <columna>_FUENTE}`` para lo que choca con el estándar.
+
+    Una columna de la fuente que se llama como una columna fija del contrato
+    (``ID_GRUPO``, ``SRC``…) o como una propia del flujo (``PAIS_FINAL``,
+    ``ID_IMPORTADOR``…) se conserva renombrada: la correlativa lleva TODAS las
+    columnas de la fuente y una columna no puede significar dos cosas. Es una
+    función pura de ``df.columns``: ``preparar`` la aplica y
+    ``deduplicar_importadores`` la anota en el manifiesto y el diccionario.
+
+    Raises:
+        ContratoSalidaError: si una columna DECLARADA en la configuración
+            (``col_razon_social``, ``col_pais``, ``cols_metricas``, ``col_id``)
+            choca —renombrarla dejaría la configuración apuntando a otra
+            cosa—, o si ya existe ``<col>_FUENTE`` y no hay nombre libre.
+    """
+    reservadas = set(contrato.COLUMNAS_CORRELATIVA) | set(COLUMNAS_PROPIAS)
+    chocan = [str(c) for c in df.columns if str(c) in reservadas]
+    if not chocan:
+        return {}
+    declaradas = [c for c in cfg.columnas_declaradas if c in chocan]
+    if declaradas:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"las columnas declaradas {declaradas} se llaman como columnas que el "
+                    f"estándar escribe.",
+                    "la correlativa las produciría con otro contenido y la configuración "
+                    "dejaría de apuntar a la columna de la fuente.",
+                    f"renombre esas columnas en la fuente (p. ej. '{declaradas[0]}' → "
+                    f"'{declaradas[0]}{_SUFIJO_COLISION}') y actualice ConfigImportadores.",
+                )
+            ]
+        )
+    presentes = {str(c) for c in df.columns}
+    sin_sitio = [c for c in chocan if f"{c}{_SUFIJO_COLISION}" in presentes]
+    if sin_sitio:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"la fuente trae {sin_sitio} (chocan con el estándar) y también "
+                    f"{[f'{c}{_SUFIJO_COLISION}' for c in sin_sitio]}.",
+                    "no hay nombre libre para conservar la columna de la fuente.",
+                    "renombre una de las dos en la fuente antes de correr.",
+                )
+            ]
+        )
+    return {c: f"{c}{_SUFIJO_COLISION}" for c in chocan}
+
+
 def preparar(df: pd.DataFrame, cfg: ConfigImportadores) -> pd.DataFrame:
     """Saneamiento, país canónico y nombre normalizado. Deja constancia.
 
+    Las columnas de la fuente que chocan con el estándar llegan ya renombradas
+    ``<col>_FUENTE`` (:func:`renombres_por_colision`).
+
     Raises:
         KeyError: si falta alguna columna declarada, con la lista disponible.
+        ContratoSalidaError: si una columna declarada choca con el estándar.
     """
-    faltan = [
-        c for c in [cfg.col_razon_social, cfg.col_pais, *cfg.cols_metricas] if c not in df.columns
-    ]
+    faltan = [c for c in cfg.columnas_declaradas if c not in df.columns]
     if faltan:
         raise KeyError(
             f"Qué pasó: al DataFrame le faltan las columnas {faltan}.\n"
             f"Por qué importa: son las que declara ConfigImportadores.\n"
-            f"Qué hacer: corrija col_razon_social / col_pais / cols_metricas. "
+            f"Qué hacer: corrija col_razon_social / col_pais / cols_metricas / col_id. "
             f"El DataFrame tiene: {list(df.columns)}"
         )
     registrar_locale(cfg)
-    out = df.copy()
+    renombres = renombres_por_colision(df, cfg)
+    out = df.rename(columns=renombres) if renombres else df.copy()
     for c in cfg.cols_metricas:
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
 
@@ -846,7 +1121,11 @@ def construir_entregables(
     # ISO3: ocurre con `paises_sin_clasificar="aislar"` (todos ZZZ) y ocurría ya,
     # latente, con `agrupar_no_pais=False` (todos ZZF). Detectado por la
     # invariante "una fila por fila de entrada".
-    corr = prep.merge(
+    # SRC y ORIGINAL_INDEX (F2.6) van en la base ANTES del merge: si el merge
+    # multiplicara filas, ORIGINAL_INDEX se repetiría y la invariante lo vería;
+    # un arange después del merge lo taparía.
+    columnas_fuente = [c for c in prep.columns if c not in _COLUMNAS_PREPARACION]
+    corr = prep.assign(SRC=cfg.nombre_fuente, ORIGINAL_INDEX=np.arange(len(prep))).merge(
         rep[
             [
                 "PAIS_ISO3",
@@ -889,50 +1168,44 @@ def construir_entregables(
     )
     corr["CAMBIO_NOMBRE"] = corr[cfg.col_razon_social] != corr["RAZON_SOCIAL_FINAL"]
     corr["CAMBIO_PAIS"] = corr[cfg.col_pais] != corr["PAIS_FINAL"]
+    corr["ES_LIDER"] = corr["ES_LIDER"].astype(bool)
 
-    columnas = [
-        cfg.col_razon_social,
-        cfg.col_pais,
-        "RAZON_SOCIAL_FINAL",
-        "PAIS_FINAL",
-        "PAIS_ISO3",
-        "ID_IMPORTADOR",
-        "ID_EMPRESA_GLOBAL",
-        "SIM_AL_FINAL",
-        "CAMBIO_NOMBRE",
-        "CAMBIO_PAIS",
-        "PAIS_METODO",
-        "NOMBRE_NORM",
-        *cfg.cols_metricas,
-    ]
-    correlativa = corr[columnas].copy()
-
-    agg_golden = {c: (c, "sum") for c in cfg.cols_metricas}
-    golden = (
-        correlativa.groupby(
-            [
-                "ID_IMPORTADOR",
-                "ID_EMPRESA_GLOBAL",
-                "RAZON_SOCIAL_FINAL",
-                "PAIS_FINAL",
-                "PAIS_ISO3",
-            ],
-            sort=False,
+    # ── Columnas fijas del contrato 1.0 (F2.6) ──────────────────────────
+    # ID_GRUPO: entero por primera aparición en ORIGINAL_INDEX, UNA regla con
+    # salida.completar (la misma que recodifica C<n>/S<n> de dedupe).
+    corr["ID_GRUPO"] = corr["ID_IMPORTADOR"].astype("string")
+    _recodificar_id_grupo(corr)
+    id_registro, _ = _asignar_id_registro(corr, cfg.col_id or None)
+    corr["ID_REGISTRO"] = id_registro.astype(str)
+    repetidos = int(corr["ID_REGISTRO"].duplicated().sum())
+    if repetidos:
+        raise ContratoSalidaError(
+            [f"ID_REGISTRO no es único ({repetidos} repetido(s)); col_id={cfg.col_id!r}."]
         )
-        .agg(
-            N_FILAS_ORIGEN=(cfg.col_razon_social, "size"),
-            N_VARIANTES_NOMBRE=(cfg.col_razon_social, "nunique"),
-            SIM_MINIMA=("SIM_AL_FINAL", "min"),
-            **agg_golden,
-        )
-        .reset_index()
-    )
-    orden = cfg.col_peso_economico if cfg.col_peso_economico in golden.columns else "N_FILAS_ORIGEN"
-    golden = golden.sort_values(orden, ascending=False).reset_index(drop=True)
+    # ID_ENTIDAD: ningún grupo adopta identificador (la base no lo trae): todos ENT-….
+    sin_identificador = pd.Series(pd.NA, index=corr.index, dtype="string")
+    corr["ID_ENTIDAD"] = _id_entidad(
+        corr, sin_identificador, np.zeros(len(corr), dtype=bool)
+    ).astype(str)
+    corr["NIT_FINAL"] = sin_identificador
+    corr["NIT_DISTANCE"] = pd.array([pd.NA] * len(corr), dtype="Int64")
+    corr["NAME_SIMILARITY_SCORE"] = corr["SIM_AL_FINAL"].astype("float64")
+    tamano = corr.groupby("ID_GRUPO", sort=False)["ID_GRUPO"].transform("size").to_numpy()
+    corr["METODO_UNION"] = np.where(tamano == 1, "sin_pareja", "nombre")
+    corr["SCORE_PAR"] = _score_par(corr, tamano)
 
+    golden = _golden_estandar(corr, cfg)
+    confianza = golden.set_index("ID_GRUPO")["CONFIANZA"]
+    corr["CONFIANZA"] = corr["ID_GRUPO"].map(confianza).astype("string")
+
+    fijas = list(contrato.COLUMNAS_CORRELATIVA)
+    propias = [c for c in COLUMNAS_PROPIAS if c in corr.columns]
+    correlativa = corr[fijas + columnas_fuente + propias].copy()
+
+    agg_metricas = {c: (c, "sum") for c in cfg.cols_metricas}
     paises = (
         correlativa.groupby([cfg.col_pais, "PAIS_FINAL", "PAIS_ISO3", "PAIS_METODO"])
-        .agg(N_FILAS=("PAIS_FINAL", "size"), **agg_golden)
+        .agg(N_FILAS=("PAIS_FINAL", "size"), **agg_metricas)
         .reset_index()
         .sort_values(["PAIS_FINAL", "N_FILAS"], ascending=[True, False])
     )
@@ -943,15 +1216,159 @@ def construir_entregables(
     motivo += np.where(
         golden["ID_IMPORTADOR"].str.startswith("SINNOMBRE"), "sin_nombre_utilizable;", ""
     )
-    revision = golden.assign(MOTIVO_REVISION=motivo)
-    revision = revision[revision.MOTIVO_REVISION != ""].reset_index(drop=True)
+    revision_grupos = golden.assign(MOTIVO_REVISION=motivo)
+    revision_grupos = revision_grupos[revision_grupos.MOTIVO_REVISION != ""].reset_index(drop=True)
+    revision = _revision_pares(corr, revision_grupos, cfg)
 
     return {
         "CORRELATIVA": correlativa,
         "GOLDEN": golden,
         "PAISES": paises,
         "REVISION": revision,
+        "REVISION_GRUPOS": revision_grupos,
     }
+
+
+def _score_par(corr: pd.DataFrame, tamano: np.ndarray) -> pd.Series:
+    """``SCORE_PAR`` del contrato con la evidencia de este flujo (ver docstring del módulo).
+
+    Mayor similitud 0–1 entre el registro y otro de su grupo según la
+    estrella: un miembro, su arista al líder (``SIM_AL_FINAL``); el líder, la
+    mejor arista a un miembro; ``1.0`` si otro registro del grupo comparte su
+    nombre normalizado (igualdad exacta tras normalizar); nulo en
+    ``sin_pareja``. Vectorizado por grupo, sin bucles por fila.
+    """
+    sim = corr["SIM_AL_FINAL"].astype("float64")
+    lider = corr["ES_LIDER"].to_numpy(dtype=bool)
+    mismo_nombre = (
+        corr.groupby(["ID_GRUPO", "NOMBRE_NORM"], sort=False)["ID_GRUPO"].transform("size") > 1
+    ).to_numpy()
+    mejor_miembro = sim.where(~lider).groupby(corr["ID_GRUPO"], sort=False).transform("max")
+    score = pd.Series(np.where(lider, mejor_miembro.to_numpy(), sim.to_numpy()), index=corr.index)
+    score = score.mask(mismo_nombre, 1.0)
+    return score.mask(tamano == 1, np.nan).astype("float64")
+
+
+def _golden_estandar(corr: pd.DataFrame, cfg: ConfigImportadores) -> pd.DataFrame:
+    """Golden del contrato (13 de v1 + ``ID_ENTIDAD``) más las columnas propias.
+
+    Las métricas salen de la regla ÚNICA de ``golden.metricas``
+    (``metricas_de_grupo`` sobre ``ID_GRUPO``/``SRC``/``RAZON_SOCIAL``/``NIT``
+    y ``metricas_de_calidad``), no de una copia: con una sola fuente y sin
+    identificador, ``NIT_VARIATIONS`` es 0, ``CONFIDENCE_SCORE`` 0,85 y
+    ``CONFIANZA`` MEDIA hasta 5 registros / BAJA después.
+    """
+    frame = pd.DataFrame(
+        {
+            "ID_GRUPO": corr["ID_GRUPO"].to_numpy(),
+            "SRC": corr["SRC"].to_numpy(),
+            "RAZON_SOCIAL": corr[cfg.col_razon_social].to_numpy(),
+            "NIT": pd.Series(pd.NA, index=corr.index, dtype="string").to_numpy(),
+        }
+    )
+    grupo = metricas_de_grupo(frame, [cfg.nombre_fuente])
+    primeros = corr.drop_duplicates("ID_GRUPO").set_index("ID_GRUPO")
+    golden = pd.DataFrame(index=grupo.index)
+    golden["NIT_FINAL"] = pd.Series(pd.NA, index=grupo.index, dtype="string")
+    golden["RAZON_SOCIAL_FINAL"] = primeros["RAZON_SOCIAL_FINAL"].reindex(grupo.index)
+    for col in ("PRIMARY_SOURCE", "SOURCES_LIST"):
+        golden[col] = grupo[col]
+    for col in ("SOURCES_COUNT", "RECORD_COUNT", "NAME_VARIATIONS", "NIT_VARIATIONS"):
+        golden[col] = grupo[col].astype("int64")
+    calidad = metricas_de_calidad(golden)
+    golden["CONFIDENCE_SCORE"] = calidad["CONFIDENCE_SCORE"].astype("float64")
+    golden["CONFIANZA"] = grupo["CONFIANZA"]
+    golden["REQUIRES_REVIEW"] = calidad["REQUIRES_REVIEW"].to_numpy() != 0
+    golden["CREATED_AT"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    golden["ID_ENTIDAD"] = primeros["ID_ENTIDAD"].reindex(grupo.index)
+    golden = golden.reset_index()[list(contrato.COLUMNAS_GOLDEN)]
+
+    # Las propias de v0.22: por importador (= por ID_GRUPO) y las sumas de
+    # cols_metricas con su nombre de entrada tal cual (lo consumen el 07 y la
+    # evidencia).
+    propias = (
+        corr.groupby("ID_GRUPO", sort=False)
+        .agg(
+            ID_IMPORTADOR=("ID_IMPORTADOR", "first"),
+            ID_EMPRESA_GLOBAL=("ID_EMPRESA_GLOBAL", "first"),
+            PAIS_FINAL=("PAIS_FINAL", "first"),
+            PAIS_ISO3=("PAIS_ISO3", "first"),
+            N_FILAS_ORIGEN=(cfg.col_razon_social, "size"),
+            N_VARIANTES_NOMBRE=(cfg.col_razon_social, "nunique"),
+            SIM_MINIMA=("SIM_AL_FINAL", "min"),
+            **{c: (c, "sum") for c in cfg.cols_metricas},
+        )
+        .reset_index()
+    )
+    golden = golden.merge(propias, on="ID_GRUPO", how="left")
+    orden = cfg.col_peso_economico if cfg.col_peso_economico in golden.columns else "N_FILAS_ORIGEN"
+    return golden.sort_values(orden, ascending=False, kind="stable").reset_index(drop=True)
+
+
+def _revision_pares(
+    corr: pd.DataFrame, revision_grupos: pd.DataFrame, cfg: ConfigImportadores
+) -> pd.DataFrame:
+    """``revision`` con la forma del archivo de decisiones (``contrato.REVISION``).
+
+    Un par ``(líder, miembro)`` por arista de estrella de cada grupo marcado
+    por ``grupo_grande`` o ``cohesion_baja``: es exactamente lo que la
+    correlativa afirma de cada asignación (ADR-0009 §4) y lo que una persona
+    puede confirmar o negar. ``CLAVE_*`` es el ``ID_REGISTRO`` del primer
+    registro (menor ``ORIGINAL_INDEX``) de cada representante (país, nombre
+    normalizado) y ``NOMBRE_*`` la grafía original de ese mismo registro.
+    Los ``sin_nombre_utilizable`` no forman par (son grupos de un registro):
+    quedan en ``revision_grupos`` y en la correlativa (``SINNOMBRE-``).
+    """
+    marcados = revision_grupos.loc[
+        revision_grupos["MOTIVO_REVISION"].str.contains("grupo_grande|cohesion_baja"),
+        ["ID_GRUPO", "MOTIVO_REVISION"],
+    ]
+    if marcados.empty:
+        return contrato.revision_vacia()
+    sub = corr.loc[
+        corr["ID_GRUPO"].isin(marcados["ID_GRUPO"]),
+        [
+            "ID_GRUPO",
+            "ORIGINAL_INDEX",
+            "NOMBRE_NORM",
+            "ES_LIDER",
+            "ID_REGISTRO",
+            cfg.col_razon_social,
+            "SIM_AL_FINAL",
+        ],
+    ].sort_values(["ID_GRUPO", "ORIGINAL_INDEX"], kind="stable")
+    representantes = sub.drop_duplicates(["ID_GRUPO", "NOMBRE_NORM"], keep="first")
+    lideres = representantes.loc[
+        representantes["ES_LIDER"], ["ID_GRUPO", "ID_REGISTRO", cfg.col_razon_social]
+    ].rename(columns={"ID_REGISTRO": "CLAVE_A", cfg.col_razon_social: "NOMBRE_A"})
+    miembros = representantes.loc[
+        ~representantes["ES_LIDER"],
+        ["ID_GRUPO", "ID_REGISTRO", cfg.col_razon_social, "SIM_AL_FINAL"],
+    ].rename(columns={"ID_REGISTRO": "CLAVE_B", cfg.col_razon_social: "NOMBRE_B"})
+    pares = miembros.merge(lideres, on="ID_GRUPO", how="inner").merge(marcados, on="ID_GRUPO")
+    if pares.empty:
+        return contrato.revision_vacia()
+    razon = (
+        pares["MOTIVO_REVISION"].astype("string").str.rstrip(";").str.replace(";", ", ")
+        + " · similitud al líder "
+        + pares["SIM_AL_FINAL"].map("{:.4f}".format).astype("string")
+    )
+    revision = pd.DataFrame(
+        {
+            "TIPO": "duplicado",
+            "FUENTE": cfg.nombre_fuente,
+            "CLAVE_A": pares["CLAVE_A"].astype("string"),
+            "NOMBRE_A": pares["NOMBRE_A"].astype("string"),
+            "CLAVE_B": pares["CLAVE_B"].astype("string"),
+            "NOMBRE_B": pares["NOMBRE_B"].astype("string"),
+            "DECISION": pd.Series(pd.NA, index=pares.index, dtype="string"),
+            "AUTOR": pd.Series(pd.NA, index=pares.index, dtype="string"),
+            "RAZON": razon,
+        }
+    )
+    for col in ("TIPO", "FUENTE"):
+        revision[col] = revision[col].astype("string")
+    return revision[list(contrato.COLUMNAS_REVISION)].reset_index(drop=True)
 
 
 def metricas(
@@ -1002,7 +1419,8 @@ def metricas(
         ("pares candidatos evaluados", corrida["n_candidatos"]),
         ("cortes por cohesión", corrida["n_cortes"]),
         ("segundos de ejecución", round(corrida["segundos"])),
-        ("grupos marcados para revisión", len(tablas["REVISION"])),
+        ("grupos marcados para revisión", len(tablas["REVISION_GRUPOS"])),
+        ("pares (líder, miembro) en revision.csv", len(tablas["REVISION"])),
     ]
     if peso:
         total = float(correlativa[peso].sum())
@@ -1021,8 +1439,8 @@ def metricas(
             ),
             (
                 f"{peso} en grupos de revisión",
-                f"{tablas['REVISION'][peso].sum() / total:.1%}"
-                if len(tablas["REVISION"]) and total
+                f"{tablas['REVISION_GRUPOS'][peso].sum() / total:.1%}"
+                if len(tablas["REVISION_GRUPOS"]) and total
                 else "0.0%",
             ),
         ]
@@ -1102,6 +1520,14 @@ def verificar_invariantes(
         (
             "ningún grupo mezcla dos grafías de país",
             int(correlativa.groupby("ID_IMPORTADOR")["PAIS_FINAL"].nunique().max()) == 1,
+        ),
+        # F2.6: el estándar se mide, no se supone. La misma comprobación que
+        # escribir_resultado hace en estricto, pero aquí queda en la tabla.
+        (
+            "cumple el contrato de salida 1.0",
+            ResultadoLinkage(correlativa=correlativa, golden=golden, revision=tablas["REVISION"])
+            .validar()
+            .ok,
         ),
     ]
     if peso:
@@ -1281,14 +1707,191 @@ def sensibilidad_umbral(
     return pd.DataFrame(filas)
 
 
+def diccionario_importadores(
+    correlativa: pd.DataFrame,
+    golden: pd.DataFrame | None,
+    revision: pd.DataFrame,
+    *,
+    renombres: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    """``diccionario.csv`` del estándar con las columnas propias de este flujo explicadas.
+
+    Parte de ``contrato.diccionario`` (las fijas con su significado único y las
+    de la fuente como «sin cambios») y encima explica las ``COLUMNAS_PROPIAS``
+    (``_SIGNIFICADOS_PROPIOS``), añade el matiz de este flujo a las fijas que
+    lo tienen (``_MATICES_CONTRATO``) y describe las sumas de ``cols_metricas``
+    del golden, que llevan el nombre de la columna de entrada y NO son «la
+    columna de la fuente sin cambios». Ninguna columna entregada queda como
+    «fuera del contrato».
+    """
+    fijas = set(contrato.COLUMNAS_CORRELATIVA)
+    columnas_fuente = [
+        c for c in correlativa.columns if c not in fijas and c not in COLUMNAS_PROPIAS
+    ]
+    base = contrato.diccionario(
+        {"correlativa": correlativa, "golden": golden, "enlaces": None, "revision": revision},
+        columnas_fuente=columnas_fuente,
+        renombres=renombres,
+    )
+    es_tabla = base["tabla"].isin(["correlativa", "golden"])
+    propia = base["columna"].map(_SIGNIFICADOS_PROPIOS)
+    con_propia = es_tabla & propia.notna()
+    base.loc[con_propia, "significado"] = propia[con_propia]
+    base.loc[con_propia, "origen"] = "motor"
+    matiz = base["columna"].map(_MATICES_CONTRATO)
+    con_matiz = es_tabla & matiz.notna()
+    base.loc[con_matiz, "significado"] = base.loc[con_matiz, "significado"] + " " + matiz[con_matiz]
+    if golden is not None:
+        sumas = (base["tabla"] == "golden") & base["columna"].isin(columnas_fuente)
+        base.loc[sumas, "significado"] = (
+            "Suma por grupo de la columna '"
+            + base.loc[sumas, "columna"]
+            + "' de la fuente (cols_metricas), con su nombre de entrada."
+        )
+        base.loc[sumas, "origen"] = "motor"
+    return base
+
+
+def _parametros_llamada(cfg: ConfigImportadores) -> dict[str, Any]:
+    """La configuración como JSON reproducible (frozensets ordenados, tuplas → listas)."""
+
+    def _json(valor: Any) -> Any:
+        if isinstance(valor, frozenset | set):
+            return sorted(str(v) for v in valor)
+        if isinstance(valor, tuple | list):
+            return [_json(v) for v in valor]
+        return valor
+
+    return {f.name: _json(getattr(cfg, f.name)) for f in fields(cfg)}
+
+
+def _configuracion_motor(cfg: ConfigImportadores) -> dict[str, Any]:
+    """Los parámetros efectivos en la forma del manifiesto (``config.auditoria``)."""
+    return ParametrosMotor(
+        perfil="importadores",
+        lsh={
+            "lsh_permutations": cfg.lsh_permutaciones,
+            "lsh_threshold": cfg.lsh_umbral,
+            "lsh_ngram": cfg.lsh_ngram,
+            "cross_source_only": False,
+        },
+        scoring={
+            "score_threshold": cfg.umbral_score,
+            "min_name_similarity": cfg.umbral_nombre,
+            "max_nit_distance": None,
+        },
+        pesos={"NOMBRE_NORM": cfg.peso_nombre, "PAIS_FINAL": cfg.peso_pais},
+        prioridad_fuentes=(cfg.nombre_fuente,),
+    ).a_dict()
+
+
+def _manifiesto_importadores(
+    df: pd.DataFrame, cfg: ConfigImportadores, tablas: dict[str, pd.DataFrame], corrida: dict
+) -> dict[str, Any]:
+    """Manifiesto de la corrida con la misma regla que ``linkage()`` (``api._manifiesto``)."""
+    from ..api import _manifiesto
+
+    correl = tablas["CORRELATIVA"]
+    manifiesto = _manifiesto(
+        "deduplicar_importadores", _parametros_llamada(cfg), {cfg.nombre_fuente: df}
+    )
+    por_fila = correl["ID_REGISTRO"].str.startswith(f"{cfg.nombre_fuente}-F").all()
+    if cfg.col_id and por_fila:
+        id_registro = {
+            "regla": "fila",
+            "columna": cfg.col_id,
+            "motivo": f"col_id='{cfg.col_id}' trae vacíos o repetidos (no es único por fila): "
+            f"se usó <SRC>-F<ORIGINAL_INDEX>. Vea _asignar_id_registro en salida.completar.",
+        }
+    elif cfg.col_id:
+        id_registro = {"regla": "col_id", "columna": cfg.col_id}
+    else:
+        id_registro = {"regla": "fila", "motivo": "sin col_id"}
+    manifiesto["contrato"] = {"version": contrato.VERSION_CONTRATO}
+    manifiesto["configuracion"] = _configuracion_motor(cfg)
+    manifiesto["dir_trabajo"] = None
+    manifiesto["completar"] = {
+        "renombres": renombres_por_colision(df, cfg),
+        "columnas_fuente": [
+            c
+            for c in correl.columns
+            if c not in contrato.COLUMNAS_CORRELATIVA and c not in COLUMNAS_PROPIAS
+        ],
+        "id_registro": {cfg.nombre_fuente: id_registro},
+        "id_grupo": {
+            "regla": "entero por orden de primera aparición en ORIGINAL_INDEX, uno por "
+            "ID_IMPORTADOR"
+        },
+        "id_entidad": {
+            "regla": "ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados> para "
+            "todos los grupos: la base no trae identificador"
+        },
+        "score_par": {
+            "origen": "similitud de nombre al líder de la estrella (SIM_AL_FINAL); 1.0 por "
+            "igualdad exacta del nombre normalizado; nulo en sin_pareja"
+        },
+        "confianza": {"origen": "golden.CONFIANZA (la del grupo; golden.metricas)"},
+        "columnas_propias": [c for c in COLUMNAS_PROPIAS if c in correl.columns],
+    }
+    manifiesto["flujo"] = {
+        "n_candidatos": int(corrida["n_candidatos"]),
+        "n_cortes_cohesion": int(corrida["n_cortes"]),
+        "segundos_emparejamiento": round(float(corrida["segundos"]), 3),
+        "n_importadores": int(correl["ID_IMPORTADOR"].nunique()),
+        "n_empresas_globales": int(correl["ID_EMPRESA_GLOBAL"].nunique()),
+        "grupos_en_revision": len(tablas["REVISION_GRUPOS"]),
+    }
+    return manifiesto
+
+
+def escribir_importadores(
+    resultado: ResultadoImportadores,
+    carpeta_salida: Path | str,
+    nombre: str = "importadores",
+    *,
+    marca_tiempo: datetime | None = None,
+    excel: bool = True,
+) -> Manifiesto:
+    """Escribe la carpeta del estándar de una corrida de importadores.
+
+    Es ``exporters.escritor.escribir_resultado`` sobre
+    :meth:`ResultadoImportadores.a_resultado_linkage` (el único escritor del
+    estándar; atómico; valida el contrato en estricto antes de tocar el
+    disco). Deja la carpeta en ``resultado.carpeta_salida`` y devuelve el
+    manifiesto. ``paises``, ``muestra``, ``metricas`` e ``invariantes`` siguen
+    en memoria (``resultado.tablas()``): no son artefactos del estándar.
+    """
+    from ..exporters.escritor import escribir_resultado
+
+    manifiesto = escribir_resultado(
+        resultado.a_resultado_linkage(),
+        Path(carpeta_salida),
+        nombre,
+        marca_tiempo=marca_tiempo,
+        excel=excel,
+    )
+    resultado.carpeta_salida = manifiesto.carpeta
+    return manifiesto
+
+
 def deduplicar_importadores(
-    df: pd.DataFrame, cfg: ConfigImportadores | None = None
+    df: pd.DataFrame,
+    cfg: ConfigImportadores | None = None,
+    *,
+    carpeta_salida: Path | str | None = None,
+    nombre: str = "importadores",
+    excel: bool = True,
 ) -> ResultadoImportadores:
     """Fachada: de un DataFrame crudo a la correlativa y su control de calidad.
 
     Args:
         df: base con al menos las columnas de razón social y país.
         cfg: parámetros; ``None`` usa los defectos medidos.
+        carpeta_salida: si se da, escribe la carpeta del estándar
+            ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/`` con
+            :func:`escribir_importadores` y la deja en ``.carpeta_salida``.
+        nombre: nombre simple que cierra el de la carpeta.
+        excel: escribir ``excel/`` (completo o LEEME; nunca recorte).
 
     Returns:
         ``ResultadoImportadores``. Revise ``.todo_ok`` ANTES de usar nada:
@@ -1313,7 +1916,8 @@ def deduplicar_importadores(
     }
     if len(sugerencias):
         extra["SUGERENCIAS_PAIS"] = sugerencias
-    return ResultadoImportadores(
+    manifiesto = _manifiesto_importadores(df, cfg, tablas, corrida)
+    resultado = ResultadoImportadores(
         correlativa=tablas["CORRELATIVA"],
         golden=tablas["GOLDEN"],
         paises=tablas["PAISES"],
@@ -1330,4 +1934,15 @@ def deduplicar_importadores(
         n_candidatos=corrida["n_candidatos"],
         n_cortes_cohesion=corrida["n_cortes"],
         extra=extra,
+        revision_grupos=tablas["REVISION_GRUPOS"],
+        diccionario=diccionario_importadores(
+            tablas["CORRELATIVA"],
+            tablas["GOLDEN"],
+            tablas["REVISION"],
+            renombres=manifiesto["completar"]["renombres"],
+        ),
+        manifiesto=manifiesto,
     )
+    if carpeta_salida is not None:
+        escribir_importadores(resultado, carpeta_salida, nombre, excel=excel)
+    return resultado
