@@ -428,6 +428,9 @@ def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Pat
     assert parametros["forzar_relectura"] is False
     assert parametros["exportar_excel"] is False
     assert parametros["dir_trabajo"] == str(tmp_path / "trabajo")
+    # F1: las técnicas salieron del entregable; el resultado dice dónde quedan.
+    assert resultado.rutas["dir_trabajo"] == tmp_path / "trabajo" / "corrida"
+    assert (resultado.rutas["dir_trabajo"] / "L5_golden" / "correlative.parquet").is_file()
     assert parametros["perfil_multicampo"] is None
     assert metadatos["metricas"]["filas_entrada"] == 5
     assert {f["nombre"] for f in parametros["fuentes"]} == {"PADRON", "CLIENTES"}

@@ -606,7 +606,8 @@ class ResultadoCruce:
         correlativa: cada fila original con su ``ID_GRUPO``.
         reportes_carga: reporte de ingesta por fuente.
         metricas: tiempos, filas y conteos de la corrida.
-        rutas: archivos escritos.
+        rutas: archivos escritos, más ``rutas["dir_trabajo"]`` (carpeta L1…L5 de
+            la corrida, donde quedan las columnas técnicas que el contrato retira).
     """
 
     golden: pd.DataFrame
@@ -2268,6 +2269,11 @@ def _ejecutar_cruce_medido(
             _registrar_reporte_arrastre(reporte_arrastre, log)
         with cronometro.fase("exportes"):
             rutas = _exportar(config, {"golden": golden, "correlativa": correlativa}, log)
+
+    # F1: las columnas técnicas (NIT_BASE, NIT_VALID…) salieron del entregable
+    # y quedan en el checkpoint de L5 de esta carpeta; el resultado la señala
+    # para que `salida.tecnicas.adjuntar_tecnicas` las recupere sin adivinar.
+    rutas["dir_trabajo"] = dir_corrida
 
     if publicacion is not None:
         filas_correlativa = publicacion.correlativa.rows
