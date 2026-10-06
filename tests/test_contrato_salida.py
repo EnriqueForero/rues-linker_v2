@@ -1206,3 +1206,20 @@ def test_diccionario_declara_renombre_canonico(tmp_path: Path) -> None:
     assert dic_sin.loc[("correlativa", "RAZON_SOCIAL"), "significado"] == (
         "Columna de la fuente, sin cambios."
     )
+
+
+@pytest.mark.parametrize("dtype", ["object", "string", "string[pyarrow]", None])
+def test_el_diccionario_nombra_el_tipo_logico_no_la_representacion(dtype: str | None) -> None:
+    """``string`` y ``large_string`` son el mismo tipo lógico: el diccionario dice
+    ``string`` sea cual sea la representación (pandas 2 `object`, pandas 3 `str`,
+    `string[pyarrow]`). Antes el ``diccionario.csv`` escrito desde memoria y el
+    recalculado tras ``leer_resultado`` discrepaban según la versión de pandas."""
+    from record_linkage.contrato import _tipo_de_serie
+
+    serie = (
+        pd.Series(["ACME SAS", "GLOBEX"], dtype=dtype)
+        if dtype
+        else pd.Series(["ACME SAS", "GLOBEX"])
+    )
+    assert _tipo_de_serie(serie) == "string"
+    assert _tipo_de_serie(pd.Series([1, 2])) == "int64"

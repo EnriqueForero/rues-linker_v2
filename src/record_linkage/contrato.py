@@ -496,12 +496,19 @@ def familia_tipo(tipo: pa.DataType) -> str:
     return "otro"
 
 
+#: Nombres de representación que el diccionario reduce a su tipo lógico: pandas 3
+#: (`str`), `string[pyarrow]` y pandas 2 (`object`) producen `large_string` o
+#: `string` según la versión; el contrato solo conoce `string`.
+_TIPOS_LOGICOS: dict[str, str] = {"large_string": "string", "large_binary": "binary"}
+
+
 def _tipo_de_serie(serie: pd.Series) -> str:
-    """Nombre pyarrow del tipo de una Serie, para el diccionario."""
+    """Nombre pyarrow del tipo LÓGICO de una Serie, para el diccionario."""
     try:
-        return str(pa.Array.from_pandas(serie.head(1000)).type)
+        nombre = str(pa.Array.from_pandas(serie.head(1000)).type)
     except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError, ValueError):
         return str(serie.dtype)
+    return _TIPOS_LOGICOS.get(nombre, nombre)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
