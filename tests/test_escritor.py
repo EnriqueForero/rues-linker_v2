@@ -19,11 +19,24 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
   definitiva ni pendiente;
 * ``leer_resultado`` devuelve un ``ResultadoLinkage`` que ``validar()``
   acepta, aplica los alias en español y detecta un artefacto alterado;
+* ``revision.csv`` y ``diccionario.csv`` son FIELES a los datos (sin la
+  neutralización de hoja de cálculo): lo que se escribe es lo que
+  ``leer_resultado`` devuelve, también con nombres que empiezan por
+  ``=``, ``+``, ``-`` o ``@``;
+* un ``_trabajo/`` ajeno en la pendiente (``res.dir_trabajo`` fuera) hace
+  fallar la escritura en vez de publicarse como si fuera de esta corrida;
+* un ``_trabajo/manifest.json`` ilegible deja ``tiempos_por_fase`` vacío y
+  lo declara en ``omitidos``;
 * ``linkage(carpeta_salida=...)`` escribe la carpeta y deja ``_trabajo/``
   dentro; con L6 activo los alias de v1 se escriben con ``DeprecationWarning``
   y su ``.xlsx`` lleva una primera hoja ``LEEME``;
+* los alias parquet de v1 NO llevan el metadato ``contrato`` (no tienen su
+  forma); el aviso de retiro sale también por ``logging`` (Colab silencia
+  los ``DeprecationWarning``) y ``reporte_*.xlsx`` conserva la hoja
+  ``Sheet1`` de v1;
 * ningún módulo de ``src/`` fuera de la lista declarada llama a
-  ``to_parquet``/``to_excel``/``to_csv``/``write_table``/``ExcelWriter``.
+  ``to_parquet``/``to_excel``/``to_csv``/``write_table``/``ExcelWriter``/
+  ``ParquetWriter``/``write_to_dataset``/``Workbook``.
 
 Las empresas son inventadas. Ningún dato licenciado entra aquí.
 """
@@ -31,8 +44,10 @@ Las empresas son inventadas. Ningún dato licenciado entra aquí.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
 import json
+import logging
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -99,6 +114,30 @@ def _rutas_relativas(carpeta: Path) -> list[str]:
 
 def _sha256(ruta: Path) -> str:
     return hashlib.sha256(ruta.read_bytes()).hexdigest()
+
+
+def _con(res: ResultadoLinkage, **cambios: Any) -> ResultadoLinkage:
+    """Copia de ``res`` con campos cambiados y su propio ``manifiesto`` (el
+    escritor lo muta al publicar; la fixture es de módulo)."""
+    return dataclasses.replace(res, manifiesto=dict(res.manifiesto), **cambios)
+
+
+#: Revisión no vacía cuyos textos empiezan por los prefijos que una hoja de
+#: cálculo tomaría por fórmula. Empresas inventadas.
+REVISION_CON_PREFIJOS = pd.DataFrame(
+    {
+        "TIPO": ["cruce", "cruce", "duplicado", "cruce"],
+        "FUENTE": ["ORBIS", "ORBIS", "RUES", "ORBIS"],
+        "CLAVE_A": ["RUES-1", "RUES-2", "RUES-3", "RUES-4"],
+        "NOMBRE_A": ["=EMPRESA A SAS", "+EMPRESA C", "-EMPRESA E", "@EMPRESA G"],
+        "CLAVE_B": ["ORBIS-1", "ORBIS-2", "RUES-5", "ORBIS-4"],
+        "NOMBRE_B": ["-EMPRESA B LTDA", "@EMPRESA D", "=EMPRESA F", "+EMPRESA H"],
+        "DECISION": ["distinta", "misma_empresa", "distinta", "mismo_grupo"],
+        "AUTOR": ["asistida", "asistida", "asistida", "asistida"],
+        "RAZON": ["+no es la misma", "=mismo NIT", "-sede distinta", "@matriz y filial"],
+    },
+    dtype="string",
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -239,6 +278,13 @@ def test_parquet_lleva_el_esquema_del_contrato(res: ResultadoLinkage, tmp_path: 
     assert b"pandas" not in esquema.metadata  # sin metadatos variables
     golden = pq.read_schema(man.carpeta / "golden.parquet")
     assert golden.names == list(contrato.COLUMNAS_GOLDEN)
+    # Un parquet escrito sin columnas del contrato (los alias de v1, con sus
+    # columnas técnicas) NO se etiqueta como contrato 1.0.
+    alias = tmp_path / "tabla_correlativa.parquet"
+    escritor.escribir_parquet(res.correlativa.assign(NOMBRE_LIMPIO="x"), alias)
+    metadatos = pq.read_schema(alias).metadata or {}
+    assert b"contrato" not in metadatos
+    assert b"pandas" not in metadatos
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,14 +323,59 @@ def test_fallo_conserva_trabajo_dentro_de_la_pendiente(
     trabajo = pendiente / "_trabajo"
     trabajo.mkdir(parents=True)
     (trabajo / "manifest.json").write_text("{}", encoding="utf-8")
+    propio = _con(res, dir_trabajo=trabajo)  # como lo deja linkage(carpeta_salida=...)
     monkeypatch.setattr(
         escritor, "_escribir_parquet", lambda *a, **k: (_ for _ in ()).throw(OSError("x"))
     )
     with pytest.raises(OSError):
-        escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+        escribir_resultado(propio, tmp_path, "prueba", marca_tiempo=MARCA)
     assert not (tmp_path / CARPETA_ESPERADA).exists()
     assert sorted(p.name for p in pendiente.iterdir()) == ["_trabajo"]
     assert (trabajo / "manifest.json").is_file()
+
+
+def test_trabajo_ajeno_en_la_pendiente_falla_rapido(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """Una corrida interrumpida dejó ``.prueba.pendiente/_trabajo``; publicar
+    un resultado cuyo ``dir_trabajo`` está en OTRA parte no debe arrastrar
+    esos checkpoints a la carpeta definitiva como si fueran suyos."""
+    pendiente = tmp_path / ".prueba.pendiente"
+    ajeno = pendiente / "_trabajo"
+    ajeno.mkdir(parents=True)
+    (ajeno / "ajeno.txt").write_text("de otra corrida", encoding="utf-8")
+    assert Path(res.dir_trabajo).resolve() != ajeno.resolve()
+    with pytest.raises(ErrorRuesLinker, match="_trabajo") as exc:
+        escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert "Qué hacer" in str(exc.value) and "carpeta_salida" in str(exc.value)
+    assert not (tmp_path / CARPETA_ESPERADA).exists()
+    # Nada se borra: el _trabajo/ ajeno sigue ahí para reanudar o borrar a mano.
+    assert (ajeno / "ajeno.txt").is_file()
+    assert sorted(p.name for p in pendiente.iterdir()) == ["_trabajo"]
+
+
+@pytest.mark.parametrize("contenido", ["{", "[]"])
+def test_trabajo_manifest_ilegible_se_declara_en_omitidos(
+    res: ResultadoLinkage, tmp_path: Path, contenido: str
+) -> None:
+    trabajo = tmp_path / "trabajo_roto"
+    trabajo.mkdir()
+    (trabajo / "manifest.json").write_text(contenido, encoding="utf-8")
+    man = escribir_resultado(
+        _con(res, dir_trabajo=trabajo),
+        tmp_path / "salida",
+        "prueba",
+        marca_tiempo=MARCA,
+        excel=False,
+    )
+    assert man.tiempos_por_fase == {} and man.rss_por_fase == {}
+    omitidos = {o["artefacto"]: o["motivo"] for o in man.omitidos}
+    assert "tiempos_por_fase" in omitidos and "rss_por_fase" in omitidos
+    assert "_trabajo/manifest.json" in omitidos["tiempos_por_fase"]
+    assert (
+        "ilegible" in omitidos["tiempos_por_fase"]
+        or "no es un objeto" in omitidos["tiempos_por_fase"]
+    )
+    texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
+    assert {o["artefacto"] for o in texto["omitidos"]} >= {"tiempos_por_fase", "rss_por_fase"}
 
 
 def test_carpeta_definitiva_existente_falla_rapido(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -358,6 +449,24 @@ def test_leer_resultado_devuelve_un_resultado_valido(res: ResultadoLinkage, tmp_
     assert leido.metricas["n_registros"] == len(res.correlativa)
     assert leido.manifiesto["manifest"]["nombre"] == "prueba"
     assert leido.dir_trabajo is None  # _trabajo/ no está dentro de esta carpeta
+
+
+def test_revision_csv_es_fiel_a_los_datos(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """``revision.csv`` es la forma del archivo de decisiones y ``leer_resultado``
+    lo lee de vuelta: no se neutraliza (eso es para los .xlsx y los alias
+    .csv.gz, que se abren en hoja de cálculo). Nada se repara en silencio."""
+    rev = REVISION_CON_PREFIJOS.copy()
+    assert list(rev.columns) == list(contrato.COLUMNAS_REVISION)
+    man = escribir_resultado(_con(res, revision=rev), tmp_path, "prueba", marca_tiempo=MARCA)
+    texto = (man.carpeta / "revision.csv").read_text(encoding="utf-8")
+    assert "'" not in texto, texto
+    assert "=EMPRESA A SAS" in texto and "+no es la misma" in texto
+    leido = leer_resultado(man.carpeta)
+    pd.testing.assert_frame_equal(leido.revision, rev)
+    assert leido.validar().ok
+    # El diccionario también es fiel: ningún apóstrofo añadido.
+    dic = (man.carpeta / "diccionario.csv").read_text(encoding="utf-8")
+    assert "'=" not in dic and "'-" not in dic and "'+" not in dic and "'@" not in dic
 
 
 def test_leer_resultado_con_alias_en_espanol(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -475,6 +584,50 @@ def test_alias_v1_se_escriben_con_deprecation_una_vez(corrida_con_l6: dict[str, 
     assert VERSION_RETIRO_ALIAS_V1 in str(de_alias[0].message)
 
 
+def test_alias_v1_avisan_tambien_por_logging(caplog: pytest.LogCaptureFixture) -> None:
+    """Python, IPython y Colab silencian los ``DeprecationWarning`` que no
+    nacen en ``__main__``: el aviso sale además por ``logging`` (una vez)."""
+    from record_linkage.reporting import strategies
+
+    strategies._ALIAS_V1_AVISADO = False
+    with caplog.at_level(logging.WARNING), warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        strategies._avisar_alias_v1()
+        strategies._avisar_alias_v1()
+    registros = [r for r in caplog.records if "ALIAS de v1" in r.getMessage()]
+    assert len(registros) == 1
+    assert registros[0].levelno == logging.WARNING
+    assert VERSION_RETIRO_ALIAS_V1 in registros[0].getMessage()
+    assert "excel/correlativa.xlsx" in registros[0].getMessage()
+
+
+def test_alias_parquet_v1_no_lleva_el_metadato_del_contrato(
+    corrida_con_l6: dict[str, Any],
+) -> None:
+    import pyarrow.parquet as pq
+
+    carpeta: Path = corrida_con_l6["carpeta"]
+    l6 = carpeta / "_trabajo" / "L6_reporting"
+    for nombre in ("tabla_correlativa", "golden_records"):
+        metadatos = pq.read_schema(l6 / f"{nombre}.parquet").metadata or {}
+        assert b"contrato" not in metadatos, nombre
+    assert pq.read_schema(carpeta / "correlativa.parquet").metadata[b"contrato"] == b"1.0"
+
+
+def test_reportes_l6_conservan_la_hoja_sheet1(corrida_con_l6: dict[str, Any]) -> None:
+    """``reporte_*.xlsx`` (L6 de v1) no es un alias: conserva la forma de v1
+    (``to_excel`` sin ``sheet_name`` → ``Sheet1``) hasta que F1.11 lo unifique."""
+    carpeta: Path = corrida_con_l6["carpeta"]
+    reportes = sorted((carpeta / "_trabajo" / "L6_reporting").glob("reporte_*.xlsx"))
+    assert reportes, "L6 no dejó ningún reporte_*.xlsx"
+    for ruta in reportes:
+        libro = load_workbook(ruta, read_only=True)
+        try:
+            assert libro.sheetnames == ["Sheet1"], ruta.name
+        finally:
+            libro.close()
+
+
 def test_alias_xlsx_lleva_hoja_leeme_primero(corrida_con_l6: dict[str, Any]) -> None:
     carpeta: Path = corrida_con_l6["carpeta"]
     ruta = carpeta / "_trabajo" / "L6_reporting" / "tabla_correlativa.xlsx"
@@ -511,7 +664,18 @@ def test_con_l6_las_figuras_van_a_figuras(corrida_con_l6: dict[str, Any]) -> Non
 # Un solo punto de escritura fuera de _trabajo/
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ESCRITORES = {"to_parquet", "to_excel", "to_csv", "write_table", "ExcelWriter"}
+#: Llamadas que escriben parquet/excel/csv. ``to_sql`` queda fuera a propósito:
+#: SQLite es ``_trabajo/`` (L3_scoring/scored.db), nunca el entregable.
+_ESCRITORES = {
+    "to_parquet",
+    "to_excel",
+    "to_csv",
+    "write_table",
+    "write_to_dataset",
+    "ParquetWriter",
+    "ExcelWriter",
+    "Workbook",
+}
 
 #: Módulos de ``src/record_linkage`` que pueden llamar a un escritor, y por
 #: qué. El objetivo (F1.10) es que la carpeta del estándar la escriba SOLO
@@ -573,8 +737,17 @@ def test_solo_el_escritor_escribe_fuera_de_trabajo() -> None:
     assert "reporting/strategies.py" not in con_llamadas
 
 
-def test_la_prueba_no_se_inspecciona_a_si_misma() -> None:
-    assert not Path(__file__).resolve().is_relative_to(SRC)
+def test_la_lista_de_permitidos_nombra_archivos_reales() -> None:
+    """Una clave mal escrita no debe pasar como «ya no escribe»."""
+    inexistentes = sorted(k for k in ESCRITORES_PERMITIDOS if not (SRC / k).is_file())
+    assert not inexistentes, f"No existen bajo src/record_linkage: {inexistentes}"
+
+
+def test_la_compuerta_ve_parquetwriter_y_workbook() -> None:
+    """``exporters/smart.py`` escribe con ``pq.ParquetWriter`` y ``openpyxl.Workbook``
+    (no con ``to_parquet``/``to_excel``); la compuerta debe verlo."""
+    llamadas = set(_llamadas_a_escritores(SRC / "exporters" / "smart.py"))
+    assert {"ParquetWriter", "Workbook"} <= llamadas, llamadas
 
 
 def test_escribir_xlsx_neutraliza_formulas(tmp_path: Path) -> None:

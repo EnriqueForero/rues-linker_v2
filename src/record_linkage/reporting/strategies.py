@@ -26,7 +26,11 @@ deja ``linkage(carpeta_salida=...)`` vía ``exporters.escritor``). Avisa con
 hoja ``LEEME`` que remite a ``excel/correlativa.xlsx`` / ``excel/golden.xlsx``
 y todo pasa por las primitivas del escritor (ningún ``to_parquet``/
 ``to_excel``/``to_csv`` directo aquí). Los alias desaparecen en
-``VERSION_RETIRO_ALIAS_V1``.
+``VERSION_RETIRO_ALIAS_V1``. El aviso sale también por ``logging`` (Python,
+IPython y Colab silencian por defecto los ``DeprecationWarning`` que no nacen
+en ``__main__``). ``ExcelReportsStrategy`` (``reporte_*.xlsx``) no es un
+alias: pasa por ``escribir_xlsx`` pero conserva la hoja ``Sheet1`` de v1
+hasta que F1.11 lo unifique en ``informe_cruce.xlsx``.
 """
 
 from __future__ import annotations
@@ -76,22 +80,29 @@ ARCHIVO_NUEVO_DE_ALIAS: dict[str, str] = {
 }
 
 _ALIAS_V1_AVISADO = False
+_logger = logging.getLogger(__name__)
 
 
 def _avisar_alias_v1() -> None:
-    """``DeprecationWarning`` una sola vez por proceso: los alias de v1 se van."""
+    """Avisa una sola vez por proceso que los alias de v1 se van.
+
+    ``DeprecationWarning`` (lo que pide la especificación) y, con el mismo
+    texto, ``logging.warning``: Python, IPython y Colab ignoran por defecto los
+    ``DeprecationWarning`` que no se originan en ``__main__``, así que sin el
+    log el usuario de v1 nunca lo vería.
+    """
     global _ALIAS_V1_AVISADO
     if _ALIAS_V1_AVISADO:
         return
     _ALIAS_V1_AVISADO = True
-    warnings.warn(
+    mensaje = (
         "L6_reporting/tabla_correlativa.* y golden_records.* son ALIAS de v1 desde 0.23.0: "
         "el entregable es la carpeta del estándar (linkage(carpeta_salida=...)), con "
         "excel/correlativa.xlsx y excel/golden.xlsx. Los alias desaparecen en rues-linker "
-        f"{VERSION_RETIRO_ALIAS_V1}.",
-        DeprecationWarning,
-        stacklevel=2,
+        f"{VERSION_RETIRO_ALIAS_V1}."
     )
+    warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
+    _logger.warning(mensaje)
 
 
 def _leeme_de(base_name: str) -> pd.DataFrame:
@@ -553,7 +564,9 @@ class ExcelReportsStrategy(BaseReportingStrategy):
 
         for report_name, df_report in reports.items():
             path = ctx.output_dir / f"reporte_{report_name}.xlsx"
-            escribir_xlsx(df_report, path)
+            # hoja="Sheet1": la forma de v1 (to_excel sin sheet_name). No es un
+            # alias, así que no lleva LEEME; F1.11 lo unifica en informe_cruce.xlsx.
+            escribir_xlsx(df_report, path, hoja="Sheet1")
             generated.append(path)
             logger.debug(f"      • reporte_{report_name}.xlsx ({len(df_report):,} filas)")
 

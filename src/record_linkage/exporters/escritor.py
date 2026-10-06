@@ -29,7 +29,16 @@ Reglas
   reutiliza— y borra solo los artefactos del estándar. Es la única
   desviación respecto a «la pendiente se elimina», y es deliberada: borrar
   cuarenta minutos de cómputo por un disco lleno al escribir un Excel no es
-  lo correcto.
+  lo correcto. Si la pendiente trae un ``_trabajo/`` que NO es el de ``res``
+  (``res.dir_trabajo`` apunta a otra parte), la escritura falla antes de
+  tocar nada: publicarlo dejaría una carpeta cuyo manifiesto no describe lo
+  que contiene.
+* **Fiel.** ``revision.csv`` y ``diccionario.csv`` se escriben tal cual
+  (``escribir_csv``): son los archivos que ``leer_resultado`` lee de vuelta y
+  la forma del archivo de decisiones, y nada se repara en silencio. La
+  neutralización de hoja de cálculo (``prepare_spreadsheet_data``: apóstrofo
+  ante ``=``, ``+``, ``-``, ``@``) se aplica SOLO a lo que se abre en una
+  hoja: los ``.xlsx`` y los alias ``.csv.gz`` de v1.
 * **Determinista.** Los parquet se escriben con ``pyarrow`` fijando el
   esquema del contrato y sin metadatos variables (sin el bloque ``pandas``
   con versiones): dos escrituras del mismo resultado producen los mismos
@@ -65,6 +74,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import shutil
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -115,6 +125,8 @@ NOMBRE_MANIFEST = "manifest.json"
 _SUFIJO_PENDIENTE = ".pendiente"
 _FILAS_POR_LOTE_CSV = 50_000
 _ALIAS = {"es": "alias_es"}
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -290,7 +302,12 @@ def _sha256_archivo(ruta: Path) -> str:
 
 
 def _tabla_arrow(df: pd.DataFrame, columnas: Sequence[contrato.ColumnaContrato]) -> pa.Table:
-    """``pa.Table`` con las columnas del contrato en su tipo y sin metadatos variables."""
+    """``pa.Table`` con las columnas del contrato en su tipo y sin metadatos variables.
+
+    El metadato ``contrato`` se estampa SOLO cuando se escribe con columnas del
+    contrato: un parquet sin ellas (los alias de v1, con columnas técnicas) no
+    tiene la forma del contrato y no debe decir que la tiene.
+    """
     try:
         tabla = pa.Table.from_pandas(df, preserve_index=False)
     except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError, ValueError) as exc:
@@ -319,13 +336,18 @@ def _tabla_arrow(df: pd.DataFrame, columnas: Sequence[contrato.ColumnaContrato])
                 )
             ) from exc
         tabla = tabla.set_column(i, col.campo(), columna)
-    return tabla.replace_schema_metadata({"contrato": contrato.VERSION_CONTRATO})
+    metadatos = {"contrato": contrato.VERSION_CONTRATO} if columnas else None
+    return tabla.replace_schema_metadata(metadatos)
 
 
 def escribir_parquet(
     df: pd.DataFrame, ruta: Path, columnas: Sequence[contrato.ColumnaContrato] = ()
 ) -> None:
-    """Escribe ``df`` como parquet determinista (snappy, esquema del contrato)."""
+    """Escribe ``df`` como parquet determinista (snappy, sin metadatos variables).
+
+    Con ``columnas`` del contrato fija sus tipos y estampa el metadato
+    ``contrato``; sin ellas (alias de v1) no lo estampa.
+    """
     _escribir_parquet(df, ruta, columnas)
 
 
@@ -338,8 +360,14 @@ def _escribir_parquet(
 
 
 def escribir_csv(df: pd.DataFrame, ruta: Path) -> None:
-    """CSV UTF-8 neutralizado para hoja de cálculo, con ``\\n`` fijo (determinista)."""
-    prepare_spreadsheet_data(df).to_csv(ruta, index=False, lineterminator="\n")
+    """CSV UTF-8 FIEL a los datos, con ``\\n`` fijo (determinista).
+
+    Es el CSV del estándar (``revision.csv``, ``diccionario.csv``): lo que se
+    escribe es lo que ``leer_resultado`` devuelve, sin apóstrofos ante ``=``,
+    ``+``, ``-`` o ``@``. La neutralización queda para ``escribir_xlsx`` y los
+    alias ``.csv.gz`` (``escribir_csv_gz*``), que se abren en hoja de cálculo.
+    """
+    df.to_csv(ruta, index=False, lineterminator="\n")
 
 
 def escribir_csv_gz(df: pd.DataFrame, ruta: Path) -> None:
@@ -464,19 +492,31 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
     return conteos
 
 
-def _tiempos_y_rss(dir_trabajo: Path | None) -> tuple[dict[str, float], dict[str, float]]:
+def _tiempos_y_rss(
+    dir_trabajo: Path | None,
+) -> tuple[dict[str, float], dict[str, float], str | None]:
+    """Tiempos y RSS por fase desde ``_trabajo/manifest.json``, y el motivo si no hay.
+
+    Sin ``_trabajo/`` o sin su manifiesto no hay motivo que declarar (el
+    resultado no corrió L1…L5 aquí). Un manifiesto ilegible SÍ se declara:
+    vacío sin motivo sería indistinguible de «no hubo _trabajo».
+    """
     if dir_trabajo is None:
-        return {}, {}
+        return {}, {}, None
     ruta = Path(dir_trabajo) / "manifest.json"
     if not ruta.is_file():
-        return {}, {}
+        return {}, {}, None
     try:
         manifiesto = json.loads(ruta.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}, {}
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, {}, f"{NOMBRE_TRABAJO}/manifest.json ilegible: {exc}"
     if not isinstance(manifiesto, dict):
-        return {}, {}
-    return _fases_desde_manifiesto(manifiesto), _rss_por_fase(manifiesto)
+        return (
+            {},
+            {},
+            f"{NOMBRE_TRABAJO}/manifest.json no es un objeto JSON ({type(manifiesto).__name__}).",
+        )
+    return _fases_desde_manifiesto(manifiesto), _rss_por_fase(manifiesto), None
 
 
 def _version_paquete() -> str:
@@ -652,7 +692,11 @@ def _escribir_en(
         if dir_trabajo_relativo
         else (str(res.dir_trabajo) if res.dir_trabajo is not None else None)
     )
-    tiempos, rss = _tiempos_y_rss(res.dir_trabajo)
+    tiempos, rss, motivo = _tiempos_y_rss(res.dir_trabajo)
+    if motivo is not None:
+        logger.warning("tiempos_por_fase y rss_por_fase quedan vacíos: %s", motivo)
+        omitidos.append({"artefacto": "tiempos_por_fase", "motivo": motivo})
+        omitidos.append({"artefacto": "rss_por_fase", "motivo": motivo})
     reporte = res.validar()
     manifiesto = Manifiesto(
         contrato=contrato.VERSION_CONTRATO,
@@ -676,12 +720,18 @@ def _escribir_en(
     return manifiesto
 
 
-def _limpiar_pendiente(pendiente: Path) -> None:
-    """Borra lo que el escritor pudo escribir; conserva ``_trabajo/`` si existe."""
+def _limpiar_pendiente(pendiente: Path, *, conservar_trabajo: bool) -> None:
+    """Borra lo que el escritor pudo escribir.
+
+    Con ``conservar_trabajo`` deja ``_trabajo/`` (son los checkpoints de
+    ``res``, que vive ahí). ``escribir_resultado`` solo llega aquí con
+    ``conservar_trabajo=False`` cuando ya comprobó que no hay ``_trabajo/``
+    ajeno, así que en ese caso no hay nada que conservar.
+    """
     if not pendiente.is_dir():
         return
     for hijo in pendiente.iterdir():
-        if hijo.name == NOMBRE_TRABAJO:
+        if conservar_trabajo and hijo.name == NOMBRE_TRABAJO:
             continue
         if hijo.is_dir():
             shutil.rmtree(hijo, ignore_errors=True)
@@ -724,7 +774,10 @@ def escribir_resultado(
         ErrorRuesLinker: si la carpeta definitiva ya existe (la marca tiene
             resolución de minuto: dos escrituras del mismo ``nombre`` en el
             mismo minuto chocan; la segunda falla sin tocar la primera y, si
-            ``_trabajo/`` estaba en la pendiente, lo conserva para reanudar).
+            ``_trabajo/`` estaba en la pendiente, lo conserva para reanudar);
+            o si la pendiente trae un ``_trabajo/`` que no es el de ``res``
+            (una corrida interrumpida de ``linkage(carpeta_salida=...)``): no
+            se publica como si fuera de esta corrida ni se borra.
         ValueError: si ``nombre`` no es un nombre simple.
 
     Dos corridas simultáneas con el mismo ``nombre`` en la misma
@@ -745,13 +798,27 @@ def escribir_resultado(
             )
         )
     carpeta_salida.mkdir(parents=True, exist_ok=True)
+    trabajo_pendiente = pendiente / NOMBRE_TRABAJO
     trabajo_dentro = (
         res.dir_trabajo is not None
-        and Path(res.dir_trabajo).resolve() == (pendiente / NOMBRE_TRABAJO).resolve()
+        and Path(res.dir_trabajo).resolve() == trabajo_pendiente.resolve()
     )
+    if not trabajo_dentro and trabajo_pendiente.exists():
+        raise ErrorRuesLinker(
+            mensaje_accionable(
+                f"hay un {NOMBRE_TRABAJO}/ de otra corrida en {pendiente} y el resultado "
+                f"que se quiere publicar tiene su trabajo en {res.dir_trabajo}.",
+                "es de una corrida interrumpida de linkage(carpeta_salida=...); publicarlo "
+                "con este resultado dejaría una carpeta cuyo manifiesto no describe los "
+                "checkpoints que contiene.",
+                f"reanude esa corrida con linkage(carpeta_salida={str(carpeta_salida)!r}, "
+                f"nombre={nombre!r}) o borre {trabajo_pendiente} a mano; si el resultado "
+                f"sí es de esa corrida, su dir_trabajo debe ser {trabajo_pendiente}.",
+            )
+        )
     # Restos de una escritura anterior interrumpida a la fuerza (kill): se
-    # limpian antes de empezar; _trabajo/ se conserva.
-    _limpiar_pendiente(pendiente)
+    # limpian antes de empezar; _trabajo/ se conserva solo si es el de res.
+    _limpiar_pendiente(pendiente, conservar_trabajo=trabajo_dentro)
     pendiente.mkdir(parents=True, exist_ok=True)
     try:
         manifiesto = _escribir_en(
@@ -759,7 +826,7 @@ def escribir_resultado(
         )
         pendiente.rename(definitiva)
     except BaseException:
-        _limpiar_pendiente(pendiente)
+        _limpiar_pendiente(pendiente, conservar_trabajo=trabajo_dentro)
         raise
     if trabajo_dentro:
         res.dir_trabajo = definitiva / NOMBRE_TRABAJO
