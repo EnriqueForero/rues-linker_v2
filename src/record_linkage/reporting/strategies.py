@@ -18,17 +18,30 @@ Componentes:
 NOTA: Lógica de negocio preservada exactamente como en el notebook
 fuente. Solo se agregan imports, docstring de módulo y se eliminan
 directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+
+F1.10: ``DataExportStrategy`` escribe ``tabla_correlativa.*`` y
+``golden_records.*`` como ALIAS de v1 del estándar de salida (la carpeta que
+deja ``linkage(carpeta_salida=...)`` vía ``exporters.escritor``). Avisa con
+``DeprecationWarning`` una vez por proceso, el ``.xlsx`` lleva una primera
+hoja ``LEEME`` que remite a ``excel/correlativa.xlsx`` / ``excel/golden.xlsx``
+y todo pasa por las primitivas del escritor (ningún ``to_parquet``/
+``to_excel``/``to_csv`` directo aquí). Los alias desaparecen en
+``VERSION_RETIRO_ALIAS_V1``. El aviso sale también por ``logging`` (Python,
+IPython y Colab silencian por defecto los ``DeprecationWarning`` que no nacen
+en ``__main__``). ``ExcelReportsStrategy`` (``reporte_*.xlsx``) no es un
+alias: pasa por ``escribir_xlsx`` pero conserva la hoja ``Sheet1`` de v1
+hasta que F1.11 lo unifique en ``informe_cruce.xlsx``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import gc
-import gzip
 import json
 import logging
 import shutil
 import time
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -40,7 +53,14 @@ import pandas as pd
 import psutil
 import pyarrow.parquet as pq
 
-from ..exporters._spreadsheet import prepare_spreadsheet_data
+from ..exporters.escritor import (
+    VERSION_RETIRO_ALIAS_V1,
+    escribir_csv_gz,
+    escribir_csv_gz_por_lotes,
+    escribir_parquet,
+    escribir_xlsx,
+    leeme_alias_v1,
+)
 from ..pipeline._internal import _class_exists
 from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
@@ -54,6 +74,42 @@ from .reports import ReportGenerator
 # alguien importara `Orchestrator` — incluso con skip_reporting=True.
 # La validación de disponibilidad sigue ocurriendo en `is_available()`
 # vía `_class_exists()`, que ya hace lazy import internamente.
+
+
+#: Alias de v1 → archivo del estándar al que remiten (F1.10).
+ARCHIVO_NUEVO_DE_ALIAS: dict[str, str] = {
+    "tabla_correlativa": "excel/correlativa.xlsx",
+    "golden_records": "excel/golden.xlsx",
+}
+
+_ALIAS_V1_AVISADO = False
+_logger = logging.getLogger(__name__)
+
+
+def _avisar_alias_v1() -> None:
+    """Avisa una sola vez por proceso que los alias de v1 se van.
+
+    ``DeprecationWarning`` (lo que pide la especificación) y, con el mismo
+    texto, ``logging.warning``: Python, IPython y Colab ignoran por defecto los
+    ``DeprecationWarning`` que no se originan en ``__main__``, así que sin el
+    log el usuario de v1 nunca lo vería.
+    """
+    global _ALIAS_V1_AVISADO
+    if _ALIAS_V1_AVISADO:
+        return
+    _ALIAS_V1_AVISADO = True
+    mensaje = (
+        "L6_reporting/tabla_correlativa.* y golden_records.* son ALIAS de v1 desde 0.23.0: "
+        "el entregable es la carpeta del estándar (linkage(carpeta_salida=...)), con "
+        "excel/correlativa.xlsx y excel/golden.xlsx. Los alias desaparecen en rues-linker "
+        f"{VERSION_RETIRO_ALIAS_V1}."
+    )
+    warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
+    _logger.warning(mensaje)
+
+
+def _leeme_de(base_name: str) -> pd.DataFrame:
+    return leeme_alias_v1(ARCHIVO_NUEVO_DE_ALIAS.get(base_name, "la carpeta del estándar"))
 
 
 class Phase(Enum):
@@ -313,6 +369,7 @@ class DataExportStrategy(BaseReportingStrategy):
     def _execute_impl(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
         """Implementación principal de exportación."""
         generated_files: list[Path] = []
+        _avisar_alias_v1()
 
         mem_percent = psutil.virtual_memory().percent
         logger.info(f"   💾 Memoria al inicio: {mem_percent:.1f}%")
@@ -390,13 +447,7 @@ class DataExportStrategy(BaseReportingStrategy):
         csv_path = output_dir / f"{base_name}.csv.gz"
         logger.info("      💾 Streaming a CSV.gz...")
 
-        with gzip.open(csv_path, "wt", encoding="utf-8", newline="") as f_out:
-            first_batch = True
-            for batch in parquet_file.iter_batches(batch_size=self.STREAMING_BATCH_SIZE):
-                df_chunk = batch.to_pandas()
-                prepare_spreadsheet_data(df_chunk).to_csv(f_out, index=False, header=first_batch)
-                first_batch = False
-                del df_chunk
+        escribir_csv_gz_por_lotes(parquet_file, csv_path, filas_por_lote=self.STREAMING_BATCH_SIZE)
 
         logger.info(f"      ✅ {csv_path.name} ({csv_path.stat().st_size / (1024**2):.1f} MB)")
         files.append(csv_path)
@@ -413,9 +464,7 @@ class DataExportStrategy(BaseReportingStrategy):
             xlsx_path = output_dir / f"{base_name}.xlsx"
             try:
                 df_excel = pd.read_parquet(source_path)
-                prepare_spreadsheet_data(df_excel).to_excel(
-                    xlsx_path, index=False, engine="openpyxl"
-                )
+                escribir_xlsx(df_excel, xlsx_path, leeme=_leeme_de(base_name))
                 del df_excel
                 gc.collect()
                 logger.info(f"      ✅ {xlsx_path.name}")
@@ -426,9 +475,7 @@ class DataExportStrategy(BaseReportingStrategy):
             xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
             try:
                 df_sample = next(parquet_file.iter_batches(batch_size=excel_limit)).to_pandas()
-                prepare_spreadsheet_data(df_sample).to_excel(
-                    xlsx_path, index=False, engine="openpyxl"
-                )
+                escribir_xlsx(df_sample, xlsx_path, leeme=_leeme_de(base_name))
                 del df_sample
                 gc.collect()
                 logger.info(f"      ✅ {xlsx_path.name} (muestra)")
@@ -464,10 +511,10 @@ class DataExportStrategy(BaseReportingStrategy):
         files: list[Path] = []
         n_rows = len(df)
 
-        # 1. Parquet (obligatorio)
+        # 1. Parquet (obligatorio: un fallo tumba la corrida, F1.4)
         parquet_path = output_dir / f"{base_name}.parquet"
         df_clean = self._prepare_for_parquet(df)
-        df_clean.to_parquet(parquet_path, index=False, engine="pyarrow", compression="snappy")
+        escribir_parquet(df_clean, parquet_path)
         del df_clean
         gc.collect()
         logger.info(f"      ✅ {parquet_path.name}")
@@ -475,7 +522,7 @@ class DataExportStrategy(BaseReportingStrategy):
 
         # 2. CSV.gz (obligatorio)
         csv_path = output_dir / f"{base_name}.csv.gz"
-        prepare_spreadsheet_data(df).to_csv(csv_path, index=False, compression="gzip")
+        escribir_csv_gz(df, csv_path)
         logger.info(f"      ✅ {csv_path.name}")
         files.append(csv_path)
 
@@ -484,7 +531,7 @@ class DataExportStrategy(BaseReportingStrategy):
         if n_rows <= excel_limit and mem_percent < 85:
             xlsx_path = output_dir / f"{base_name}.xlsx"
             try:
-                prepare_spreadsheet_data(df).to_excel(xlsx_path, index=False, engine="openpyxl")
+                escribir_xlsx(df, xlsx_path, leeme=_leeme_de(base_name))
                 gc.collect()
                 logger.info(f"      ✅ {xlsx_path.name}")
                 files.append(xlsx_path)
@@ -493,9 +540,7 @@ class DataExportStrategy(BaseReportingStrategy):
         elif n_rows > excel_limit:
             xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
             try:
-                prepare_spreadsheet_data(df.head(excel_limit)).to_excel(
-                    xlsx_path, index=False, engine="openpyxl"
-                )
+                escribir_xlsx(df.head(excel_limit), xlsx_path, leeme=_leeme_de(base_name))
                 gc.collect()
                 logger.info(f"      ✅ {xlsx_path.name} (muestra)")
                 files.append(xlsx_path)
@@ -574,7 +619,9 @@ class ExcelReportsStrategy(BaseReportingStrategy):
         for report_name, df_report in reports.items():
             path = ctx.output_dir / f"reporte_{report_name}.xlsx"
             try:
-                prepare_spreadsheet_data(df_report).to_excel(path, index=False, engine="openpyxl")
+                # hoja="Sheet1": la forma de v1 (to_excel sin sheet_name). No es un
+                # alias, así que no lleva LEEME; F1.11 lo unifica en informe_cruce.xlsx.
+                escribir_xlsx(df_report, path, hoja="Sheet1")
             except Exception as e:
                 with contextlib.suppress(OSError):
                     path.unlink(missing_ok=True)

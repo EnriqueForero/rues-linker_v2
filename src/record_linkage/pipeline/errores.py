@@ -412,6 +412,16 @@ class CruceSinFuenteError(ErrorPipeline):
         )
 
 
+class EscrituraSalidaError(ErrorPipeline):
+    """La carpeta del estándar no se pudo escribir o leer de forma consistente.
+
+    La levanta ``exporters.escritor`` (F1.10) cuando el nombre no sirve de
+    carpeta, la definitiva ya existe, la pendiente trae un ``_trabajo/`` de
+    otra corrida, dos figuras se llaman igual o un artefacto no coincide con
+    su manifiesto. Nunca deja una carpeta a medias: la pendiente se limpia.
+    """
+
+
 class ContratoSalidaError(ErrorPipeline):
     """El resultado no cumple el contrato de salida (``contrato.VERSION_CONTRATO``).
 
