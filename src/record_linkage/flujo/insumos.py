@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from ..ingestion import SourceSpec, load_source
+from ..pipeline.errores import mensaje_accionable
 from ..utils.almacenamiento import es_ruta_fuse
 
 __all__ = [
@@ -56,10 +57,11 @@ def preparar_insumo_local(
     origen = Path(origen).expanduser()
     if not origen.exists():
         raise FileNotFoundError(
-            f"Qué pasó: no existe el insumo '{origen}'. "
-            f"Por qué importa: sin él no hay nada que procesar. "
-            f"Qué hacer: verifique la ruta (¿montó Drive?, ¿el nombre lleva "
-            f"tildes o espacios distintos?)."
+            mensaje_accionable(
+                f"no existe el insumo '{origen}'.",
+                "sin él no hay nada que procesar.",
+                "verifique la ruta (¿montó Drive?, ¿el nombre lleva tildes o espacios distintos?).",
+            )
         )
     if not es_ruta_fuse(origen):
         return origen

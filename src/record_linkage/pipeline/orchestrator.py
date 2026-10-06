@@ -58,7 +58,12 @@ from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
-from .errores import ArtefactoObligatorioError, ConsolidacionNitError, EstrategiaFallo
+from .errores import (
+    ArtefactoObligatorioError,
+    ConsolidacionNitError,
+    EstrategiaFallo,
+    mensaje_accionable,
+)
 from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
 from .state_manager import StateManager
@@ -271,13 +276,14 @@ class Orchestrator:
                     continue
                 if canonico in df.columns:
                     raise ValueError(
-                        f"Qué pasó: la fuente '{nombre}' tiene la columna "
-                        f"'{usuario}' (mapeada a '{canonico}') Y también "
-                        f"'{canonico}'. "
-                        f"Por qué importa: el pipeline no puede adivinar cuál "
-                        f"de las dos es la verdadera sin riesgo de mezclar datos. "
-                        f"Qué hacer: elimine o renombre una de las dos columnas "
-                        f"en esa fuente antes de llamar al pipeline."
+                        mensaje_accionable(
+                            f"la fuente '{nombre}' tiene la columna '{usuario}' (mapeada a "
+                            f"'{canonico}') Y también '{canonico}'.",
+                            "el pipeline no puede adivinar cuál de las dos es la verdadera "
+                            "sin riesgo de mezclar datos.",
+                            "elimine o renombre una de las dos columnas en esa fuente antes "
+                            "de llamar al pipeline.",
+                        )
                     )
                 renames[usuario] = canonico
             renombradas[nombre] = df.rename(columns=renames) if renames else df

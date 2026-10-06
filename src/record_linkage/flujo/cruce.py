@@ -32,7 +32,12 @@ import pandas as pd
 
 from .. import contrato
 from ..api import linkage
-from ..golden.columnas_finales import COLUMNAS_FINALES, faltantes, faltantes_en
+from ..golden.columnas_finales import (
+    COLUMNAS_FINALES,
+    POR_QUE_IMPORTA_SIN_IDENTIDAD,
+    faltantes,
+    faltantes_en,
+)
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -179,8 +184,11 @@ class ConfigCruce:
     def __post_init__(self) -> None:
         if not self.fuentes:
             raise ValueError(
-                "Qué pasó: ConfigCruce.fuentes está vacío. Por qué importa: no "
-                "hay nada que cruzar. Qué hacer: declare al menos un SourceSpec."
+                mensaje_accionable(
+                    "ConfigCruce.fuentes está vacío.",
+                    "no hay nada que cruzar.",
+                    "declare al menos un SourceSpec.",
+                )
             )
         nombres = [f.name for f in self.fuentes]
         if len(set(nombres)) != len(nombres):
@@ -266,9 +274,12 @@ class ConfigCruce:
         desconocidas = self.confiables - set(nombres)
         if desconocidas:
             raise ValueError(
-                f"Qué pasó: 'confiables' nombra fuentes inexistentes "
-                f"{sorted(desconocidas)}. Qué hacer: use exactamente los "
-                f"nombres declarados: {sorted(nombres)}."
+                mensaje_accionable(
+                    f"'confiables' nombra fuentes inexistentes {sorted(desconocidas)}.",
+                    "la política de fuentes confiables se aplicaría a un nombre que no "
+                    "existe y ninguna fuente real la recibiría.",
+                    f"use exactamente los nombres declarados: {sorted(nombres)}.",
+                )
             )
         if self.dir_trabajo is None:
             # Nunca usar Drive como disco de trabajo: los checkpoints SQLite
@@ -1148,10 +1159,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
             else ""
         )
         raise FileNotFoundError(
-            f"Qué pasó: la fuente '{spec.name}' apunta a '{ruta}', que no existe, "
-            f"y no hay caché reutilizable. Por qué importa: el preflight corta aquí "
-            f"para no fallar dentro de una corrida de horas. Qué hacer: revise la "
-            f"ruta y, en Colab, que Drive esté montado.{detalle_motor}"
+            mensaje_accionable(
+                f"la fuente '{spec.name}' apunta a '{ruta}', que no existe, y no hay "
+                "caché reutilizable.",
+                "el preflight corta aquí para no fallar dentro de una corrida de horas.",
+                f"revise la ruta y, en Colab, que Drive esté montado.{detalle_motor}",
+            )
         )
     config.ruta_workspace.mkdir(parents=True, exist_ok=True)
     config.ruta_trabajo.mkdir(parents=True, exist_ok=True)
@@ -1161,8 +1174,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
         testigo.unlink()
     except OSError as exc:
         raise PermissionError(
-            f"Qué pasó: no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}). "
-            f"Qué hacer: elija otra carpeta o verifique el montaje de Drive."
+            mensaje_accionable(
+                f"no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}).",
+                "sin un workspace escribible la corrida no puede guardar resultados ni "
+                "checkpoints y moriría a mitad de camino.",
+                "elija otra carpeta o verifique el montaje de Drive.",
+            )
         ) from exc
     log.info(f"   ✅ Preflight: {len(config.fuentes)} fuentes, workspace escribible")
 
@@ -1864,9 +1881,11 @@ def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, espe
     """Falla ruidosamente si el resultado viola una garantía estructural."""
     if len(correlativa) != esperadas:
         raise RuntimeError(
-            f"Qué pasó: la correlativa trae {len(correlativa):,} filas y entraron "
-            f"{esperadas:,}. Por qué importa: el cruce debe conservar TODAS las filas "
-            f"de entrada. Qué hacer: no use este resultado; reporte el caso."
+            mensaje_accionable(
+                f"la correlativa trae {len(correlativa):,} filas y entraron {esperadas:,}.",
+                "el cruce debe conservar TODAS las filas de entrada.",
+                "no use este resultado; reporte el caso.",
+            )
         )
     if correlativa["ID_GRUPO"].isna().any():
         raise RuntimeError("Hay filas sin ID_GRUPO: resultado inutilizable.")
@@ -1883,12 +1902,12 @@ def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, espe
     ausentes = faltantes(correlativa)
     if ausentes:
         raise RuntimeError(
-            f"Qué pasó: la correlativa salió sin {list(ausentes)}. Por qué "
-            f"importa: sin NIT_FINAL y RAZON_SOCIAL_FINAL el resultado dice a "
-            f"qué grupo pertenece cada fila pero no qué identidad quedó para "
-            f"ese grupo, que es el entregable. Qué hacer: no use este "
-            f"resultado; revise el registro de la fase L5, donde la "
-            f"reconstrucción desde el golden debió haber ocurrido."
+            mensaje_accionable(
+                f"la correlativa salió sin {list(ausentes)}.",
+                POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                "no use este resultado; revise el registro de la fase L5, donde la "
+                "reconstrucción desde el golden debió haber ocurrido.",
+            )
         )
 
 
@@ -2198,11 +2217,11 @@ def _ejecutar_cruce_medido(
             ausentes_disco = faltantes_en(publicacion.correlativa.columns)
             if ausentes_disco:
                 raise RuntimeError(
-                    f"Qué pasó: la correlativa publicada no trae "
-                    f"{list(ausentes_disco)}. Por qué importa: sin NIT_FINAL y "
-                    f"RAZON_SOCIAL_FINAL el resultado no dice qué identidad "
-                    f"adoptó cada grupo, que es el entregable. Qué hacer: no "
-                    f"use este resultado; revise el registro de la fase L5."
+                    mensaje_accionable(
+                        f"la correlativa publicada no trae {list(ausentes_disco)}.",
+                        POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                        "no use este resultado; revise el registro de la fase L5.",
+                    )
                 )
             # F1.8 — ``publicar_resultados_duckdb`` adjunta el payload por
             # nombre y descarta sin aviso el que choca con una columna del motor:

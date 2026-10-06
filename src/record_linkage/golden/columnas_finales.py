@@ -73,6 +73,7 @@ import numpy as np
 import pandas as pd
 
 from .. import contrato as _contrato
+from ..pipeline.errores import mensaje_accionable
 from .selector import huella_de_nombre
 
 logger = logging.getLogger(__name__)
@@ -81,11 +82,19 @@ __all__ = [
     "COLUMNAS_DIAGNOSTICO",
     "COLUMNAS_FINALES",
     "COLUMNAS_IDENTIDAD",
+    "POR_QUE_IMPORTA_SIN_IDENTIDAD",
     "ReporteColumnasFinales",
     "faltantes",
     "faltantes_en",
     "garantizar_columnas_finales",
 ]
+
+#: «Por qué importa» de los tres puntos que verifican que la correlativa
+#: entregue la identidad del grupo (aquí y en ``flujo.cruce``): escrito una vez.
+POR_QUE_IMPORTA_SIN_IDENTIDAD = (
+    "sin NIT_FINAL y RAZON_SOCIAL_FINAL el resultado dice a qué grupo pertenece "
+    "cada fila pero no qué identidad adoptó ese grupo, que es el entregable del cruce."
+)
 
 #: Identidad que el grupo adopta, trazabilidad por fila y su unión. Desde
 #: F1.9 viven en ``record_linkage.contrato`` (una regla escrita una vez; el
@@ -276,9 +285,11 @@ def garantizar_columnas_finales(
     log = registrador or logger
     if "ID_GRUPO" not in correlativa.columns:
         raise KeyError(
-            "Qué pasó: la correlativa no trae ID_GRUPO. Por qué importa: sin la "
-            "etiqueta de grupo no se puede adjudicar identidad a ninguna fila. "
-            "Qué hacer: no use este resultado; la fase L5 no terminó bien."
+            mensaje_accionable(
+                "la correlativa no trae ID_GRUPO.",
+                "sin la etiqueta de grupo no se puede adjudicar identidad a ninguna fila.",
+                "no use este resultado; la fase L5 no terminó bien.",
+            )
         )
 
     ausentes = faltantes(correlativa)
@@ -305,12 +316,12 @@ def garantizar_columnas_finales(
         if golden is None or not {"ID_GRUPO", *identidad_ausente} <= set(golden.columns):
             disponibles = sorted(golden.columns)[:12] if golden is not None else "sin golden"
             raise RuntimeError(
-                f"Qué pasó: la correlativa no trae {identidad_ausente} y el golden "
-                f"no permite reconstruirlas. Por qué importa: sin NIT_FINAL y "
-                f"RAZON_SOCIAL_FINAL el resultado no dice qué identidad adoptó "
-                f"cada grupo, que es el entregable del cruce. Qué hacer: no use "
-                f"este resultado; reporte el caso con el registro de la fase L5. "
-                f"Columnas del golden: {disponibles}"
+                mensaje_accionable(
+                    f"la correlativa no trae {identidad_ausente} y el golden no permite "
+                    f"reconstruirlas (columnas del golden: {disponibles}).",
+                    POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                    "no use este resultado; reporte el caso con el registro de la fase L5.",
+                )
             )
         trabajo = trabajo.merge(
             golden[["ID_GRUPO", *identidad_ausente]].drop_duplicates("ID_GRUPO"),

@@ -25,6 +25,7 @@ from typing import Any
 
 import pandas as pd
 
+from ..pipeline.errores import mensaje_accionable
 from ..utils.logger import CustomLogger
 from ._sqlite import (
     open_readonly_sqlite,
@@ -178,16 +179,20 @@ class ReportGenerator:
             tope = validate_row_limit(valor, label="report_max_casos_revision")
         except (TypeError, ValueError) as e:
             raise ValueError(
-                f"Qué pasó: report_max_casos_revision={valor!r} no es un entero ≥ 1 ({e}). "
-                "Por qué importa: el tope recorta los casos de revisión con head(); un "
-                "valor inválido produce un reporte vacío o un rótulo MUESTRA absurdo. "
-                "Qué hacer: configure un entero positivo (1000 por defecto)."
+                mensaje_accionable(
+                    f"report_max_casos_revision={valor!r} no es un entero ≥ 1 ({e}).",
+                    "el tope recorta los casos de revisión con head(); un valor inválido "
+                    "produce un reporte vacío o un rótulo MUESTRA absurdo.",
+                    "configure un entero positivo (1000 por defecto).",
+                )
             ) from e
         if tope < 1:
             raise ValueError(
-                f"Qué pasó: report_max_casos_revision={tope} es cero. Por qué importa: el "
-                "reporte de casos de revisión quedaría vacío sin aviso. Qué hacer: "
-                "configure un entero positivo (1000 por defecto)."
+                mensaje_accionable(
+                    f"report_max_casos_revision={tope} es cero.",
+                    "el reporte de casos de revisión quedaría vacío sin aviso.",
+                    "configure un entero positivo (1000 por defecto).",
+                )
             )
         return tope
 
@@ -386,10 +391,12 @@ class ReportGenerator:
             return valor_metrica or 0, ALCANCE_COMPLETO
         if valor_metrica is not None and valor_metrica != valor_tabla:
             self.logger.warning(
-                f"metrics['{nombre_metrica}']={valor_metrica:,} difiere de la tabla "
-                f"completa ({valor_tabla:,}); el resumen usa la tabla. Por qué importa: "
-                "la métrica heredada pudo salir de una muestra. Qué hacer: revise quién "
-                "la calcula."
+                mensaje_accionable(
+                    f"metrics['{nombre_metrica}']={valor_metrica:,} difiere de la tabla "
+                    f"completa ({valor_tabla:,}); el resumen usa la tabla.",
+                    "la métrica heredada pudo salir de una muestra.",
+                    "revise quién la calcula.",
+                )
             )
         return valor_tabla, ALCANCE_COMPLETO
 
