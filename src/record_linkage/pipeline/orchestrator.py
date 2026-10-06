@@ -1849,16 +1849,24 @@ class Orchestrator:
         if mem_percent > MEMORY_CRITICAL_THRESHOLD:
             self.log.warning(f"   ⚠️ MEMORIA CRÍTICA ({mem_percent:.1f}%). Modo conservador...")
 
+            # F1.5: un recorte nunca viaja sin rótulo. `metrics["muestras"]` es el
+            # registro que ReportGenerator lee para marcar ALCANCE en sus reportes
+            # y para no confundir el N real (en `total_records`) con la vista.
+            muestras = full_metrics.setdefault("muestras", {})
+            motivo = f"memoria crítica ({mem_percent:.1f} % > {MEMORY_CRITICAL_THRESHOLD:.0f} %)"
+
             if len(golden_df) > SAMPLE_SIZE:
                 orig = len(golden_df)
                 golden_df = golden_df.head(SAMPLE_SIZE)
                 reporting_sampled = True
+                muestras["golden"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 golden_df: {orig:,} → {SAMPLE_SIZE:,}")
 
             if len(correl_df) > SAMPLE_SIZE:
                 orig = len(correl_df)
                 correl_df = correl_df.head(SAMPLE_SIZE)
                 reporting_sampled = True
+                muestras["correlativa"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 correlative_df: {orig:,} → {SAMPLE_SIZE:,}")
 
             gc.collect()
