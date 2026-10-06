@@ -1,0 +1,100 @@
+{
+  "etiqueta": "base_f0",
+  "perfil": "produccion_estandar",
+  "semilla": 42,
+  "marca_tiempo": "2026-10-06T05:23:41",
+  "version": "0.22.4",
+  "entorno": {
+    "vcpu": 4,
+    "memoria_total_mib": 16095
+  },
+  "nota": "Línea base F0 sobre el árbol d3ec9ae (0.22.4 + fundaciones), corrida sola en 4 vCPU",
+  "tamanos": {
+    "139k": {
+      "parametros": {
+        "empresas_extra": 48000,
+        "importadores_extra": 9600,
+        "semilla": 42,
+        "filas_esperadas": 139028
+      },
+      "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+      "filas": 139028,
+      "grupos": 54136,
+      "version": "0.22.4",
+      "perfil": "produccion_estandar",
+      "marca_tiempo": "2026-10-06T05:31:05",
+      "entorno": {
+        "python": "3.11.15",
+        "pandas": "3.0.6",
+        "numpy": "2.3.5",
+        "plataforma": "Linux-6.18.44-fc-v70-x86_64-with-glibc2.39",
+        "version": "0.22.4",
+        "vcpu": 4,
+        "memoria_total_mib": 16095
+      },
+      "recursos": {
+        "segundos_total": 437.89,
+        "segundos_por_fase": {
+          "L1_prep": 2.69,
+          "L2_lsh_candidates": 263.44,
+          "L3_scoring": 149.75,
+          "L4_clustering": 2.24,
+          "L5_golden": 18.0
+        },
+        "rss_por_fase": {
+          "L1_prep": 504.8,
+          "L2_lsh_candidates": 1192.7,
+          "L3_scoring": 768.2,
+          "L4_clustering": 747.1,
+          "L5_golden": 929.9
+        },
+        "rss_pico_mib": 1192.1,
+        "rss_inicial_mib": 382.3,
+        "muestras_rss": 1696,
+        "bytes_disco": 204474097,
+        "candidatos": 12739949,
+        "pares_scoreados": 195368,
+        "candidatos_por_valido": 65.2
+      },
+      "calidad": {
+        "registros": 139028,
+        "grupos_verdad": 54136,
+        "grupos_predichos": 54450,
+        "pares_verdaderos": 199415,
+        "tp": 192379,
+        "fp": 375531,
+        "fn": 7036,
+        "precision": 0.3387,
+        "recall": 0.9647,
+        "f1": 0.5014,
+        "b3_precision": 0.9584,
+        "b3_recall": 0.9768,
+        "b3_f1": 0.9675,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.8334
+        },
+        "recall_por_caso": {
+          "positivo_con_nit": 0.9869,
+          "positivo_sin_nit": 0.8333,
+          "negativo_intermediario": 1.0,
+          "negativo_generico": null
+        },
+        "fp_que_tocan_negativo": 105,
+        "calidad_por_estrato": {},
+        "macro_f1": null
+      },
+      "huella": "4c3adc1a3a9e20dc3be53526dac37698920b7be128ffe42ed0f641971ec7cb10",
+      "especificacion": {
+        "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+        "perfil": "produccion_estandar",
+        "confiables": [],
+        "variables_extra": null,
+        "ajustes_perfil": null,
+        "perfil_multicampo": null,
+        "semilla": 42
+      },
+      "dir_trabajo": null
+    }
+  }
+}

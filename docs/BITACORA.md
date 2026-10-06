@@ -1380,6 +1380,23 @@ Linux, y un bare `import tomllib` en una prueba rompía la matriz de 3.10.
 Corregidas las cuatro; la rama se abre con el CI en verde como condición de
 mezcla.
 
+### Y lo que el CI encontró después: Python 3.10 y `pathlib`
+
+El primer CI del PR dejó la matriz de 3.10 en rojo con tres pruebas de fallo
+en la frontera de commit (`DID NOT RAISE OSError`). La causa no estaba en lo
+que F0 pretendía cambiar sino en lo que pretendía no cambiar: al bajar la
+deuda de `os.path`, el trinquete había convertido dos `os.replace` de
+`ingestion/duckdb.py` en `Path.replace`. En 3.11+ `Path.replace` llama a
+`os.replace` en cada invocación; en 3.10 `pathlib` lo enlaza al importar
+(`_NormalAccessor`), así que el parche de `os.replace` con que esas pruebas
+simulan el fallo del sistema de archivos no intercepta nada. Reproducido en un
+venv 3.10 (3 fallan), corregido devolviendo los dos `os.replace` con el porqué
+en el sitio (`# noqa: PTH105`, exento del paso estricto pero contado por el
+trinquete), y la referencia de deuda vuelve a decir lo que `main` tiene:
+`os_path` 127, no 125. Lección: una «mejora» de estilo en código que no se iba
+a tocar es un cambio de comportamiento hasta que la matriz completa lo
+desmiente.
+
 ### Las líneas base (todas con prueba que las lee)
 
 | línea base | valor fijado | dónde |
@@ -1389,7 +1406,7 @@ mezcla.
 | contrato de salida v0 | 18 columnas en la correlativa, 13 en el golden, 30 archivos, claves del manifiesto, sobre el P2 de 28 filas | `tests/contratos/esquema_salida_v0.json` |
 | escala | tiempo por fase y RSS a 139.028 y 463.473 filas sintéticas; `--comparar` falla con > 10 % | `docs/evidencia/escala_base_f0.json` |
 | determinismo | dos procesos con `PYTHONHASHSEED` distinto → misma huella | `tests/test_determinismo_linkage_procesos.py` |
-| deuda técnica | techo: 11 funciones con complejidad ≥ 20 · 121 `except` sin relanzar · 180 `print` · 125 usos de `os.path` · 108 errores de mypy | `docs/evidencia/deuda_f0.json`, job `deuda` |
+| deuda técnica | techo: 11 funciones con complejidad ≥ 20 · 121 `except` sin relanzar · 180 `print` · 127 usos de `os.path` y afines (reglas PTH) · 108 errores de mypy | `docs/evidencia/deuda_f0.json`, job `deuda` |
 
 ### Dos decisiones que no eran obvias
 

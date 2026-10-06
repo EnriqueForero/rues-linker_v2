@@ -1,7 +1,7 @@
 {
   "version": "0.22.4",
-  "commit": "15008e4",
-  "fecha": "2026-10-06T04:53:24+00:00",
+  "commit": "d3ec9ae",
+  "fecha": "2026-10-06T05:42:40+00:00",
   "objetivo": "src/record_linkage",
   "herramientas": {
     "ruff": "ruff 0.15.13",
@@ -13,7 +13,7 @@
     "cc_ge_20": 11,
     "except_sin_relanzar": 121,
     "print": 180,
-    "os_path": 125,
+    "os_path": 127,
     "mypy": 108
   },
   "ubicaciones": {
@@ -22,7 +22,7 @@
       "src/record_linkage/engine/scorer.py:650",
       "src/record_linkage/flujo/cruce.py:177",
       "src/record_linkage/golden/containment.py:194",
-      "src/record_linkage/ingestion/duckdb.py:1004",
+      "src/record_linkage/ingestion/duckdb.py:1008",
       "src/record_linkage/ingestion/specs.py:169",
       "src/record_linkage/matching/inferencia.py:120",
       "src/record_linkage/pipeline/linkage_pipeline.py:788",
@@ -381,6 +381,8 @@
       "src/record_linkage/golden/generator.py:239",
       "src/record_linkage/golden/generator.py:240",
       "src/record_linkage/golden/generator.py:1455",
+      "src/record_linkage/ingestion/duckdb.py:662",
+      "src/record_linkage/ingestion/duckdb.py:1220",
       "src/record_linkage/optimization/engine.py:136",
       "src/record_linkage/optimization/engine.py:155",
       "src/record_linkage/optimization/engine.py:198",

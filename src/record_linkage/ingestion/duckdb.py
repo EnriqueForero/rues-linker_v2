@@ -655,7 +655,11 @@ def _write_manifest_atomic(
                 f"Ya existe el manifiesto autoritativo {manifest_path}; "
                 "use overwrite=True para publicar una nueva generación."
             )
-        pending.replace(manifest_path)
+        # os.replace y no Path.replace: en Python 3.10 pathlib enlaza os.replace
+        # al importar, y las pruebas de fallo en la frontera de commit (que
+        # parchean os.replace) no lo interceptarían. Se conserva hasta que la
+        # matriz deje 3.10.
+        os.replace(pending, manifest_path)  # noqa: PTH105
         _fsync_directory(manifest_path.parent)
     finally:
         _cleanup_file(pending, purpose="manifiesto pendiente")
@@ -1213,7 +1217,7 @@ class DuckDBSourceCompactor:
                 if preserve_payload and payload_columns:
                     _fsync_file(payload_pending)
                 _fsync_directory(pending_dir)
-                pending_dir.replace(generation_dir)
+                os.replace(pending_dir, generation_dir)  # noqa: PTH105 (ver _write_manifest_atomic)
                 _fsync_directory(generations_dir)
                 published_payload = payload_path if preserve_payload and payload_columns else None
                 manifest = {
