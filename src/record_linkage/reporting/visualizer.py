@@ -22,6 +22,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
+from ..pipeline.errores import ErrorPipeline
 from ..utils.logger import CustomLogger
 from ._fases import etiquetar, tiempos_por_fase
 from ._muestreo import muestra_estratificada
@@ -168,6 +169,10 @@ class DataVisualizer:
                     df = pd.read_hdf(data_ref, key=table_name)
                     return self._apply_sample_limit(df, table_name)
 
+        except ErrorPipeline:
+            # Un fallo del muestreo (reporting._muestreo) es un defecto, no un
+            # archivo ilegible: sube en vez de volverse una muestra vacía.
+            raise
         except Exception as e:
             self.logger.error(f"Error cargando datos para visualización: {e!s}")
             self.logger.debug("Stack trace:", exc_info=True)

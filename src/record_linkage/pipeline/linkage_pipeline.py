@@ -41,6 +41,7 @@ from ..utils.performance import track_performance
 # o cuando alguien solo necesita importar las clases del pipeline.
 # La disponibilidad se chequea ahora con _class_exists() en lugar de globals().
 from ._internal import DEFAULT_CONFIG, PROFILES, _class_exists as _class_is_importable
+from .errores import ErrorPipeline
 
 
 class RecordLinkagePipeline:
@@ -919,6 +920,10 @@ class RecordLinkagePipeline:
                         except Exception as e:
                             self.logger.error(f"  ✗ Error exportando {filename}: {e!s}")
 
+            except ErrorPipeline:
+                # Un error específico del pipeline (muestreo, tiempos por fase)
+                # no se convierte en una línea de log: sube al llamador.
+                raise
             except Exception as e:
                 self.logger.error(f"Error en generación de reportes: {e!s}", exc_info=True)
 
@@ -941,6 +946,8 @@ class RecordLinkagePipeline:
                 viz_dir = os.path.join(output_dir, "visualizaciones_detalladas")
                 visualizer.save_all_visualizations(viz_dir)
 
+            except ErrorPipeline:
+                raise
             except Exception as e:
                 self.logger.error(f"Error en visualizaciones: {e!s}", exc_info=True)
 
@@ -970,6 +977,8 @@ class RecordLinkagePipeline:
                     for report_type, filepath in enhanced_files.items():
                         self.logger.info(f"  - {report_type}: {os.path.basename(filepath)}")
 
+            except ErrorPipeline:
+                raise
             except Exception as e:
                 self.logger.error(f"Error en reportes mejorados: {e!s}", exc_info=True)
 
@@ -992,6 +1001,8 @@ class RecordLinkagePipeline:
                 dashboard.generate_dashboard(dashboard_path)
                 self.logger.info("  ✓ Dashboard guardado: dashboard_ejecutivo.png")
 
+            except ErrorPipeline:
+                raise
             except Exception as e:
                 self.logger.error(f"Error en dashboard ejecutivo: {e!s}", exc_info=True)
 

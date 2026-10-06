@@ -112,7 +112,9 @@ class MuestreoReportesError(ErrorPipeline):
     quedaba vacía y tres artefactos se omitían con un WARNING que nadie lee.
     Ahora la suite falla aquí: un insumo con filas que produce una muestra
     vacía, o una muestra a la que le faltan columnas del insumo, es una
-    degradación, no un caso borde.
+    degradación, no un caso borde. También la levanta directamente
+    ``reporting._muestreo.muestra_estratificada`` (``n <= 0`` o más estratos
+    que ``n``), y los cargadores de L6 la relanzan en vez de tragarla.
     """
 
     @classmethod

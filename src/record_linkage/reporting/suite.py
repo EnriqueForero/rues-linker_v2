@@ -26,7 +26,7 @@ import pandas as pd
 import seaborn as sns
 
 from ..exporters._spreadsheet import prepare_spreadsheet_data, safe_sheet_name
-from ..pipeline.errores import MuestreoReportesError
+from ..pipeline.errores import ErrorPipeline, MuestreoReportesError
 from ..utils.logger import CustomLogger
 from ._fases import MENSAJE_SIN_TIEMPOS, etiquetar, formatear_segundos, tiempos_por_fase
 from ._muestreo import muestra_estratificada
@@ -86,6 +86,8 @@ class EnhancedReportingSuite:
         # Referencias a datos
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
+        # Causa de cada carga que falló, por tabla; la compuerta la cita.
+        self._errores_carga: dict[str, str] = {}
 
         # Cargar muestras inteligentes
         self.correlative_sample = self._load_smart_sample(
@@ -202,42 +204,45 @@ class EnhancedReportingSuite:
                     # Para CSV grandes, leer solo sample
                     return pd.read_csv(data_ref, nrows=sample_size)
 
+        except ErrorPipeline:
+            # Un fallo del propio muestreo (n <= 0, más estratos que n) es un
+            # defecto del pipeline, no una carga fallida: sube tal cual.
+            raise
         except Exception as e:
             self.logger.error(f"Error cargando muestra de {table_name}: {e!s}")
-            self._anotar_error_carga(table_name, e)
+            self._errores_carga[table_name] = f"{type(e).__name__}: {e}"
 
         # Retornar DataFrame vacío si falla; _validate_data decide si eso es
         # una degradación (insumo con filas) o un insumo legítimamente vacío.
         return pd.DataFrame()
 
-    def _anotar_error_carga(self, table_name: str, error: BaseException) -> None:
-        """Guarda la causa de una carga fallida para citarla en la compuerta."""
-        errores = getattr(self, "_errores_carga", None)
-        if errores is None:
-            errores = self._errores_carga = {}
-        errores[table_name] = f"{type(error).__name__}: {error}"
-
     def _verificar_muestra(
         self, table_name: str, data_ref: pd.DataFrame | str, muestra: pd.DataFrame
     ) -> None:
-        """Falla si un insumo con filas dio muestra vacía o si se perdieron columnas."""
+        """Falla si un insumo con filas dio muestra vacía o si se perdieron columnas.
+
+        Una muestra vacía porque la carga LANZÓ (tabla ausente en el ``.db``,
+        archivo ilegible) también es degradación, aunque no se sepa cuántas
+        filas tiene el insumo: la causa registrada se cita en el mensaje.
+        """
         n_origen, columnas_origen = self._describir_insumo(data_ref, table_name)
         perdidas: list[str] = []
         if columnas_origen is not None:
             perdidas = [c for c in columnas_origen if c not in muestra.columns]
-        muestra_vacia = muestra.empty and n_origen is not None and n_origen > 0
+        muestra_vacia = muestra.empty and (
+            (n_origen is not None and n_origen > 0) or table_name in self._errores_carga
+        )
         if muestra_vacia or (perdidas and not muestra.empty):
             raise MuestreoReportesError.desde_muestra(
                 table_name,
                 n_origen=n_origen,
                 n_muestra=len(muestra),
                 columnas_perdidas=perdidas,
-                causa=getattr(self, "_errores_carga", {}).get(table_name),
+                causa=self._errores_carga.get(table_name),
             )
 
-    @staticmethod
     def _describir_insumo(
-        data_ref: pd.DataFrame | str, table_name: str
+        self, data_ref: pd.DataFrame | str, table_name: str
     ) -> tuple[int | None, list[str] | None]:
         """(filas, columnas) del insumo sin cargarlo; ``None`` donde no se puede saber."""
         if isinstance(data_ref, pd.DataFrame):
@@ -256,8 +261,13 @@ class EnhancedReportingSuite:
                 return archivo.metadata.num_rows, list(archivo.schema_arrow.names)
             if data_ref.endswith((".csv", ".csv.gz")):
                 return None, list(pd.read_csv(data_ref, nrows=0).columns)
-        except Exception:
-            # Describir el insumo es diagnóstico: si no se puede, no se juzga.
+        except Exception as e:
+            # Describir el insumo es diagnóstico: si no se puede, no se juzga,
+            # pero queda constancia de por qué.
+            self.logger.debug(
+                f"No se pudo describir el insumo '{table_name}' ({data_ref}): "
+                f"{type(e).__name__}: {e}"
+            )
             return None, None
         return None, None
 
