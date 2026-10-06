@@ -197,8 +197,8 @@ def test_flujo_productivo_propaga_config_y_preserva_payload(tmp_path: Path) -> N
         "exportador",
     }
     assert result.reportes_carga["A"]["payload_columns"] == ["segmento"]
-    metadata = json.loads(result.rutas["metadatos"].read_text(encoding="utf-8"))
-    parameters = metadata["parametros"]
+    metadata = json.loads(result.rutas["manifest"].read_text(encoding="utf-8"))
+    parameters = metadata["corrida"]["cruce"]["parametros"]
     assert parameters["modo_resultado"] == "disco"
     assert parameters["preservar_payload"] is True
     assert parameters["limite_filas"] == {"B": 1}

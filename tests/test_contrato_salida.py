@@ -1,10 +1,13 @@
-"""Contrato de salida 1.0 (F1.9): ``linkage()``, ``dedupe()`` y ``link()`` lo cumplen.
+"""Contrato de salida 1.0 (F1.9): ``linkage()``, ``dedupe()``, ``link()`` y
+``flujo.cruce`` (F2.5, en modo dataframe y en modo disco) lo cumplen.
 
 Qué congela
 -----------
 Sobre un conjunto sintético inventado (64 filas, dos fuentes, duplicados
 CON_NIT y SIN_NIT, una fuente con su propia columna ``ID_REGISTRO`` y una
-columna extra del usuario), para las tres fachadas:
+columna extra del usuario), para las tres fachadas y los dos modos del cruce
+(el de disco se lee de vuelta con ``leer_resultado`` desde la generación
+publicada, que tiene la forma del estándar):
 
 * esquema y orden de las columnas fijas de la correlativa y del golden;
 * tipos (enteros, booleanos, decimales, texto);
@@ -37,7 +40,9 @@ import pyarrow as pa
 import pytest
 
 import record_linkage as rl
-from record_linkage import contrato
+from record_linkage import ColumnType, SourceSpec, contrato
+from record_linkage.exporters.escritor import leer_resultado
+from record_linkage.flujo import ConfigCruce, ejecutar_cruce
 from record_linkage.matching.identificadores import bases_validas
 from record_linkage.pipeline.errores import ContratoSalidaError
 from record_linkage.resultado import ReporteValidacion, ResultadoLinkage
@@ -210,7 +215,68 @@ def res_dedupe(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
         return rl.dedupe(df, output_dir=str(tmp_path_factory.mktemp("dedupe")))
 
 
-@pytest.fixture(params=["linkage", "link", "dedupe"])
+def _fuentes_cruce(carpeta: Path) -> list[SourceSpec]:
+    """El mismo conjunto sintético, como archivos CSV con contrato de fuente.
+
+    Sin ``col_id`` (``flujo.cruce`` no lo expone): ``ID_REGISTRO`` sale como
+    ``<SRC>-F<fila>``; ``CODIGO`` y la ``ID_REGISTRO`` propia de ADUANAS no se
+    piden y no se cargan. ``CIUDAD`` y ``SECTOR`` viajan como columnas de
+    arrastre (pandas las separa y re-adjunta; DuckDB las lleva en el payload).
+    """
+    especificaciones: list[SourceSpec] = []
+    for nombre, df in conjunto_sintetico().items():
+        ruta = carpeta / f"{nombre.lower()}.csv"
+        df.to_csv(ruta, index=False)
+        especificaciones.append(
+            SourceSpec(
+                name=nombre,
+                path=ruta,
+                column_mapping={"NIT": "NIT", "RAZON_SOCIAL": "RAZON_SOCIAL"},
+                passthrough_columns=("CIUDAD", "SECTOR"),
+                delimiter=",",
+                column_types={"NIT": ColumnType.IDENTIFIER},
+            )
+        )
+    return especificaciones
+
+
+def _config_cruce(carpeta: Path, **extra: Any) -> ConfigCruce:
+    return ConfigCruce(
+        fuentes=_fuentes_cruce(carpeta),
+        workspace=carpeta / "salida",
+        dir_trabajo=carpeta / "trabajo",
+        filas_smoke=0,
+        exportar_excel=False,
+        **extra,
+    )
+
+
+@pytest.fixture(scope="module")
+def res_cruce(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    """``ejecutar_cruce`` en modo dataframe devuelve el ``ResultadoLinkage`` (F2.5)."""
+    with _silencio():
+        return ejecutar_cruce(_config_cruce(tmp_path_factory.mktemp("cruce")))
+
+
+@pytest.fixture(scope="module")
+def res_cruce_disco(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    """En modo disco la generación publicada ES una carpeta del estándar: se lee
+    de vuelta con ``leer_resultado`` (``ResultadoCruceDisco.leer()``; la
+    correlativa nunca se materializa en el flujo; aquí sí, son 64 filas)."""
+    with _silencio():
+        resultado = ejecutar_cruce(
+            _config_cruce(
+                tmp_path_factory.mktemp("cruce_disco"),
+                motor_ingesta="duckdb",
+                modo_resultado="disco",
+            )
+        )
+    leido = resultado.leer()
+    assert leido.correlativa.equals(leer_resultado(resultado.carpeta).correlativa)
+    return leido
+
+
+@pytest.fixture(params=["linkage", "link", "dedupe", "cruce", "cruce_disco"])
 def resultado(request: pytest.FixtureRequest) -> ResultadoLinkage:
     return request.getfixturevalue(f"res_{request.param}")
 
