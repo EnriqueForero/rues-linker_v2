@@ -222,10 +222,22 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
 def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_path: Path) -> None:
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     ids = pd.read_parquet(man.carpeta / "entidades_ids.parquet")
-    assert list(ids.columns) == ["ID_ENTIDAD", "ID_GRUPO", "N_REGISTROS", "RETIRADO_EN"]
+    assert list(ids.columns) == [
+        "ID_ENTIDAD",
+        "ID_GRUPO",
+        "N_REGISTROS",
+        "RETIRADO_EN",
+        "REGISTROS",
+    ]
     assert len(ids) == res.correlativa["ID_GRUPO"].nunique()
     assert ids["ID_ENTIDAD"].is_unique and ids["ID_GRUPO"].is_unique
     assert ids["RETIRADO_EN"].isna().all()
+    # F2.4: los ID_REGISTRO de cada entidad, ordenados, para que la corrida
+    # siguiente herede por solapamiento (corrida_anterior=).
+    registros = res.correlativa.groupby("ID_GRUPO")["ID_REGISTRO"].agg(
+        lambda s: "|".join(sorted(s))
+    )
+    assert ids.set_index("ID_GRUPO")["REGISTROS"].sort_index().tolist() == registros.tolist()
     assert int(ids["N_REGISTROS"].sum()) == len(res.correlativa)
     esperado = res.correlativa.groupby("ID_GRUPO").size()
     assert ids.set_index("ID_GRUPO")["N_REGISTROS"].sort_index().tolist() == esperado.tolist()

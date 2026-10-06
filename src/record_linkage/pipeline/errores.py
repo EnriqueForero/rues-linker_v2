@@ -481,3 +481,14 @@ class ColumnasTecnicasError(ErrorPipeline):
     y levanta esto cuando no hay de dónde (sin ``dir_trabajo``, sin parquet,
     sin la columna pedida) o cuando no puede alinearlas sin adivinar.
     """
+
+
+class CorridaAnteriorError(ErrorPipeline):
+    """La corrida anterior (``corrida_anterior=``) no sirve para heredar ``ID_ENTIDAD``.
+
+    La levanta ``identidad.estable`` (F2.4) ANTES de L1 cuando la ruta no
+    existe, no contiene ``entidades_ids.parquet`` o ese crosswalk no trae la
+    columna ``REGISTROS`` (lo escribió una versión anterior a F2.4 y no dice
+    qué ``ID_REGISTRO`` tenía cada entidad: sin eso no hay solapamiento que
+    medir). Fallar antes de correr evita descubrirlo tras L1…L5.
+    """

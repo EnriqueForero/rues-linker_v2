@@ -304,6 +304,7 @@ def linkage(
     col_id: str | None = None,
     carpeta_salida: Path | None = None,
     nombre: str = "linkage",
+    corrida_anterior: Path | str | None = None,
 ) -> ResultadoLinkage:
     """Ejecuta deduplicación + record linkage multi-fuente en una sola llamada.
 
@@ -382,6 +383,14 @@ def linkage(
             ``VERSION_RETIRO_ALIAS_V1``).
         nombre: cierra el nombre de la carpeta del estándar; un nombre simple
             (sin separadores). Default ``"linkage"``.
+        corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
+            de la corrida previa desde la que los grupos SIN identificador
+            heredan su ``ID_ENTIDAD`` (``ENT-…``) por mayor solapamiento de
+            ``ID_REGISTRO`` (``identidad.estable``, F2.4, ADR-0012). Se valida
+            ANTES de L1 (``CorridaAnteriorError`` si no sirve). El manifiesto
+            declara la ruta y la huella usadas (``completar.id_entidad.herencia``)
+            y el crosswalk nuevo lleva los retiros (``RETIRADO_EN``). Sin ella
+            los ``ENT-…`` son nuevos y deterministas por contenido.
 
     Returns:
         ``ResultadoLinkage`` (contrato 1.0, ``record_linkage.contrato``), ya
@@ -435,10 +444,13 @@ def linkage(
     from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
     from .exporters.escritor import carpeta_pendiente, escribir_resultado
+    from .identidad.estable import cargar_corrida_anterior
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
         raise TypeError("consume_sources=True requiere sources como dict mutable")
+    # Falla AHORA si la corrida anterior no sirve para heredar, no tras L1…L5.
+    anterior = cargar_corrida_anterior(corrida_anterior) if corrida_anterior is not None else None
     if carpeta_salida is not None:
         # Falla AHORA si el nombre no sirve, no después de L1…L5.
         pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
@@ -479,6 +491,7 @@ def linkage(
             "matcher_max_pairs": matcher_max_pairs,
             "skip_reporting": skip_reporting,
             "collapse_exact_duplicates": collapse_exact_duplicates,
+            "corrida_anterior": str(corrida_anterior) if corrida_anterior is not None else None,
         },
         sources,
     )
@@ -630,6 +643,7 @@ def linkage(
         canonicos=canonicos,
         score_par_previo=info_score_par,
         prioridad_fuentes=orchestrator.prioridad_fuentes,
+        corrida_anterior=anterior,
     )
     # F1.12: los parámetros EFECTIVOS del motor (perfil con sus overrides,
     # LSH, scoring, pesos y la prioridad real del golden) van al manifiesto;
@@ -739,6 +753,7 @@ def _armar_resultado(
         revision=revision,
         diccionario=diccionario,
         dir_trabajo=dir_trabajo,
+        entidades_ids=reporte.entidades_ids,
     )
     resultado.validar(estricto=True)
     return resultado

@@ -117,6 +117,9 @@ class ResultadoLinkage:
         metricas: conteos de la corrida y estadísticas del pipeline.
         dir_trabajo: carpeta con L1…L5 (``_trabajo/``), donde quedan las
             columnas técnicas que salen del entregable.
+        entidades_ids: crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la corrida con
+            los retiros (``identidad.estable``, F2.4); None si la ruta no lo
+            calculó (el escritor lo deriva de la correlativa, sin retiros).
     """
 
     correlativa: pd.DataFrame
@@ -127,6 +130,7 @@ class ResultadoLinkage:
     revision: pd.DataFrame = field(default_factory=contrato.revision_vacia)
     diccionario: pd.DataFrame = field(default_factory=_diccionario_vacio)
     dir_trabajo: Path | None = None
+    entidades_ids: pd.DataFrame | None = None
 
     # ── Resumen ──────────────────────────────────────────────────────────
     def resumen(self) -> str:

@@ -25,8 +25,9 @@ Decisiones (plan F1, no se discuten aquí)
 * ``golden/columnas_finales.py`` importa sus cuatro columnas DESDE aquí (una
   regla escrita una vez); nunca al revés, para no crear ciclos.
 * ``entidades_ids`` (F1.10) es el crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la
-  corrida que ``exporters/escritor.py`` deja en la carpeta; ``RETIRADO_EN``
-  queda vacío hasta que F2.4 añada la herencia entre corridas.
+  corrida que ``exporters/escritor.py`` deja en la carpeta; desde F2.4 trae
+  ``REGISTROS`` (los ``ID_REGISTRO`` de la entidad) y ``RETIRADO_EN`` (el id
+  sobreviviente de una entidad retirada): ``identidad/estable.py``.
 
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.23.0
 """
@@ -334,8 +335,9 @@ REVISION: tuple[ColumnaContrato, ...] = (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Entidades_ids: crosswalk ID_ENTIDAD ↔ ID_GRUPO de la corrida (F1.10). La
-# herencia entre corridas (RETIRADO_EN → sobreviviente) la añade F2.4.
+# Entidades_ids: crosswalk ID_ENTIDAD ↔ ID_GRUPO de la corrida (F1.10) con la
+# herencia entre corridas de F2.4 (identidad/estable.py, ADR-0012): REGISTROS
+# para medir el solapamiento y RETIRADO_EN → sobreviviente.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ENTIDADES_IDS: tuple[ColumnaContrato, ...] = (
@@ -350,9 +352,17 @@ ENTIDADES_IDS: tuple[ColumnaContrato, ...] = (
     _c(
         "RETIRADO_EN",
         pa.string(),
-        "ID_ENTIDAD sobreviviente si esta entidad se fusionó con otra en una corrida "
-        "posterior; vacío en la corrida que la crea (F2.4 lo llena).",
+        "ID_ENTIDAD sobreviviente si esta entidad se retiró (se fusionó con otra o el "
+        "grupo adoptó un identificador); vacío si la entidad está activa en esta corrida.",
         "RETIRADO_EN",
+    ),
+    _c(
+        "REGISTROS",
+        pa.string(),
+        "ID_REGISTRO de la entidad en esta corrida, ordenados y separados por '|': lo que "
+        "la corrida siguiente usa para heredar el ID_ENTIDAD (corrida_anterior=); vacío "
+        "en las retiradas.",
+        "REGISTROS",
     ),
 )
 
