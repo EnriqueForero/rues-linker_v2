@@ -1,17 +1,19 @@
 {
   "version": "0.22.4",
-  "commit": "33827cc",
-  "fecha": "2026-10-06T04:33:38+00:00",
+  "commit": "15008e4",
+  "fecha": "2026-10-06T04:53:24+00:00",
   "objetivo": "src/record_linkage",
   "herramientas": {
     "ruff": "ruff 0.15.13",
-    "mypy": "mypy 1.20.2 (compiled: yes)"
+    "mypy": "mypy 1.20.2 (compiled: yes)",
+    "pandas": "3.0.6",
+    "pandas-stubs": "3.0.5.260914"
   },
   "conteos": {
     "cc_ge_20": 11,
     "except_sin_relanzar": 121,
-    "print": 179,
-    "os_path": 127,
+    "print": 180,
+    "os_path": 125,
     "mypy": 108
   },
   "ubicaciones": {
@@ -20,7 +22,7 @@
       "src/record_linkage/engine/scorer.py:650",
       "src/record_linkage/flujo/cruce.py:177",
       "src/record_linkage/golden/containment.py:194",
-      "src/record_linkage/ingestion/duckdb.py:1000",
+      "src/record_linkage/ingestion/duckdb.py:1004",
       "src/record_linkage/ingestion/specs.py:169",
       "src/record_linkage/matching/inferencia.py:120",
       "src/record_linkage/pipeline/linkage_pipeline.py:788",
@@ -323,6 +325,7 @@
       "src/record_linkage/utils/memory.py:282",
       "src/record_linkage/utils/memory.py:447",
       "src/record_linkage/utils/memory.py:465",
+      "src/record_linkage/utils/output.py:50",
       "src/record_linkage/utils/timer.py:32",
       "src/record_linkage/utils/timer.py:40",
       "src/record_linkage/utils/timer.py:65",
@@ -378,8 +381,6 @@
       "src/record_linkage/golden/generator.py:239",
       "src/record_linkage/golden/generator.py:240",
       "src/record_linkage/golden/generator.py:1455",
-      "src/record_linkage/ingestion/duckdb.py:658",
-      "src/record_linkage/ingestion/duckdb.py:1212",
       "src/record_linkage/optimization/engine.py:136",
       "src/record_linkage/optimization/engine.py:155",
       "src/record_linkage/optimization/engine.py:198",

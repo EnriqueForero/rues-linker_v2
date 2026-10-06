@@ -27,15 +27,24 @@ Métricas
 Por qué ``print`` no se mide con ``ruff T201``
 ----------------------------------------------
 La especificación pedía T201. Medido: T201 ve 11 ``print`` en la librería y
-a ojo hay ≈184. La diferencia son los 25 módulos que hacen ``from
+a ojo hay ≈184. La diferencia son los 16 módulos que hacen ``from
 ..utils.output import safe_print as print``: ruff resuelve el nombre al
 alias y T201 no los reporta, así que un ``print(...)`` nuevo en cualquiera
 de esos módulos pasaría sin que el trinquete lo viera. Un trinquete ciego al
 94 % de la deuda no sirve: ``print`` cuenta con ``ast`` toda llamada cuyo
-callee es el nombre ``print``, esté o no aliasado. Es un superconjunto
-estricto de T201, no depende de la resolución de nombres de ruff y sigue
-sin dependencias nuevas. (``builtins.print`` dentro de ``utils/output.py``,
-la implementación de ``safe_print``, es una llamada por atributo y no cuenta.)
+callee es el nombre ``print`` (esté o no aliasado) o el atributo
+``builtins.print`` (la implementación de ``safe_print`` en
+``utils/output.py`` y cualquier intento de esquivar el conteo por esa vía).
+Es un superconjunto de T201, no depende de la resolución de nombres de ruff
+y sigue sin dependencias nuevas.
+
+Por qué ruff corre con ``--ignore-noqa``
+----------------------------------------
+Un ``# noqa`` deliberado es legítimo para la compuerta por archivo del CI
+(«Reglas estrictas en código tocado»), pero el trinquete mide la deuda real:
+si un ``noqa`` sacara la ubicación de la referencia, bastaría anotar el
+código nuevo para que la deuda subiera sin que nadie lo viera. Una excepción
+aprobada se declara en el PR y se fija el nuevo techo con ``--escribir``.
 
 Uso
 ---
@@ -60,6 +69,7 @@ import argparse
 import ast
 import contextlib
 import functools
+import importlib.metadata
 import json
 import re
 import shutil
@@ -159,6 +169,28 @@ def _version_herramienta(modulo: str) -> str:
     return salida.stdout.strip().splitlines()[0] if salida.stdout.strip() else "desconocida"
 
 
+def version_instalada(distribucion: str) -> str:
+    """Versión instalada de una distribución (``pandas-stubs``) o «no instalada»."""
+    try:
+        return importlib.metadata.version(distribucion)
+    except importlib.metadata.PackageNotFoundError:
+        return "no instalada"
+
+
+#: Distribuciones cuya versión mueve el conteo de mypy aunque el código no cambie.
+DISTRIBUCIONES_QUE_MUEVEN_MYPY = ("pandas", "pandas-stubs")
+
+
+def herramientas(medicion: Medicion) -> dict[str, str]:
+    """Versiones con las que se midió: ruff, mypy (si corrió) y lo que mueve a mypy."""
+    versiones = {
+        "ruff": _version_herramienta("ruff"),
+        "mypy": _version_herramienta("mypy") if "mypy" in medicion.conteos else "no medido",
+    }
+    versiones.update({d: version_instalada(d) for d in DISTRIBUCIONES_QUE_MUEVEN_MYPY})
+    return versiones
+
+
 # ---------------------------------------------------------------------------
 # Ubicaciones
 # ---------------------------------------------------------------------------
@@ -196,10 +228,12 @@ def ubicaciones_ruff(
     """Ubicaciones únicas ``archivo:línea`` que reporta ``ruff --select <select>``.
 
     ``--isolated`` ignora el ``pyproject.toml`` del repositorio (sus
-    ``per-file-ignores`` silencian justamente la deuda que aquí se mide);
+    ``per-file-ignores`` silencian justamente la deuda que aquí se mide) y
+    ``--ignore-noqa`` ignora los ``# noqa`` (ver el docstring del módulo);
     ``config`` añade ajustes puntuales (``lint.mccabe.max-complexity=19``).
     """
-    comando = [*_comando("ruff"), "check", "--isolated", "--no-cache", "--exit-zero"]
+    comando = [*_comando("ruff"), "check", "--isolated", "--ignore-noqa", "--no-cache"]
+    comando += ["--exit-zero"]
     comando += ["--select", select, "--output-format", "json"]
     for ajuste in config:
         comando += ["--config", ajuste]
@@ -221,8 +255,23 @@ def ubicaciones_ruff(
     )
 
 
+def _es_llamada_a_print(nodo: ast.AST) -> bool:
+    """``print(...)`` (nombre, aliasado o no) o ``builtins.print(...)``."""
+    if not isinstance(nodo, ast.Call):
+        return False
+    callee = nodo.func
+    if isinstance(callee, ast.Name):
+        return callee.id == "print"
+    return (
+        isinstance(callee, ast.Attribute)
+        and callee.attr == "print"
+        and isinstance(callee.value, ast.Name)
+        and callee.value.id == "builtins"
+    )
+
+
 def ubicaciones_print(raiz: Path, objetivo: Path) -> list[str]:
-    """Llamadas a un nombre ``print`` (aliasado o no), por ``ast``. Ver el docstring del módulo."""
+    """Llamadas a ``print`` (nombre, aliasado o ``builtins.print``), por ``ast``."""
     encontradas: set[str] = set()
     for archivo in sorted((raiz / objetivo).rglob("*.py")):
         try:
@@ -233,11 +282,7 @@ def ubicaciones_print(raiz: Path, objetivo: Path) -> list[str]:
                 f"analizar no se puede medir; corríjalo antes de seguir."
             ) from exc
         for nodo in ast.walk(arbol):
-            if (
-                isinstance(nodo, ast.Call)
-                and isinstance(nodo.func, ast.Name)
-                and nodo.func.id == "print"
-            ):
+            if _es_llamada_a_print(nodo):
                 encontradas.add(_ubicacion(raiz, str(archivo), nodo.lineno))
     return _unicas(encontradas)
 
@@ -327,6 +372,37 @@ def _comparar_metrica(
     return False, [f"IGUAL {nombre}: {actual}{sufijo}"]
 
 
+def _lineas_herramientas(actuales: dict[str, str], de_referencia: dict[str, str]) -> list[str]:
+    """Encabezado con las versiones de cada lado y AVISO por cada una que difiera.
+
+    Un conteo de mypy que cambia sin que cambie el código suele ser una versión
+    nueva de ``pandas-stubs`` o ``pandas``; sin esto el fallo no se podría
+    diagnosticar desde el CI.
+    """
+    if not actuales and not de_referencia:
+        return []
+    nombres = (
+        [n for n in actuales if n in de_referencia]
+        + sorted(set(de_referencia) - set(actuales))
+        + [n for n in actuales if n not in de_referencia]
+    )
+    lineas = ["Herramientas (referencia → ahora):"]
+    distintas: list[str] = []
+    for nombre in nombres:
+        ref, act = de_referencia.get(nombre, "sin registrar"), actuales.get(nombre, "sin registrar")
+        lineas.append(f"   {nombre:<13} {ref} → {act}")
+        # Solo «cambió» lo que está registrado en los dos lados y difiere; una
+        # referencia anterior a que se registrara una herramienta no es un cambio.
+        if nombre in de_referencia and nombre in actuales and ref != act:
+            distintas.append(nombre)
+    if distintas:
+        lineas.append(
+            f"AVISO: cambió la versión de {', '.join(distintas)}; si un conteo se mueve sin "
+            f"que el código lo explique, esa es la causa probable."
+        )
+    return lineas
+
+
 def comparar(
     actual: dict[str, Any],
     referencia: dict[str, Any],
@@ -344,7 +420,9 @@ def comparar(
     conteos_ref = referencia.get("conteos", {})
     ubic_ref = referencia.get("ubicaciones", {})
     subio = False
-    lineas: list[str] = []
+    lineas = _lineas_herramientas(
+        actual.get("herramientas", {}), referencia.get("herramientas", {})
+    )
     orden = [m for m in METRICAS if m in conteos_act] + sorted(set(conteos_act) - set(METRICAS))
     for nombre in orden:
         if nombre not in conteos_ref:
@@ -403,10 +481,7 @@ def escribir_referencia(ruta: Path, medicion: Medicion, raiz: Path, objetivo: Pa
         "commit": _commit(raiz),
         "fecha": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "objetivo": objetivo.as_posix(),
-        "herramientas": {
-            "ruff": _version_herramienta("ruff"),
-            "mypy": _version_herramienta("mypy") if "mypy" in medicion.conteos else "no medido",
-        },
+        "herramientas": herramientas(medicion),
         **medicion.a_dict(),
     }
     ruta.parent.mkdir(parents=True, exist_ok=True)
@@ -471,9 +546,8 @@ def main(argv: list[str] | None = None) -> int:
         codigo = 0
         if args.referencia is not None:
             ruta_ref = _resolver(raiz, args.referencia)
-            veredicto = comparar(
-                medicion.a_dict(), leer_referencia(ruta_ref), args.referencia.as_posix()
-            )
+            actual = {**medicion.a_dict(), "herramientas": herramientas(medicion)}
+            veredicto = comparar(actual, leer_referencia(ruta_ref), args.referencia.as_posix())
             print(veredicto.texto)
             codigo = veredicto.codigo
         if args.escribir is not None:

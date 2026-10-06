@@ -44,10 +44,13 @@ jobs:
       # Trinquete por archivo (F0.8): la deuda heredada se tolera donde ya
       # está (pyproject silencia esas reglas), pero el código que un PR toca
       # cumple las reglas estrictas completas. Para scripts/ se excluye T201:
-      # imprimen a propósito.
+      # imprimen a propósito. Solo en pull_request: ahí la rama destino
+      # (base_ref) define «lo tocado»; en push o workflow_dispatch no hay
+      # destino y diffear contra main lintaría toda la divergencia.
       - name: Reglas estrictas en código tocado
+        if: github.event_name == 'pull_request'
         env:
-          BASE: ${{ github.base_ref || 'main' }}
+          BASE: ${{ github.base_ref }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin "$BASE"
