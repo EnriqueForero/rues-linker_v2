@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, master, develop]
   pull_request:
-    branches: [main, master, develop]
+    # 'claude/**': los PR apilados (F1 sobre F0, F2 sobre F1…) también corren
+    # el CI, con el paso estricto diffeado contra su rama base real.
+    branches: [main, master, develop, 'claude/**']
   workflow_dispatch:
 
 # Cancela jobs viejos cuando se hace un push nuevo a la misma rama.
