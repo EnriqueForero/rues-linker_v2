@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -62,11 +63,14 @@ NB06_PLANTILLA = "06_ejemplo_rues_x_exportaciones.ipynb"
 NB06_ORQUESTADOR = "06_orquestador_configurable.ipynb"
 CONTRATO = (NB01, NB02, NB03, NB04, NB05, NB06_PLANTILLA, NB06_ORQUESTADOR)
 
-#: Entornos que instalan desde Drive: fuera de Colab se sustituyen (ver módulo).
-INSTALAN_DESDE_DRIVE = (NB05, NB06_PLANTILLA)
+#: Notebooks cuya primera celda es la de entorno (instalan desde Drive o, en
+#: 01 a 04, desde GitHub si la versión no coincide): en la prueba se sustituye
+#: siempre, para que ningún notebook pueda mutar el venv ni necesitar red.
+CON_CELDA_DE_ENTORNO = tuple(n for n in CONTRATO if n != NB06_ORQUESTADOR)
 
 KERNEL_PROPIO = "rues-linker-v2"
-TIEMPO_LIMITE_S = 600
+TIEMPO_LIMITE_S = 600  # por notebook, medido alrededor de execute()
+TIEMPO_LIMITE_CELDA_S = 300  # nbclient: espera máxima por UNA celda
 
 #: Nombres que ningún notebook del contrato puede usar en código.
 NOMBRES_PROHIBIDOS = ("PipelineResult", "tabla_correlativa", "golden_records")
@@ -189,9 +193,14 @@ def test_el_notebook_declara_ruta_datos_o_variables_de_entorno(nombre: str) -> N
         assert "RUES_LINKER_DATA_DIR" in codigo
         return
     assert "RUTA_DATOS = Path(" in codigo, "falta la celda de configuración con RUTA_DATOS"
-    assert "/content" not in "\n".join(
-        ln for ln in codigo.splitlines() if ln.strip().startswith("RUTA_TRABAJO") and "drive" in ln
-    ), "el trabajo nunca va en Drive"
+    # El trabajo (checkpoints, SQLite) nunca va en Drive ni cuelga de RUTA_DATOS:
+    # se mira el código de la asignación, sin el comentario que la acompaña.
+    definiciones = [
+        ln.split("#", 1)[0] for ln in codigo.splitlines() if ln.strip().startswith("RUTA_TRABAJO")
+    ]
+    for definicion in definiciones:
+        assert "drive" not in definicion.lower(), f"el trabajo nunca va en Drive: {definicion!r}"
+        assert "RUTA_DATOS" not in definicion, f"el trabajo no cuelga de RUTA_DATOS: {definicion!r}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -390,7 +399,7 @@ def _celda_codigo(fuente: str) -> nbformat.NotebookNode:
 
 
 def _sustituir_entorno(nb: nbformat.NotebookNode, nombre: str) -> None:
-    """La celda de entorno instala desde Drive: aquí la librería ya está instalada."""
+    """La celda de entorno instala (Drive o GitHub): aquí la librería ya está instalada."""
     import record_linkage
 
     primera = next(c for c in nb.cells if c.cell_type == "code")
@@ -463,19 +472,24 @@ def test_el_notebook_corre_entero_sobre_la_sintetica(
         monkeypatch.setenv(clave, valor)
 
     nb = nbformat.read(NOTEBOOKS / nombre, as_version=4)
-    if nombre in INSTALAN_DESDE_DRIVE:
+    if nombre in CON_CELDA_DE_ENTORNO:
         _sustituir_entorno(nb, nombre)
     if nombre != NB06_ORQUESTADOR:
         _sobreescribir_rutas(nb, datos, resultados, trabajo)
 
     cliente = NotebookClient(
         nb,
-        timeout=TIEMPO_LIMITE_S,
+        timeout=TIEMPO_LIMITE_CELDA_S,
         kernel_name=_kernel(),
         allow_errors=True,
         resources={"metadata": {"path": str(tmp_path)}},
     )
+    inicio = time.monotonic()
     cliente.execute()
+    duracion = time.monotonic() - inicio
+    assert duracion <= TIEMPO_LIMITE_S, (
+        f"{nombre} tardó {duracion:.0f} s; el tope por notebook es {TIEMPO_LIMITE_S} s"
+    )
 
     errores = _errores(nb)
     assert not errores, f"{nombre} falló al ejecutarse:\n" + "\n".join(f"  - {e}" for e in errores)
