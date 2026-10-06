@@ -419,6 +419,61 @@ def test_omitidos_existe_antes_de_execute_y_omitir_no_revienta() -> None:
     assert _ExportacionDePrueba().omitidos == []
 
 
+def test_dependencia_no_disponible_se_omite_por_artefacto_declarado() -> None:
+    """La omisión por ``is_available() == False`` se registra con los patrones
+    del contrato (como hace ``_omisiones_de`` en el orquestador bajo RAM
+    crítica), no con el nombre descriptivo de la estrategia: quien lea el
+    manifiesto busca por nombre de archivo."""
+
+    class _DashboardSinDependencia(strategies.DashboardStrategy):
+        @property
+        def required_class(self) -> str:
+            return "ClaseQueNoExisteEnNingunEntorno"
+
+    estrategia = _DashboardSinDependencia()
+    assert estrategia.execute(None, logging.getLogger("prueba_l6")) == []
+    assert [o.como_dict() for o in estrategia.omitidos] == [
+        {
+            "artefacto": patron,
+            "estrategia": "_DashboardSinDependencia",
+            "motivo": "clase 'ClaseQueNoExisteEnNingunEntorno' no disponible en el entorno",
+        }
+        for patron in contrato_l6.artefactos_de(strategies.DashboardStrategy)
+    ]
+    assert estrategia.omitidos[0].artefacto == "dashboard_ejecutivo.png"
+
+    # Una estrategia que el contrato no declara sigue registrando su nombre.
+    class _AjenaSinDependencia(strategies.BaseReportingStrategy):
+        name = "analítica ajena"
+        required_class = "ClaseQueNoExisteEnNingunEntorno"
+
+        def _execute_impl(self, ctx: Any, logger: logging.Logger) -> list[Path]:
+            return []
+
+    ajena = _AjenaSinDependencia()
+    assert ajena.execute(None, logging.getLogger("prueba_l6")) == []
+    assert [o.artefacto for o in ajena.omitidos] == ["analítica ajena"]
+
+
+def test_la_omision_de_un_opcional_se_registra_una_sola_vez_en_el_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``execute`` ya avisa por cada omisión; el aviso local del TXT de
+    auditoría lo repetía con el mismo motivo."""
+    motivo = "peso de fuente no numérico (inventado)"
+
+    def _txt_roto(self: Any, path: Path, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(motivo)
+
+    monkeypatch.setattr(strategies.ConfigAuditStrategy, "_write_txt_audit", _txt_roto)
+    orq = _orquestador_parcial(tmp_path, [_ExportacionDePrueba(), strategies.ConfigAuditStrategy()])
+    with caplog.at_level(logging.WARNING, logger="prueba_l6"):
+        orq._run_L6(_datos_minimos())
+
+    avisos = [r.getMessage() for r in caplog.records if motivo in r.getMessage()]
+    assert len(avisos) == 1, avisos
+
+
 def test_obligatorios_de_filtra_los_opcionales_de_la_estrategia() -> None:
     assert contrato_l6.obligatorios_de("DataExportStrategy") == (
         "tabla_correlativa.parquet",
