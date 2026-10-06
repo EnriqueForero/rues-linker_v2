@@ -456,7 +456,8 @@ class SmartExporter:
                 "Tasa de Linkage",
                 "Tasa de Reducción",
                 "Tiempo Total (min)",
-                "Memoria Máxima (GB)",
+                # El alias heredado `max_memory_gb` viene en GiB (rss_pico_mib / 1024).
+                "Memoria Máxima (GiB)",
             ],
             "Valor": [
                 f"{metrics.get('total_records', 0):,}",

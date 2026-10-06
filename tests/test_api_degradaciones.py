@@ -38,6 +38,10 @@ def _silencio():
         yield
 
 
+def _manifiesto(work_dir: Path) -> dict:
+    return json.loads((work_dir / "manifest.json").read_text(encoding="utf-8"))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # (a) L6 postprocesado entra al manifiesto
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +67,7 @@ def test_l6_postprocesado_queda_registrado_en_manifest(tmp_path: Path) -> None:
         )
 
     assert resultado["report_files"], "L6 debe producir artefactos"
-    manifiesto = json.loads((work_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifiesto = _manifiesto(work_dir)
     assert "L6_reporting" in manifiesto, sorted(manifiesto)
     registro = manifiesto["L6_reporting"]
     assert registro["status"] == "DONE"
@@ -76,10 +80,6 @@ def test_l6_postprocesado_queda_registrado_en_manifest(tmp_path: Path) -> None:
     assert rutas_manifiesto
     # La expansión sigue intacta: una fila correlativa por fila de entrada.
     assert len(resultado["correlative"]) == len(fuente)
-
-
-def _manifiesto(work_dir: Path) -> dict:
-    return json.loads((work_dir / "manifest.json").read_text(encoding="utf-8"))
 
 
 def test_l6_postprocesado_se_regenera_en_cada_corrida(tmp_path: Path) -> None:

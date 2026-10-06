@@ -277,6 +277,69 @@ def test_casos_revision_sobre_golden_recortado_nunca_dicen_completo(correlativa,
     }
 
 
+def test_sin_casos_de_revision_sobre_una_vista_del_golden_no_se_afirma_sobre_todo(
+    correlativa, golden
+):
+    """Golden declarado como vista y ningún caso con prioridad > 20: el mensaje
+    «no hay casos» se afirma sobre la vista, con ALCANCE y registro, no sobre
+    «todos los grupos»."""
+    pocos = golden.head(50).copy()
+    pocos["CONFIDENCE_SCORE"] = 0.99
+    pocos["RECORD_COUNT"] = 1
+    metrics: dict = {"muestras": {"golden": {"n": 50, "N": N_GRUPOS, "motivo": "memoria"}}}
+    reportes = _reportes(correlativa, pocos, metrics=metrics)
+    casos = reportes["casos_revision"]
+
+    assert len(casos) == 1
+    assert "Todos los grupos" not in casos["Detalle"].iloc[0]
+    assert casos["ALCANCE"].iloc[0] == (
+        f"MUESTRA (0 de 0, sobre una vista de 50 de {N_GRUPOS} del golden)"
+    )
+    assert metrics["muestras"]["casos_revision"] == {
+        "n": 0,
+        "N": 0,
+        "golden_vista": {"n": 50, "N": N_GRUPOS},
+    }
+    # Sin vista declarada, el mismo golden sí habla de todos los grupos y sin ALCANCE.
+    sin_vista: dict = {}
+    casos = _reportes(correlativa, pocos, metrics=sin_vista)["casos_revision"]
+    assert "ALCANCE" not in casos.columns
+    assert "Todos los grupos" in casos["Detalle"].iloc[0]
+    assert "muestras" not in sin_vista
+
+
+def test_muestras_heredado_sin_recorte_desaparece_en_vez_de_quedar_vacio(correlativa, golden):
+    """Un dict de métricas de una corrida previa trae solo ``casos_revision``;
+    en esta corrida los casos caben: la clave no puede quedar como ``{}``
+    («ausente = todo completo» es el contrato de la cabecera)."""
+    pocos = golden.head(50).copy()
+    pocos["CONFIDENCE_SCORE"] = 0.4
+    metrics: dict = {"muestras": {"casos_revision": {"n": 1000, "N": 5000}}}
+    reportes = _reportes(correlativa, pocos, metrics=metrics)
+
+    assert reportes["casos_revision"]["ALCANCE"].unique().tolist() == ["COMPLETO (50 de 50)"]
+    assert "muestras" not in metrics
+
+
+def test_total_registros_cuenta_las_filas_con_id_grupo_nulo(golden):
+    """``groupby("ID_GRUPO").size()`` descarta los NaN de la clave: el resumen
+    decía 3 y analisis_fuentes 4 sobre la misma correlativa. El total es el de
+    la correlativa COMPLETA, igual que la suma por fuente."""
+    correlativa = pd.DataFrame(
+        {
+            "ID_GRUPO": pd.array([1, 1, 2, None], dtype="Int64"),
+            "SRC": ["A", "B", "A", "B"],
+        }
+    )
+    reportes = _reportes(correlativa, golden.head(2))
+    resumen = reportes["resumen_ejecutivo"]
+    fuentes = reportes["analisis_fuentes"]
+
+    assert _valor_resumen(resumen, "Total Registros Procesados") == "4"
+    assert int(fuentes["Total_Registros"].sum()) == 4
+    assert _valor_resumen(resumen, "Entidades Únicas Identificadas") == "2"
+
+
 @pytest.mark.parametrize("tope", [-5, 0, 2.5, "1000"])
 def test_tope_de_casos_revision_invalido_falla_rapido(correlativa, golden, tope):
     with pytest.raises(ValueError, match="report_max_casos_revision") as exc:
@@ -443,7 +506,8 @@ def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: 
 
     orquestador = object.__new__(Orchestrator)
     orquestador.config = {"reporting_use_checkpoints": False}
-    orquestador.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
+    # Directorios de todas las fases (vacíos): _build_metrics cuenta en L2/L3.
+    orquestador.dirs = {p: tmp_path / p.value for p in Phase}
     orquestador._start_time = 1.0
     orquestador._phase_times = {}
     orquestador._meta_extra = {}

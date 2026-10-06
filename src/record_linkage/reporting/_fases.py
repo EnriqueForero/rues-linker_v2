@@ -23,6 +23,8 @@ from collections.abc import Mapping
 from numbers import Real
 from typing import Any
 
+from ..pipeline.errores import TiemposPorFaseError, mensaje_accionable
+
 #: Etiqueta humana de cada fase, en el orden de ejecución L1 → L6.
 #: Las claves son los ``Phase.value`` de ``reporting.strategies``; se escriben
 #: literales porque ``strategies`` importa ``reports`` y ``reports`` importa
@@ -49,10 +51,11 @@ def tiempos_por_fase(metrics: Mapping[str, Any] | None) -> dict[str, float]:
     completa: si falta ``phase_times`` o viene vacío, devuelve ``{}``.
 
     Raises:
-        TypeError: si ``phase_times`` no es un mapeo o un valor no es numérico.
-        ValueError: si una clave no está en :data:`ETIQUETAS_FASE` (una fase
-            nueva sin etiqueta, o un consumidor que sigue usando nombres
-            viejos): se añade a ``ETIQUETAS_FASE`` en vez de ignorarla.
+        TiemposPorFaseError: si ``phase_times`` no es un mapeo, si una clave no
+            está en :data:`ETIQUETAS_FASE` (una fase nueva sin etiqueta, o un
+            productor que sigue usando nombres viejos: se añade a
+            ``ETIQUETAS_FASE`` en vez de ignorarla) o si un valor no es
+            numérico. Es un ``ErrorPipeline``: los consumidores lo relanzan.
     """
     if not metrics:
         return {}
@@ -60,18 +63,26 @@ def tiempos_por_fase(metrics: Mapping[str, Any] | None) -> dict[str, float]:
     if crudos is None:
         return {}
     if not isinstance(crudos, Mapping):
-        raise TypeError(
-            f"metrics['phase_times'] debe ser un mapeo fase → segundos y llegó "
-            f"{type(crudos).__name__}. Sin él los reportes de L6 no pueden mostrar "
-            "tiempos por fase. Revise quién construyó `metrics` (_build_metrics)."
+        raise TiemposPorFaseError(
+            mensaje_accionable(
+                f"metrics['phase_times'] debe ser un mapeo fase → segundos y llegó "
+                f"{type(crudos).__name__}.",
+                "sin él los reportes de L6 no pueden mostrar tiempos por fase.",
+                "revise quién construyó `metrics` (Orchestrator._build_metrics).",
+            )
         )
     desconocidas = sorted(set(crudos) - set(ETIQUETAS_FASE))
     if desconocidas:
-        raise ValueError(
-            f"Fases sin etiqueta en phase_times: {desconocidas}. Las fases conocidas son "
-            f"{list(ETIQUETAS_FASE)}. Si es una fase nueva, añádala a "
-            "record_linkage.reporting._fases.ETIQUETAS_FASE; si es un nombre viejo "
-            "(load_validate, scoring_time…), el productor debe usar las claves de Phase."
+        raise TiemposPorFaseError(
+            mensaje_accionable(
+                f"fases sin etiqueta en phase_times: {desconocidas}; las conocidas son "
+                f"{list(ETIQUETAS_FASE)}.",
+                "ignorarlas dejaría fuera del reporte un tiempo que sí se midió, o "
+                "entraría un nombre que nadie cronometra.",
+                "si es una fase nueva, añádala a record_linkage.reporting._fases."
+                "ETIQUETAS_FASE; si es un nombre viejo (load_validate, scoring_time…), "
+                "el productor debe usar las claves de Phase.",
+            )
         )
     salida: dict[str, float] = {}
     for clave in ETIQUETAS_FASE:
@@ -79,9 +90,13 @@ def tiempos_por_fase(metrics: Mapping[str, Any] | None) -> dict[str, float]:
             continue
         valor = crudos[clave]
         if isinstance(valor, bool) or not isinstance(valor, Real):
-            raise TypeError(
-                f"phase_times['{clave}'] debe ser un número de segundos y llegó "
-                f"{valor!r} ({type(valor).__name__})."
+            raise TiemposPorFaseError(
+                mensaje_accionable(
+                    f"phase_times['{clave}'] debe ser un número de segundos y llegó "
+                    f"{valor!r} ({type(valor).__name__}).",
+                    "un tiempo que no es número no se puede sumar, graficar ni comparar.",
+                    "revise quién construyó `metrics` (Orchestrator._build_metrics).",
+                )
             )
         salida[clave] = float(valor)
     return salida

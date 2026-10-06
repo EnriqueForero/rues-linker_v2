@@ -860,11 +860,10 @@ class ExecutiveDashboard:
         # Agregar línea de tiempo total
         ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
         if total > 0:
-            total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
             ax.text(
                 total,
                 len(phase_series) - 0.5,
-                f"Total: {total_str}",
+                f"Total: {formatear_segundos(total)}",
                 ha="right",
                 va="center",
                 fontsize=9,
@@ -1341,9 +1340,10 @@ class ExecutiveDashboard:
             metrics.append(f"🔷 Clusters creados: {clusters:,}")
 
         # Memoria máxima
+        # El alias heredado `max_memory_gb` viene en GiB (rss_pico_mib / 1024).
         max_memory = self.metrics.get("max_memory_gb", 0)
         if max_memory > 0:
-            metrics.append(f"💾 Memoria máxima: {max_memory:.1f} GB")
+            metrics.append(f"💾 Memoria máxima: {max_memory:.1f} GiB")
 
         # Velocidad por fase (tiempos reales de L2 y L3, F1.6)
         phase_speeds = []

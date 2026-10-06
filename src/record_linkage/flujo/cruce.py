@@ -32,7 +32,12 @@ import pandas as pd
 
 from .. import contrato
 from ..api import linkage
-from ..golden.columnas_finales import COLUMNAS_FINALES, faltantes, faltantes_en
+from ..golden.columnas_finales import (
+    COLUMNAS_FINALES,
+    POR_QUE_IMPORTA_SIN_IDENTIDAD,
+    faltantes,
+    faltantes_en,
+)
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -179,8 +184,11 @@ class ConfigCruce:
     def __post_init__(self) -> None:
         if not self.fuentes:
             raise ValueError(
-                "Qué pasó: ConfigCruce.fuentes está vacío. Por qué importa: no "
-                "hay nada que cruzar. Qué hacer: declare al menos un SourceSpec."
+                mensaje_accionable(
+                    "ConfigCruce.fuentes está vacío.",
+                    "no hay nada que cruzar.",
+                    "declare al menos un SourceSpec.",
+                )
             )
         nombres = [f.name for f in self.fuentes]
         if len(set(nombres)) != len(nombres):
@@ -266,9 +274,12 @@ class ConfigCruce:
         desconocidas = self.confiables - set(nombres)
         if desconocidas:
             raise ValueError(
-                f"Qué pasó: 'confiables' nombra fuentes inexistentes "
-                f"{sorted(desconocidas)}. Qué hacer: use exactamente los "
-                f"nombres declarados: {sorted(nombres)}."
+                mensaje_accionable(
+                    f"'confiables' nombra fuentes inexistentes {sorted(desconocidas)}.",
+                    "la política de fuentes confiables se aplicaría a un nombre que no "
+                    "existe y ninguna fuente real la recibiría.",
+                    f"use exactamente los nombres declarados: {sorted(nombres)}.",
+                )
             )
         if self.dir_trabajo is None:
             # Nunca usar Drive como disco de trabajo: los checkpoints SQLite
@@ -1149,10 +1160,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
             else ""
         )
         raise FileNotFoundError(
-            f"Qué pasó: la fuente '{spec.name}' apunta a '{ruta}', que no existe, "
-            f"y no hay caché reutilizable. Por qué importa: el preflight corta aquí "
-            f"para no fallar dentro de una corrida de horas. Qué hacer: revise la "
-            f"ruta y, en Colab, que Drive esté montado.{detalle_motor}"
+            mensaje_accionable(
+                f"la fuente '{spec.name}' apunta a '{ruta}', que no existe, y no hay "
+                "caché reutilizable.",
+                "el preflight corta aquí para no fallar dentro de una corrida de horas.",
+                f"revise la ruta y, en Colab, que Drive esté montado.{detalle_motor}",
+            )
         )
     config.ruta_workspace.mkdir(parents=True, exist_ok=True)
     config.ruta_trabajo.mkdir(parents=True, exist_ok=True)
@@ -1162,8 +1175,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
         testigo.unlink()
     except OSError as exc:
         raise PermissionError(
-            f"Qué pasó: no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}). "
-            f"Qué hacer: elija otra carpeta o verifique el montaje de Drive."
+            mensaje_accionable(
+                f"no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}).",
+                "sin un workspace escribible la corrida no puede guardar resultados ni "
+                "checkpoints y moriría a mitad de camino.",
+                "elija otra carpeta o verifique el montaje de Drive.",
+            )
         ) from exc
     log.info(f"   ✅ Preflight: {len(config.fuentes)} fuentes, workspace escribible")
 
@@ -1574,8 +1591,13 @@ def _separar_columnas_extra(
     return rutas, union, longitudes
 
 
+#: Motivo (global) de una columna pedida cuyo nombre lo produce el motor. Es
+#: neutral respecto del camino: con separación la de la fuente queda fuera y
+#: no se adjunta; sin separación viajó por el motor y este la pisó. En ambos
+#: prevalece la del motor y la de la fuente no se entrega.
 MOTIVO_CHOQUE_CON_MOTOR = (
-    "choca con una columna que produce el motor; la de la fuente no se pisa y no se adjunta"
+    "choca con una columna que produce el motor; prevalece la del motor y la de la "
+    "fuente no se entrega"
 )
 
 #: Motivo (DuckDB) de una columna no-matcher que la fuente sí produjo y no se
@@ -1591,16 +1613,6 @@ def motivo_fuente_sin_columna(origen: str) -> str:
     """Motivo documentado 1: la fuente no trae la columna de origen pedida."""
     return f"{PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA} {origen!r} pedida en optional_column_mapping"
 
-
-#: Remedio de :class:`ColumnasArrastreError` cuando la ENTREGA no trae una
-#: columna que la fuente aportó (DuckDB o ``separar_columnas_extra=False``):
-#: ahí no hay parquets derramados que realinear ni separación que desactivar.
-QUE_HACER_ENTREGA_INCOMPLETA = (
-    "no use este resultado; revise el registro de la fase L5 y de la publicación "
-    "para ver dónde se perdió la columna; si usa DuckDB, verifique "
-    "`payload_columns` en el manifiesto de ingesta (`ingesta_duckdb/`) y, si "
-    "se repite, reporte el caso con el manifiesto y el registro de la corrida"
-)
 
 #: Columnas que el motor ESCRIBE en la correlativa, además de sus entradas
 #: (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False`` las
@@ -1659,11 +1671,12 @@ class ReporteColumnasArrastre:
                columna en ``adjuntadas`` si otra fuente sí la trae: para la
                fuente que no la tiene, la petición no se cumplió y se dice;
             2. global, :data:`MOTIVO_CHOQUE_CON_MOTOR`: la fuente SÍ la trae,
-               pero el motor produce una columna con ese nombre y la del motor
-               no se pisa (F1 la renombrará ``<col>_FUENTE`` cuando entre el
-               contrato de salida; hasta entonces queda declarada aquí). Con
-               ``separar_columnas_extra=False`` el motor sí la pisó: también
-               se declara choque, nunca «adjuntada»;
+               pero el motor produce una columna con ese nombre y prevalece
+               la del motor (F1 la renombrará ``<col>_FUENTE`` cuando entre
+               el contrato de salida; hasta entonces queda declarada aquí).
+               Con separación la de la fuente queda fuera; con
+               ``separar_columnas_extra=False`` viajó por el motor y este la
+               pisó: en ambos casos se declara choque, nunca «adjuntada»;
             3. por fuente, :data:`MOTIVO_SIN_PAYLOAD` (solo DuckDB): la fuente
                la produjo y ``preservar_payload=False`` la dejó fuera.
 
@@ -1728,7 +1741,7 @@ def _reporte_arrastre_observado(
     columnas_motor: Iterable[str],
     omitidas_ingesta: Sequence[ColumnaOmitida],
     *,
-    que_hacer: str = QUE_HACER_ENTREGA_INCOMPLETA,
+    que_hacer: str = ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA,
 ) -> ReporteColumnasArrastre:
     """Deriva el reporte de la correlativa ENTREGADA; es la misma regla en los
     tres caminos.
@@ -1743,8 +1756,9 @@ def _reporte_arrastre_observado(
         omitidas_ingesta: lo que el lector (o el compactador) declaró ausente
             por fuente.
         que_hacer: remedio del error; por defecto el de la entrega
-            (:data:`QUE_HACER_ENTREGA_INCOMPLETA`). El camino con parquets
-            derramados pasa el de la alineación.
+            (:attr:`ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA`). El
+            camino con parquets derramados pasa el de la alineación
+            (:attr:`ColumnasArrastreError.QUE_HACER_POR_DEFECTO`).
 
     Raises:
         ColumnasArrastreError: si una esperada que no choca con el motor no
@@ -1789,8 +1803,8 @@ def _adjuntar_columnas_extra(
     derramada no tiene las filas de su fuente, si la unión no tiene las de la
     correlativa o si falta ``ORIGINAL_INDEX``, levanta
     :class:`~record_linkage.pipeline.errores.ColumnasArrastreError`. Un
-    choque de nombre con una columna que ya produjo el motor no se pisa:
-    queda en ``omitidas`` con :data:`MOTIVO_CHOQUE_CON_MOTOR`.
+    choque de nombre con una columna que ya produjo el motor no pisa la del
+    motor: queda en ``omitidas`` con :data:`MOTIVO_CHOQUE_CON_MOTOR`.
 
     Args:
         omitidas_ingesta: lo que el lector declaró ausente por fuente
@@ -1865,9 +1879,11 @@ def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, espe
     """Falla ruidosamente si el resultado viola una garantía estructural."""
     if len(correlativa) != esperadas:
         raise RuntimeError(
-            f"Qué pasó: la correlativa trae {len(correlativa):,} filas y entraron "
-            f"{esperadas:,}. Por qué importa: el cruce debe conservar TODAS las filas "
-            f"de entrada. Qué hacer: no use este resultado; reporte el caso."
+            mensaje_accionable(
+                f"la correlativa trae {len(correlativa):,} filas y entraron {esperadas:,}.",
+                "el cruce debe conservar TODAS las filas de entrada.",
+                "no use este resultado; reporte el caso.",
+            )
         )
     if correlativa["ID_GRUPO"].isna().any():
         raise RuntimeError("Hay filas sin ID_GRUPO: resultado inutilizable.")
@@ -1884,12 +1900,12 @@ def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, espe
     ausentes = faltantes(correlativa)
     if ausentes:
         raise RuntimeError(
-            f"Qué pasó: la correlativa salió sin {list(ausentes)}. Por qué "
-            f"importa: sin NIT_FINAL y RAZON_SOCIAL_FINAL el resultado dice a "
-            f"qué grupo pertenece cada fila pero no qué identidad quedó para "
-            f"ese grupo, que es el entregable. Qué hacer: no use este "
-            f"resultado; revise el registro de la fase L5, donde la "
-            f"reconstrucción desde el golden debió haber ocurrido."
+            mensaje_accionable(
+                f"la correlativa salió sin {list(ausentes)}.",
+                POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                "no use este resultado; revise el registro de la fase L5, donde la "
+                "reconstrucción desde el golden debió haber ocurrido.",
+            )
         )
 
 
@@ -2199,11 +2215,11 @@ def _ejecutar_cruce_medido(
             ausentes_disco = faltantes_en(publicacion.correlativa.columns)
             if ausentes_disco:
                 raise RuntimeError(
-                    f"Qué pasó: la correlativa publicada no trae "
-                    f"{list(ausentes_disco)}. Por qué importa: sin NIT_FINAL y "
-                    f"RAZON_SOCIAL_FINAL el resultado no dice qué identidad "
-                    f"adoptó cada grupo, que es el entregable. Qué hacer: no "
-                    f"use este resultado; revise el registro de la fase L5."
+                    mensaje_accionable(
+                        f"la correlativa publicada no trae {list(ausentes_disco)}.",
+                        POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                        "no use este resultado; revise el registro de la fase L5.",
+                    )
                 )
             # F1.8 — ``publicar_resultados_duckdb`` adjunta el payload por
             # nombre y descarta sin aviso el que choca con una columna del motor:

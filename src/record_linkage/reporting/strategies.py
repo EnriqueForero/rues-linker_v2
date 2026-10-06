@@ -64,7 +64,7 @@ from ..exporters.escritor import (
 from ..pipeline._internal import _class_exists
 from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
-from .contrato_l6 import ArtefactoOmitido, es_estrategia_obligatoria
+from .contrato_l6 import ArtefactoOmitido, artefactos_de, es_estrategia_obligatoria
 from .reports import ReportGenerator
 
 # v0.7.2 (Sprint 0.8.2, Tarea 2.4): los imports de ExecutiveDashboard,
@@ -301,11 +301,14 @@ class BaseReportingStrategy(ABC):
         """
         self.omitidos = []
 
-        # Verificar dependencias
+        # Verificar dependencias. La omisión se registra por cada artefacto
+        # que la estrategia habría producido (la misma forma que usa el
+        # orquestador cuando la salta por RAM crítica): quien lea el
+        # manifiesto busca por nombre de archivo, no por nombre de estrategia.
         if not self.is_available():
             motivo = f"clase '{self.required_class}' no disponible en el entorno"
-            logger.warning(f"   ⚠️ {self.name}: {motivo}, omitiendo")
-            self.omitir(self.name, motivo)
+            for artefacto in artefactos_de(self) or (self.name,):
+                self.omitir(artefacto, motivo)
             return []
 
         try:
@@ -490,9 +493,8 @@ class DataExportStrategy(BaseReportingStrategy):
         archivo parcial y la omisión queda registrada con su motivo."""
         with contextlib.suppress(OSError):
             xlsx_path.unlink(missing_ok=True)
-        motivo = f"{type(causa).__name__}: {causa}"
-        logger.warning(f"      ⚠️ {xlsx_path.name} omitido: {motivo}")
-        self.omitir(xlsx_path.name, motivo)
+        # `execute` ya escribe un warning por cada omisión: aquí solo se registra.
+        self.omitir(xlsx_path.name, f"{type(causa).__name__}: {causa}")
 
     def _export_from_memory(
         self,
@@ -825,9 +827,8 @@ class ConfigAuditStrategy(BaseReportingStrategy):
         except Exception as e:
             with contextlib.suppress(OSError):
                 txt_path.unlink(missing_ok=True)
-            motivo = f"{type(e).__name__}: {e}"
-            logger.warning(f"      ⚠️ {txt_path.name} omitido: {motivo}")
-            self.omitir(txt_path.name, motivo)
+            # `execute` ya escribe un warning por cada omisión: aquí solo se registra.
+            self.omitir(txt_path.name, f"{type(e).__name__}: {e}")
 
         return generated
 

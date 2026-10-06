@@ -16,6 +16,7 @@ from typing import Any
 
 import pandas as pd
 
+from ..reporting._fases import ETIQUETAS_FASE, tiempos_por_fase
 from ..utils.logger import CustomLogger
 
 
@@ -83,25 +84,25 @@ class PerformanceAnalyzer:
         return analysis
 
     def _extract_time_metrics(self, results: dict[str, Any]) -> dict[str, float]:
-        """Extraer métricas de tiempo de ejecución."""
+        """Tiempos por fase EXACTAMENTE como los cronometró el orquestador.
+
+        F1.6: se leen con :func:`reporting._fases.tiempos_por_fase` (la única
+        lectura de ``metrics["phase_times"]`` en la casa) y se exponen como
+        ``<clave de fase>_time`` (``L2_lsh_candidates_time``…) con su
+        ``<clave>_time_pct``, más ``total_time`` (``execution_time`` o, si no
+        viene, la suma de las fases medidas). Las claves viejas
+        (``preprocessing_time``, ``scoring_time``…) nadie las producía: el
+        analizador leía ceros y nunca encontraba un cuello de botella.
+        """
         metrics = results.get("metrics", {})
+        por_fase = tiempos_por_fase(metrics)
+        total = metrics.get("execution_time", 0) or sum(por_fase.values())
 
-        time_metrics = {
-            "total_time": metrics.get("execution_time", 0),
-            "preprocessing_time": metrics.get("preprocessing_time", 0),
-            "candidate_generation_time": metrics.get("candidate_generation_time", 0),
-            "scoring_time": metrics.get("scoring_time", 0),
-            "clustering_time": metrics.get("clustering_time", 0),
-            "golden_records_time": metrics.get("golden_records_time", 0),
-            "export_time": metrics.get("export_time", 0),
-        }
-
-        # Calcular porcentajes
-        total = time_metrics["total_time"]
+        time_metrics: dict[str, float] = {"total_time": total}
+        time_metrics.update({f"{clave}_time": segundos for clave, segundos in por_fase.items()})
         if total > 0:
-            for key in time_metrics:
-                if key != "total_time":
-                    time_metrics[f"{key}_pct"] = (time_metrics[key] / total) * 100
+            for clave, segundos in por_fase.items():
+                time_metrics[f"{clave}_time_pct"] = (segundos / total) * 100
 
         return time_metrics
 
@@ -180,12 +181,13 @@ class PerformanceAnalyzer:
             if phase.endswith("_time") and phase != "total_time":
                 pct = (time / total_time) * 100 if total_time > 0 else 0
                 if pct > 30:
+                    clave = phase.removesuffix("_time")
                     bottlenecks.append(
-                        f"{phase.replace('_time', '').title()}: {pct:.1f}% del tiempo total"
+                        f"{ETIQUETAS_FASE.get(clave, clave)}: {pct:.1f}% del tiempo total"
                     )
 
         # Golden records es conocido por ser lento
-        if time_metrics.get("golden_records_time", 0) > 0.5 * total_time:
+        if time_metrics.get("L5_golden_time", 0) > 0.5 * total_time:
             bottlenecks.append(
                 "⚠️ Golden Records toma más del 50% del tiempo - optimización crítica"
             )
@@ -202,13 +204,13 @@ class PerformanceAnalyzer:
         recommendations = []
 
         # Basadas en tiempo
-        if time_metrics.get("golden_records_time_pct", 0) > 40:
+        if time_metrics.get("L5_golden_time_pct", 0) > 40:
             recommendations.append(
                 "🎯 Implementar procesamiento paralelo en golden records "
                 "(puede reducir tiempo en 60-70%)"
             )
 
-        if time_metrics.get("candidate_generation_time_pct", 0) > 30:
+        if time_metrics.get("L2_lsh_candidates_time_pct", 0) > 30:
             recommendations.append(
                 "🔍 Optimizar parámetros LSH: reducir permutations o aumentar threshold"
             )

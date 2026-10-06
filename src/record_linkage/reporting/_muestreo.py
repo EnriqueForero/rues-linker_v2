@@ -22,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..pipeline.errores import mensaje_accionable
+from ..pipeline.errores import MuestreoReportesError, mensaje_accionable
 
 SEMILLA_MUESTREO = 42
 """Semilla heredada de v1 (``random_state=42`` en las tres copias)."""
@@ -44,12 +44,13 @@ def muestra_estratificada(
     * si ``columna`` no existe, muestra aleatoria simple de ``n`` filas;
     * determinista para la misma ``semilla``.
 
-    Falla (``ValueError`` accionable) si ``n <= 0`` o si hay más estratos que
-    ``n``: ahí piso y tope son incompatibles y se prefiere decirlo a devolver
-    una muestra que no representa a todos los estratos.
+    Falla (:class:`MuestreoReportesError`, un ``ErrorPipeline`` que los
+    consumidores de L6 relanzan en vez de tragar) si ``n <= 0`` o si hay más
+    estratos que ``n``: ahí piso y tope son incompatibles y se prefiere decirlo
+    a devolver una muestra que no representa a todos los estratos.
     """
     if n <= 0:
-        raise ValueError(
+        raise MuestreoReportesError(
             mensaje_accionable(
                 que_paso=f"se pidió una muestra de n={n} filas",
                 por_que_importa="una muestra de tamaño cero o negativo vacía los reportes",
@@ -81,7 +82,7 @@ def _cuotas_por_estrato(tamanos: np.ndarray, n: int, columna: str) -> np.ndarray
     """Cuota de filas por estrato: proporcional, con piso 1 y suma ≤ ``n``."""
     k = len(tamanos)
     if k > n:
-        raise ValueError(
+        raise MuestreoReportesError(
             mensaje_accionable(
                 que_paso=(
                     f"la columna '{columna}' tiene {k:,} estratos (NaN incluido) y la "

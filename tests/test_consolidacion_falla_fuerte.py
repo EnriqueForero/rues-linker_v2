@@ -140,7 +140,10 @@ def test_consolidacion_sana_sigue_entregando(tmp_path):
         skip_reporting=True,
     )
     assert len(res["correlative"]) == 30
-    assert len(res["golden"]) <= 30
+    # 10 empresas x 3 variantes con el MISMO NIT: la consolidación por NIT las
+    # funde en 10 golden. `<= 30` era cierto por construcción y no probaba nada.
+    assert len(res["golden"]) == 10
+    assert res["golden"]["NIT_FINAL"].nunique() == 10
     assert _leer_manifiesto(work_dir)["L5_golden"]["status"] == "DONE"
 
 

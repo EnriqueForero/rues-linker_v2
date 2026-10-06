@@ -110,13 +110,13 @@ def test_muestra_estratificada_respeta_el_tope_con_muchos_estratos_pequenos() ->
 
 def test_muestra_estratificada_falla_si_hay_mas_estratos_que_n() -> None:
     df = pd.DataFrame({"SRC": [f"F{i}" for i in range(50)], "x": range(50)})
-    with pytest.raises(ValueError, match="Qué hacer"):
+    with pytest.raises(MuestreoReportesError, match="Qué hacer"):
         muestra_estratificada(df, "SRC", 10, semilla=42)
 
 
 def test_muestra_estratificada_n_invalido() -> None:
     df = pd.DataFrame({"SRC": ["A", "B"], "x": [1, 2]})
-    with pytest.raises(ValueError, match="Qué hacer"):
+    with pytest.raises(MuestreoReportesError, match="Qué hacer"):
         muestra_estratificada(df, "SRC", 0, semilla=42)
 
 
@@ -237,6 +237,78 @@ def test_validate_data_acepta_insumo_vacio(monkeypatch: pytest.MonkeyPatch) -> N
     vacio = pd.DataFrame(columns=["ID_GRUPO", "SRC"])
     suite = EnhancedReportingSuite(vacio, vacio, metrics={}, config={})
     assert suite.correlative_sample.empty and suite.golden_records_sample.empty
+
+
+def test_validate_data_falla_si_la_carga_lanzo_aunque_no_se_sepan_las_filas(
+    tmp_path: Path,
+) -> None:
+    """Un ``.db`` existente sin la tabla: el conteo del insumo es desconocido,
+    pero la carga lanzó ``SQLiteTableNotFoundError``; eso es degradación y la
+    compuerta la cita en vez de seguir con una muestra vacía."""
+    import sqlite3
+
+    ruta = tmp_path / "resultados.db"
+    with sqlite3.connect(ruta) as conn:
+        pd.DataFrame({"x": [1]}).to_sql("otra_tabla", conn, index=False)
+
+    with pytest.raises(MuestreoReportesError) as info:
+        EnhancedReportingSuite(str(ruta), str(ruta), metrics={}, config={})
+    texto = str(info.value)
+    assert "correlative_table" in texto
+    assert "SQLiteTableNotFoundError" in texto
+
+
+def test_suite_relanza_el_fallo_del_muestreo_en_vez_de_tragarlo(
+    golden_60k: pd.DataFrame, correlativa_60k: pd.DataFrame
+) -> None:
+    """``max_memory_mb=0`` da ``n=0``: ``muestra_estratificada`` falla con
+    MuestreoReportesError y la suite la deja subir tal cual (antes la atrapaba
+    el ``except Exception`` del cargador y la compuerta la reconstruía como
+    «muestra vacía»)."""
+    with pytest.raises(MuestreoReportesError, match="n=0"):
+        EnhancedReportingSuite(correlativa_60k, golden_60k, metrics={}, config={}, max_memory_mb=0)
+
+
+def test_visualizer_relanza_el_fallo_del_muestreo_en_vez_de_tragarlo() -> None:
+    """Más estratos (3 fuentes + NaN) que ``viz_sample_size=2``: el visualizador
+    no devuelve un DataFrame vacío con un error en el log, falla."""
+    correlativa = _correlativa_con_src_nan(200)
+    with pytest.raises(MuestreoReportesError, match="estratos"):
+        DataVisualizer(correlativa, correlativa, metrics={}, config={"viz_sample_size": 2})
+
+
+def test_pipeline_heredado_relanza_el_error_de_muestreo_de_la_suite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``RecordLinkagePipeline._phase5_reports_and_export`` (api.dedupe) envolvía
+    la suite en ``except Exception`` y un MuestreoReportesError terminaba como
+    ``logger.error`` con la corrida «bien». Ahora sube al llamador."""
+    from record_linkage.pipeline import linkage_pipeline as modulo
+    from record_linkage.reporting import suite as modulo_suite
+
+    class _ExportadorNulo:
+        def __init__(self, _config) -> None:
+            pass
+
+        def export_with_auto_detection(self, **_kw) -> str:
+            return ""
+
+    class _SuiteQueFalla:
+        def __init__(self, *_a, **_k) -> None:
+            raise MuestreoReportesError("muestreo inventado que falla")
+
+    monkeypatch.setattr(modulo, "SmartExporter", _ExportadorNulo)
+    monkeypatch.setattr(modulo, "_class_is_importable", lambda n: n == "EnhancedReportingSuite")
+    monkeypatch.setattr(modulo_suite, "EnhancedReportingSuite", _SuiteQueFalla)
+
+    pipeline = modulo.RecordLinkagePipeline()
+    pipeline.config["output_directory"] = str(tmp_path / "salida")
+    pipeline.keep_intermediate_results = True
+    datos = pd.DataFrame({"ID_GRUPO": [1], "SRC": ["A"]})
+    pipeline.results = {"correlative_table": datos, "golden_records": datos, "metrics": {}}
+
+    with pytest.raises(MuestreoReportesError, match="muestreo inventado"):
+        pipeline._phase5_reports_and_export(reports=[], generate_visualizations=True)
 
 
 def test_suite_escribe_los_tres_artefactos(
