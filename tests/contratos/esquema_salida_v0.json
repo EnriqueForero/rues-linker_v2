@@ -1,0 +1,313 @@
+{
+  "_meta": {
+    "proposito": "Foto del esquema de salida de linkage() antes de F1 (tarea F0.4). Cambia solo a propósito, con el fixture regenerado en el mismo PR.",
+    "regenerar": "ACTUALIZAR_ESQUEMA_V0=1 pytest tests/test_contrato_salida_v0.py",
+    "dataset": "tests/data_sintetica/dataset_sintetico_p2_extra_features.csv",
+    "filas_entrada": 28,
+    "parametros_linkage": {
+      "fuentes": [
+        "P2"
+      ],
+      "trusted_sources": [],
+      "col_ciudad": "CIUDAD",
+      "skip_reporting": false,
+      "lectura": {
+        "dtype": "str",
+        "keep_default_na": false
+      }
+    },
+    "normalizaciones": [
+      {
+        "patron": "\\d{8}_\\d{6}",
+        "marcador": "<MARCA_TIEMPO>"
+      },
+      {
+        "patron": "\\d{4}-\\d{2}-\\d{2}[T_ ]\\d{2}[-:]\\d{2}[-:]\\d{2}",
+        "marcador": "<MARCA_TIEMPO>"
+      },
+      {
+        "patron": "(?<![0-9a-zA-Z])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}(?![0-9a-zA-Z])",
+        "marcador": "<HASH>"
+      },
+      {
+        "patron": "(?<![0-9a-zA-Z])tmp[a-z0-9_]{8}(?![0-9a-zA-Z])",
+        "marcador": "<ALEATORIO>"
+      }
+    ]
+  },
+  "correlativa": {
+    "filas": 28,
+    "columnas": [
+      {
+        "nombre": "NIT",
+        "tipo": "str"
+      },
+      {
+        "nombre": "RAZON_SOCIAL",
+        "tipo": "str"
+      },
+      {
+        "nombre": "CIUDAD",
+        "tipo": "str"
+      },
+      {
+        "nombre": "TELEFONO",
+        "tipo": "str"
+      },
+      {
+        "nombre": "ID_GROUP",
+        "tipo": "str"
+      },
+      {
+        "nombre": "SRC",
+        "tipo": "str"
+      },
+      {
+        "nombre": "ORIGINAL_INDEX",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "NOMBRE_LIMPIO",
+        "tipo": "str"
+      },
+      {
+        "nombre": "NOMBRE_BLOQUEO",
+        "tipo": "str"
+      },
+      {
+        "nombre": "NIT_OK",
+        "tipo": "str"
+      },
+      {
+        "nombre": "NIT_BASE",
+        "tipo": "str"
+      },
+      {
+        "nombre": "NIT_VALID",
+        "tipo": "str"
+      },
+      {
+        "nombre": "PHONETIC_KEY1",
+        "tipo": "str"
+      },
+      {
+        "nombre": "ID_GRUPO",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "NIT_FINAL",
+        "tipo": "str"
+      },
+      {
+        "nombre": "RAZON_SOCIAL_FINAL",
+        "tipo": "str"
+      },
+      {
+        "nombre": "NAME_SIMILARITY_SCORE",
+        "tipo": "float64"
+      },
+      {
+        "nombre": "NIT_DISTANCE",
+        "tipo": "int64"
+      }
+    ]
+  },
+  "golden": {
+    "filas": 17,
+    "columnas": [
+      {
+        "nombre": "ID_GRUPO",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "NIT_FINAL",
+        "tipo": "str"
+      },
+      {
+        "nombre": "RAZON_SOCIAL_FINAL",
+        "tipo": "str"
+      },
+      {
+        "nombre": "PRIMARY_SOURCE",
+        "tipo": "str"
+      },
+      {
+        "nombre": "SOURCES_LIST",
+        "tipo": "str"
+      },
+      {
+        "nombre": "SOURCES_COUNT",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "RECORD_COUNT",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "NAME_VARIATIONS",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "NIT_VARIATIONS",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "CONFIDENCE_SCORE",
+        "tipo": "float64"
+      },
+      {
+        "nombre": "CONFIANZA",
+        "tipo": "str"
+      },
+      {
+        "nombre": "REQUIRES_REVIEW",
+        "tipo": "int64"
+      },
+      {
+        "nombre": "CREATED_AT",
+        "tipo": "str"
+      }
+    ]
+  },
+  "archivos": [
+    "L1_prep/data.parquet",
+    "L2_lsh_candidates/candidates.db",
+    "L3_scoring/scored.db",
+    "L4_clustering/clusters.parquet",
+    "L5_golden/correlative.parquet",
+    "L5_golden/golden.parquet",
+    "L6_reporting/config_auditoria_<MARCA_TIEMPO>.json",
+    "L6_reporting/config_auditoria_<MARCA_TIEMPO>.txt",
+    "L6_reporting/dashboard_ejecutivo.png",
+    "L6_reporting/dashboard_ejecutivo_mejorado.png",
+    "L6_reporting/golden_records.csv.gz",
+    "L6_reporting/golden_records.parquet",
+    "L6_reporting/golden_records.xlsx",
+    "L6_reporting/heatmap_interseccion_mejorado.png",
+    "L6_reporting/reporte_analisis_fuentes.xlsx",
+    "L6_reporting/reporte_casos_revision.xlsx",
+    "L6_reporting/reporte_estadisticas_grupos.xlsx",
+    "L6_reporting/reporte_metricas_calidad.xlsx",
+    "L6_reporting/reporte_metricas_performance.xlsx",
+    "L6_reporting/reporte_resumen_ejecutivo.xlsx",
+    "L6_reporting/tabla_correlativa.csv.gz",
+    "L6_reporting/tabla_correlativa.parquet",
+    "L6_reporting/tabla_correlativa.xlsx",
+    "L6_reporting/tarjeta_calidad_datos.png",
+    "L6_reporting/visualizaciones/confidence_distribution.png",
+    "L6_reporting/visualizaciones/group_size_analysis.png",
+    "L6_reporting/visualizaciones/linkage_overview.png",
+    "L6_reporting/visualizaciones/quality_heatmap.png",
+    "L6_reporting/visualizaciones/source_comparison.png",
+    "manifest.json"
+  ],
+  "manifest": {
+    "primer_nivel": [
+      "_meta",
+      "L1_prep",
+      "L2_lsh_candidates",
+      "L3_scoring",
+      "L4_clustering",
+      "L5_golden",
+      "L6_reporting"
+    ],
+    "_meta": [
+      "schema_version",
+      "hash_algorithm",
+      "code_fingerprint"
+    ],
+    "fases": {
+      "L1_prep": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      },
+      "L2_lsh_candidates": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      },
+      "L3_scoring": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      },
+      "L4_clustering": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      },
+      "L5_golden": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      },
+      "L6_reporting": {
+        "claves": [
+          "hash",
+          "status",
+          "timestamp",
+          "files",
+          "artifacts",
+          "meta"
+        ],
+        "meta": [
+          "duration",
+          "peak_rss_mib"
+        ]
+      }
+    }
+  },
+  "resultado": {
+    "claves": [
+      "correlative",
+      "golden",
+      "report_files"
+    ]
+  }
+}
