@@ -735,11 +735,13 @@ def test_completar_con_tecnicas_usa_nit_base_del_motor(tmp_path: Path) -> None:
         correl, None, tmp_path, None, fuentes, col_nit="NIT"
     )
     # La cédula 10282948 no es la base del grupo (102829482): el motor la unió
-    # por nombre. La fila que aportó NIT_FINAL trae, por definición, la base
-    # del grupo (regla del preámbulo) y queda como ``identificador``.
+    # por nombre. La fila que aportó NIT_FINAL tampoco tiene con quién compartir
+    # su base dentro del grupo: ``identificador`` exige pareja de base, así que
+    # también queda ``nombre`` (decisión del coordinador, F1.9) y el reporte la
+    # cuenta en ``identificador_sin_pareja_de_base``.
     assert list(correlativa["METODO_UNION"]) == [
         "nombre",
-        "identificador",
+        "nombre",
         "identificador",
         "identificador",
         "identificador",
@@ -751,6 +753,7 @@ def test_completar_con_tecnicas_usa_nit_base_del_motor(tmp_path: Path) -> None:
     assert "NIT_OK" in identificador["base_del_grupo"]
     assert identificador["grupos_con_bases_distintas"] == 1
     assert identificador["grupos_sin_fila_de_nit_final"] == 0
+    assert identificador["identificador_sin_pareja_de_base"] == 1
     # ID_ENTIDAD es NIT-<base canónica de NIT_FINAL> (decisión del preámbulo), no
     # el NIT_BASE del motor: el de 6 dígitos no tiene base canónica y recibe ENT-.
     assert correlativa.loc[0, "ID_ENTIDAD"] == "NIT-" + bases_validas(np.array(["1028294826"]))[0]

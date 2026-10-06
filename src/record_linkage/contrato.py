@@ -187,7 +187,9 @@ CORRELATIVA: tuple[ColumnaContrato, ...] = (
         pa.string(),
         "Cómo quedó el registro en su grupo: identificador · nombre · nombre+contacto · "
         "decision_humana · decision_asistida (validar) · sin_pareja. En F1 solo se "
-        "producen identificador, nombre y sin_pareja.",
+        "producen identificador (otro miembro del grupo comparte su base válida de "
+        "NIT_FINAL), nombre (el resto, incluido quien aportó NIT_FINAL sin pareja de "
+        "base) y sin_pareja (grupo de un registro).",
         "METODO_UNION",
     ),
     _c(

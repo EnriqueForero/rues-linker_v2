@@ -28,7 +28,10 @@ las dos tablas con la forma del estándar (``contrato.py``):
 * ``METODO_UNION`` ∈ {``identificador``, ``nombre``, ``sin_pareja``}:
   ``sin_pareja`` si el grupo tiene un registro; ``identificador`` si el
   registro trae identificador válido cuya base es la de ``NIT_FINAL`` del
-  grupo; ``nombre`` en el resto. La regla de «base válida» es UNA y es la
+  grupo Y otro miembro del grupo comparte esa base (sin pareja de base, el
+  dueño de ``NIT_FINAL`` se declara ``nombre``: así lo unió el motor; el
+  reporte cuenta esos casos en ``identificador_sin_pareja_de_base``);
+  ``nombre`` en el resto. La regla de «base válida» es UNA y es la
   del MOTOR (NitProcessor, L1): la base del registro es ``NIT_BASE`` donde
   ``NIT_VALID``, sin ninguna reducción propia, y la base del grupo es el
   ``NIT_BASE`` de la fila cuyo ``NIT_OK == NIT_FINAL`` (``NIT_FINAL`` es por
@@ -787,10 +790,24 @@ def completar_correlativa(
     tamano = correl.groupby("ID_GRUPO", sort=False)["ID_GRUPO"].transform("size").to_numpy()
     registro_valido = (base_registro != "").fillna(False).to_numpy()
     misma_base = (base_registro == base_grupo).fillna(False).to_numpy()
+    # «identificador» exige pareja: otro miembro del grupo con la misma base
+    # válida. El dueño de NIT_FINAL sin pareja de base (p. ej. unido por
+    # nombre a una cédula que no reduce a su base) se declara ``nombre``, que
+    # es como lo unió el motor; el reporte cuenta esos casos.
+    clave_base = base_registro.fillna("").astype("string")
+    n_misma_base = (
+        clave_base.groupby([correl["ID_GRUPO"], clave_base], sort=False)
+        .transform("size")
+        .to_numpy()
+    )
+    con_pareja = registro_valido & (n_misma_base >= 2)
     correl["METODO_UNION"] = np.where(
         tamano == 1,
         "sin_pareja",
-        np.where(registro_valido & misma_base, "identificador", "nombre"),
+        np.where(registro_valido & misma_base & con_pareja, "identificador", "nombre"),
+    )
+    info_identificador["identificador_sin_pareja_de_base"] = int(
+        ((tamano > 1) & registro_valido & misma_base & ~con_pareja).sum()
     )
 
     prioridad = list(prioridad_fuentes or fuentes)
