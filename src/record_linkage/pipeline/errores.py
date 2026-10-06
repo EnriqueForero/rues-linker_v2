@@ -47,7 +47,21 @@ class ColumnasArrastreError(ErrorPipeline):
         fuente: fuente cuya alineación falló, o ``None`` si falló el total.
         esperadas: filas que debía tener la parte (o la unión).
         observadas: filas que realmente tenía.
+        que_hacer: remedio con el que se construyó el mensaje. Por defecto es
+            el de la alineación de parquets derramados
+            (:attr:`QUE_HACER_POR_DEFECTO`); los caminos donde ese remedio no
+            aplica (DuckDB, ``separar_columnas_extra=False``) pasan el suyo.
     """
+
+    #: Remedio para el camino pandas con separación: la alineación posicional
+    #: de los parquets derramados en ``dir_trabajo/columnas_extra`` no cuadró.
+    QUE_HACER_POR_DEFECTO = (
+        "no use este resultado; borre el directorio de trabajo "
+        "(`dir_trabajo/columnas_extra`) y vuelva a ejecutar; si se repite, "
+        "reporte el caso con el manifiesto y el registro de la corrida, o "
+        "desactive la separación con `ConfigCruce(separar_columnas_extra=False)` "
+        "para que las columnas viajen por el motor"
+    )
 
     def __init__(
         self,
@@ -56,10 +70,12 @@ class ColumnasArrastreError(ErrorPipeline):
         fuente: str | None = None,
         esperadas: int | None = None,
         observadas: int | None = None,
+        que_hacer: str | None = None,
     ):
         self.fuente = fuente
         self.esperadas = esperadas
         self.observadas = observadas
+        self.que_hacer = self.QUE_HACER_POR_DEFECTO if que_hacer is None else que_hacer
         super().__init__(
             mensaje_accionable(
                 que_paso=que_paso,
@@ -69,12 +85,6 @@ class ColumnasArrastreError(ErrorPipeline):
                     "declarar qué se adjuntó; una entrega incompleta se publicaría como "
                     "si fuera completa"
                 ),
-                que_hacer=(
-                    "no use este resultado; borre el directorio de trabajo "
-                    "(`dir_trabajo/columnas_extra`) y vuelva a ejecutar; si se repite, "
-                    "reporte el caso con el manifiesto y el registro de la corrida, o "
-                    "desactive la separación con `ConfigCruce(separar_columnas_extra=False)` "
-                    "para que las columnas viajen por el motor"
-                ),
+                que_hacer=self.que_hacer,
             )
         )

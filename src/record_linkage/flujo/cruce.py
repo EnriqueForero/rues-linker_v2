@@ -1552,6 +1552,54 @@ MOTIVO_CHOQUE_CON_MOTOR = (
     "choca con una columna que produce el motor; la de la fuente no se pisa y no se adjunta"
 )
 
+#: Motivo (DuckDB) de una columna no-matcher que la fuente sí produjo y no se
+#: publicó: ``ConfigCruce(preservar_payload=False)`` la dejó fuera del entregable.
+MOTIVO_SIN_PAYLOAD = "fuera del entregable por preservar_payload=False"
+
+#: Prefijo del motivo por fuente que calcula el lector (``missing_optional``);
+#: :func:`motivo_fuente_sin_columna` lo completa con la columna de origen.
+PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA = "la fuente no tiene la columna"
+
+
+def motivo_fuente_sin_columna(origen: str) -> str:
+    """Motivo documentado 1: la fuente no trae la columna de origen pedida."""
+    return f"{PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA} {origen!r} pedida en optional_column_mapping"
+
+
+#: Remedio de :class:`ColumnasArrastreError` cuando la ENTREGA no trae una
+#: columna que la fuente aportó (DuckDB o ``separar_columnas_extra=False``):
+#: ahí no hay parquets derramados que realinear ni separación que desactivar.
+QUE_HACER_ENTREGA_INCOMPLETA = (
+    "no use este resultado; revise el registro de la fase L5 y de la publicación "
+    "para ver dónde se perdió la columna; si usa DuckDB, verifique "
+    "`payload_columns` en el manifiesto de ingesta (`ingesta_duckdb/`) y, si "
+    "se repite, reporte el caso con el manifiesto y el registro de la corrida"
+)
+
+#: Columnas que el motor pandas ESCRIBE en la correlativa, además de sus
+#: entradas (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False``
+#: las columnas de arrastre viajan por el motor y una con uno de estos nombres
+#: queda PISADA: es la única forma de declarar ese choque en vez de afirmar
+#: que se adjuntó (revisión r3 de F1.8). La prueba
+#: ``test_las_columnas_que_produce_el_motor_son_exactamente_las_declaradas``
+#: ata esta constante a lo observado; si el motor cambia su salida (p. ej.
+#: cuando F1 saque las técnicas del entregable), se actualiza aquí.
+COLUMNAS_QUE_PRODUCE_EL_MOTOR: frozenset[str] = frozenset(
+    {
+        "SRC",
+        "ORIGINAL_INDEX",
+        "ID_GRUPO",
+        *COLUMNAS_FINALES,
+        # técnicas (F1 las moverá a ``_trabajo/``)
+        "NOMBRE_LIMPIO",
+        "NOMBRE_BLOQUEO",
+        "NIT_OK",
+        "NIT_BASE",
+        "NIT_VALID",
+        "PHONETIC_KEY1",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ColumnaOmitida:
@@ -1589,18 +1637,21 @@ class ReporteColumnasArrastre:
     Attributes:
         adjuntadas: columnas de arrastre que están en la correlativa entregada.
         omitidas: columnas pedidas que NO están. Los motivos posibles son
-            EXACTAMENTE dos:
+            EXACTAMENTE tres, y son constantes del módulo:
 
-            1. por fuente, «la fuente no tiene la columna '<origen>' pedida en
-               optional_column_mapping»: lo calcula el lector
-               (``missing_optional`` del informe de ingesta) y aquí solo se
-               declara, con ``fuente``. Puede convivir con la misma columna en
-               ``adjuntadas`` si otra fuente sí la trae: para la fuente que no
-               la tiene, la petición no se cumplió y se dice;
+            1. por fuente, :func:`motivo_fuente_sin_columna`: lo calcula el
+               lector (``missing_optional`` del informe de ingesta) y aquí
+               solo se declara, con ``fuente``. Puede convivir con la misma
+               columna en ``adjuntadas`` si otra fuente sí la trae: para la
+               fuente que no la tiene, la petición no se cumplió y se dice;
             2. global, :data:`MOTIVO_CHOQUE_CON_MOTOR`: la fuente SÍ la trae,
                pero el motor produce una columna con ese nombre y la del motor
                no se pisa (F1 la renombrará ``<col>_FUENTE`` cuando entre el
-               contrato de salida; hasta entonces queda declarada aquí).
+               contrato de salida; hasta entonces queda declarada aquí). Con
+               ``separar_columnas_extra=False`` el motor sí la pisó: también
+               se declara choque, nunca «adjuntada»;
+            3. por fuente, :data:`MOTIVO_SIN_PAYLOAD` (solo DuckDB): la fuente
+               la produjo y ``preservar_payload=False`` la dejó fuera.
 
             Una columna que la fuente aportó fuera del motor y no llegó a la
             correlativa NO es una omisión: es :class:`ColumnasArrastreError`.
@@ -1637,14 +1688,24 @@ def _omitidas_por_ingesta(
             omitidas.append(
                 ColumnaOmitida(
                     columna=str(canonica),
-                    motivo=(
-                        f"la fuente no tiene la columna {origen!r} pedida en "
-                        "optional_column_mapping"
-                    ),
+                    motivo=motivo_fuente_sin_columna(str(origen)),
                     fuente=spec.name,
                 )
             )
     return tuple(omitidas)
+
+
+def _omitidas_por_payload_no_publicado(
+    orden_fuentes: Sequence[str], compactaciones: Mapping[str, DuckDBCompactionResult]
+) -> tuple[ColumnaOmitida, ...]:
+    """Columnas no-matcher que DuckDB produjo y ``preservar_payload=False`` dejó
+    fuera de la entrega: ``discarded_payload_columns`` del compactador, que es
+    quien decidió no publicarlas."""
+    return tuple(
+        ColumnaOmitida(columna=columna, motivo=MOTIVO_SIN_PAYLOAD, fuente=nombre)
+        for nombre in orden_fuentes
+        for columna in compactaciones[nombre].discarded_payload_columns
+    )
 
 
 def _reporte_arrastre_observado(
@@ -1652,6 +1713,8 @@ def _reporte_arrastre_observado(
     esperadas: Sequence[str],
     columnas_motor: Iterable[str],
     omitidas_ingesta: Sequence[ColumnaOmitida],
+    *,
+    que_hacer: str = QUE_HACER_ENTREGA_INCOMPLETA,
 ) -> ReporteColumnasArrastre:
     """Deriva el reporte de la correlativa ENTREGADA; es la misma regla en los
     tres caminos.
@@ -1663,7 +1726,11 @@ def _reporte_arrastre_observado(
             o de las columnas no-motor que viajaron por el pipeline).
         columnas_motor: columnas que el motor produjo ANTES del re-adjunte;
             una esperada con ese nombre es un choque y no se adjunta.
-        omitidas_ingesta: lo que el lector declaró ausente por fuente.
+        omitidas_ingesta: lo que el lector (o el compactador) declaró ausente
+            por fuente.
+        que_hacer: remedio del error; por defecto el de la entrega
+            (:data:`QUE_HACER_ENTREGA_INCOMPLETA`). El camino con parquets
+            derramados pasa el de la alineación.
 
     Raises:
         ColumnasArrastreError: si una esperada que no choca con el motor no
@@ -1677,7 +1744,8 @@ def _reporte_arrastre_observado(
     if perdidas:
         raise ColumnasArrastreError(
             f"la correlativa entregada no trae {perdidas} aunque las fuentes las "
-            "aportaron fuera del motor"
+            "aportaron fuera del motor",
+            que_hacer=que_hacer,
         )
     choques = tuple(
         ColumnaOmitida(columna=c, motivo=MOTIVO_CHOQUE_CON_MOTOR) for c in esperadas if c in motor
@@ -1758,8 +1826,18 @@ def _adjuntar_columnas_extra(
             if columna in extras.columns and columna not in correlativa.columns:
                 correlativa[columna] = extras[columna].array.take(posiciones)
     reporte = _reporte_arrastre_observado(
-        correlativa.columns, columnas, columnas_motor, omitidas_ingesta
+        correlativa.columns,
+        columnas,
+        columnas_motor,
+        omitidas_ingesta,
+        que_hacer=ColumnasArrastreError.QUE_HACER_POR_DEFECTO,
     )
+    _registrar_reporte_arrastre(reporte, log)
+    return correlativa, reporte
+
+
+def _registrar_reporte_arrastre(reporte: ReporteColumnasArrastre, log: Any) -> None:
+    """Deja en el registro lo mismo que va al manifiesto, en los tres caminos."""
     if reporte.adjuntadas:
         log.info(f"   📎 Re-adjuntadas a la correlativa: {list(reporte.adjuntadas)}")
     for omitida in reporte.omitidas:
@@ -1767,7 +1845,6 @@ def _adjuntar_columnas_extra(
         log.warning(
             f"   ⚠️ Columna de arrastre omitida {omitida.columna!r}{donde}: {omitida.motivo}"
         )
-    return correlativa, reporte
 
 
 def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, esperadas: int) -> None:
@@ -2094,8 +2171,9 @@ def _ejecutar_cruce_medido(
                 publicacion.correlativa.columns,
                 payload_esperado,
                 correlativa_compacta.columns,
-                omitidas_ingesta,
+                omitidas_ingesta + _omitidas_por_payload_no_publicado(source_order, compactaciones),
             )
+            _registrar_reporte_arrastre(reporte_arrastre, log)
             rutas = {
                 "golden_parquet": publicacion.golden.path,
                 "correlativa_parquet": publicacion.correlativa.path,
@@ -2133,12 +2211,16 @@ def _ejecutar_cruce_medido(
                     omitidas_ingesta=omitidas_ingesta,
                 )
         else:
-            # Las columnas viajaron por el motor: no hay forma de distinguir una
-            # suya de una del motor con el mismo nombre, así que solo se
-            # verifica que estén en la entrega.
+            # Las columnas viajaron por el motor y una con el nombre de una que
+            # el motor escribe quedó PISADA: la correlativa la trae, pero con
+            # los valores del motor. Se declara choque, no «adjuntada».
             reporte_arrastre = _reporte_arrastre_observado(
-                correlativa.columns, columnas_extra, (), omitidas_ingesta
+                correlativa.columns,
+                columnas_extra,
+                COLUMNAS_QUE_PRODUCE_EL_MOTOR,
+                omitidas_ingesta,
             )
+            _registrar_reporte_arrastre(reporte_arrastre, log)
         with cronometro.fase("exportes"):
             rutas = _exportar(config, {"golden": golden, "correlativa": correlativa}, log)
 
