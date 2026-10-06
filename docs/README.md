@@ -10,6 +10,7 @@
 | [`ANALISIS_IMPORTADORES.md`](ANALISIS_IMPORTADORES.md) | Deduplicación sin identificador: resultados sobre la base de referencia, calidad medida, qué queda |
 | [`ENTREGA_0.22.4.md`](ENTREGA_0.22.4.md) | Última entrega: qué se encontró, qué se corrigió, cómo se verificó (anteriores: [`0.22.3`](ENTREGA_0.22.3.md), [`0.22.2`](ENTREGA_0.22.2.md), [`0.20.0`](ENTREGA_0.20.0.md)) |
 | [`PLAN.md`](PLAN.md) | Los 37 criterios de mejora y su estado |
+| [`CONSUMIDORES.md`](CONSUMIDORES.md) | Quién lee qué salida (notebooks, scripts, librería, pruebas, consumidores externos): la lista que decide los alias de nombres de v1 y su plazo. Borrador para revisión |
 | [`adr/`](adr/) | Decisiones de arquitectura, una por archivo |
 | [`evidencia/`](evidencia/) | JSON de cada corrida del banco y la partición predicha |
 | [`evidencia_importadores/`](evidencia_importadores/) | Tablas de la corrida de referencia del flujo sin identificador: métricas, invariantes, muestra revisada, sensibilidad, recall del bloqueo |
