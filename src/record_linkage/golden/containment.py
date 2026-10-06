@@ -23,7 +23,7 @@ from rapidfuzz import fuzz
 from rapidfuzz.distance import Indel
 from tqdm import tqdm
 
-from ..pipeline.errores import mensaje_accionable
+from ..pipeline.errores import GoldenInvalidoError, mensaje_accionable
 from ..processing.text import TextProcessor
 from ..utils.output import safe_print as print
 from .metricas import (
@@ -623,10 +623,29 @@ def _reconstruir_golden_fusionado(
 
     nuevo = pd.DataFrame(columnas, index=raices).reset_index(drop=True)
     # Mismo dtype que el golden de entrada: el pd.concat posterior no debe
-    # ascender enteros a float ni texto Arrow a object.
+    # ascender enteros a float ni texto Arrow a object. Si la conversión deja
+    # nulos NUEVOS (un Categorical cuyas categorías no incluyen el valor
+    # recalculado, p. ej. SOURCES_LIST = 'CRM|EXPORTACIONES|RUES'), se dice
+    # aquí: ``astype`` lo volvería NaN sin error y ``verificar_golden`` lo
+    # vería después sin poder decir por qué.
     for col in golden_df.columns:
-        if nuevo[col].dtype != golden_df[col].dtype:
-            nuevo[col] = nuevo[col].astype(golden_df[col].dtype)
+        if nuevo[col].dtype == golden_df[col].dtype:
+            continue
+        nulos_antes = int(nuevo[col].isna().sum())
+        nuevo[col] = nuevo[col].astype(golden_df[col].dtype)
+        nulos_nuevos = int(nuevo[col].isna().sum()) - nulos_antes
+        if nulos_nuevos > 0:
+            raise GoldenInvalidoError(
+                mensaje_accionable(
+                    f"al convertir la columna {col} de los grupos fusionados al dtype del "
+                    f"golden de entrada ({golden_df[col].dtype}) quedaron {nulos_nuevos} "
+                    "valor(es) nulo(s) nuevo(s).",
+                    "el golden consolidado saldría con esa métrica nula en los grupos "
+                    "fusionados (un Categorical sin la categoría nueva la vuelve NaN sin error).",
+                    f"entregue {col} como texto o número plano en el golden de entrada (no como "
+                    "category), o amplíe sus categorías antes de consolidar.",
+                )
+            )
     return nuevo
 
 

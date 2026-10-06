@@ -17,8 +17,8 @@ c) la fila fusionada tiene ``RECORD_COUNT`` = suma, ``SOURCES_LIST`` /
    ``SOURCES_COUNT`` / ``NAME_VARIATIONS`` / ``NIT_VARIATIONS`` recalculados
    sobre su subconjunto, ``PRIMARY_SOURCE`` según la prioridad recibida, y
    ``CONFIANZA`` / ``CONFIDENCE_SCORE`` / ``REQUIRES_REVIEW`` con la MISMA
-   regla del camino normal (paridad con ``_process_batch_vectorized`` y con
-   el SQL de ``_add_quality_metrics``).
+   regla del camino normal (paridad de plomería con ``_process_batch_vectorized``,
+   de regla contra una referencia mínima, y con el SQL de ``_add_quality_metrics``).
 
 Empresas inventadas; ningún dato real.
 """
@@ -39,6 +39,7 @@ from record_linkage.golden.generator import GoldenRecordGeneratorV7
 from record_linkage.golden.metricas import (
     COLUMNAS_GOLDEN,
     COLUMNAS_METRICAS,
+    PRIORIDAD_FUENTE_DESCONOCIDA,
     metricas_de_calidad,
     metricas_de_grupo,
     verificar_golden,
@@ -235,8 +236,12 @@ def test_prioridad_es_obligatoria() -> None:
         consolidate_groups_by_nit_balanced(_golden(), _correlativa(), verbose=False)
 
 
-def test_paridad_con_el_camino_normal_del_generador(consolidado) -> None:
-    """La fila fusionada lleva lo mismo que ``_process_batch_vectorized`` sobre el subconjunto."""
+def test_fila_fusionada_usa_la_misma_plomeria_que_el_generador(consolidado) -> None:
+    """Plomería, no regla: ambos caminos llaman a ``metricas_de_grupo``, así que
+    esto solo detecta divergencias de subconjunto o de dtype entre la fila
+    fusionada y ``_process_batch_vectorized``. La REGLA se compara contra una
+    referencia independiente en
+    ``test_metricas_de_grupo_coincide_con_una_referencia_minima``."""
     _, correl_in, golden_out, correl_out = consolidado
     subconjunto = correl_in.loc[correl_out["ID_GRUPO"] == 10].copy()
     subconjunto["ID_GRUPO"] = 10
@@ -257,6 +262,115 @@ def test_paridad_con_el_camino_normal_del_generador(consolidado) -> None:
     esperado = lote.iloc[0][columnas].to_dict()
     obtenido = golden_out.set_index("ID_GRUPO").loc[10, columnas].to_dict()
     assert obtenido == esperado
+
+
+def _metricas_de_referencia(correl: pd.DataFrame, prioridad: list[str]) -> dict[int, dict]:
+    """La regla de ``_process_batch_vectorized`` escrita de la forma más simple
+    posible (bucle por grupo, ``min(key=rango)``), solo para esta prueba: no
+    comparte una línea con ``metricas_de_grupo``."""
+    rangos = {fuente: i for i, fuente in enumerate(prioridad)}
+    columna_nit = "NIT_OK" if "NIT_OK" in correl.columns else "NIT"
+    referencia: dict[int, dict] = {}
+    for id_grupo, grupo in correl.groupby("ID_GRUPO", sort=True):
+        fuentes = grupo["SRC"].tolist()
+        n_fuentes = len(set(fuentes))
+        n_filas = len(grupo)
+        n_nits = len(set(grupo[columna_nit].dropna()))
+        if n_nits == 1 and n_fuentes >= 2:
+            confianza = "ALTA"
+        elif n_nits <= 2 and n_filas <= 5:
+            confianza = "MEDIA"
+        else:
+            confianza = "BAJA"
+        referencia[int(id_grupo)] = {
+            "SOURCES_LIST": "|".join(sorted(set(fuentes))),
+            "SOURCES_COUNT": n_fuentes,
+            "RECORD_COUNT": n_filas,
+            "NAME_VARIATIONS": len(set(grupo["RAZON_SOCIAL"].dropna())),
+            "NIT_VARIATIONS": n_nits,
+            # El empate lo gana la primera fila del grupo en el orden de correl.
+            "PRIMARY_SOURCE": min(
+                fuentes, key=lambda f: rangos.get(f, PRIORIDAD_FUENTE_DESCONOCIDA)
+            ),
+            "CONFIANZA": confianza,
+        }
+    return referencia
+
+
+def _correlativa_variada() -> pd.DataFrame:
+    """Los cuatro grupos de ``_correlativa()`` más tres que cubren BAJA, una
+    fuente no declarada en la prioridad y el empate entre dos desconocidas."""
+    extra = pd.DataFrame(
+        {
+            # 20: 6 filas, 3 NIT, 3 fuentes (una sin prioridad) → BAJA; gana RUES.
+            # 21: 2 filas, 1 NIT, ADUANA + CRM → ALTA; gana CRM sobre la desconocida.
+            # 22: 2 desconocidas con el mismo rango → gana la primera fila (SUPERSOC).
+            "ID_GRUPO": [20, 20, 20, 20, 20, 20, 21, 21, 22, 22],
+            "SRC": [
+                "ADUANA",
+                "CRM",
+                "RUES",
+                "CRM",
+                "ADUANA",
+                "CRM",
+                "ADUANA",
+                "CRM",
+                "SUPERSOC",
+                "ADUANA",
+            ],
+            "RAZON_SOCIAL": [
+                "FERRETERIA EL CLAVO SAS",
+                "FERRETERIA EL CLAVO",
+                "FERRETERIA EL CLAVO S.A.S.",
+                "FERRETERIA EL CLAVO",
+                "FERRETERIA EL CLAVO LTDA",
+                "FERRETERIA EL CLAVO",
+                "LACTEOS LA NUBE SAS",
+                "LACTEOS LA NUBE S.A.S.",
+                "VIDRIOS DEL SUR",
+                "VIDRIOS DEL SUR SAS",
+            ],
+            "NIT_OK": [
+                "8001112221",
+                "8001112221",
+                "8001112222",
+                "8001112223",
+                "8001112221",
+                "8001112222",
+                "9005556661",
+                "9005556661",
+                "9007778881",
+                "9007778882",
+            ],
+        }
+    )
+    base = _correlativa()[["ID_GRUPO", "SRC", "RAZON_SOCIAL", "NIT_OK"]].astype(object)
+    return pd.concat([base, extra], ignore_index=True)
+
+
+def test_metricas_de_grupo_coincide_con_una_referencia_minima() -> None:
+    """Paridad de REGLA: la versión vectorizada y la referencia por grupo dan lo mismo."""
+    correl = _correlativa_variada()
+    referencia = _metricas_de_referencia(correl, PRIORIDAD)
+    obtenido = metricas_de_grupo(correl, PRIORIDAD)
+
+    assert obtenido.index.tolist() == sorted(referencia)
+    assert obtenido.to_dict("index") == referencia
+    # La referencia cubre de verdad las tres confianzas y el empate de desconocidas.
+    assert {r["CONFIANZA"] for r in referencia.values()} == {"ALTA", "MEDIA", "BAJA"}
+    assert referencia[22]["PRIMARY_SOURCE"] == "SUPERSOC"
+
+
+def test_golden_categorico_sin_la_categoria_nueva_falla_en_vez_de_dejar_nan() -> None:
+    """``astype`` a un Categorical sin la categoría recalculada da NaN sin error;
+    la consolidación lo dice al convertir, no ``verificar_golden`` después."""
+    golden = _golden()
+    golden["SOURCES_LIST"] = golden["SOURCES_LIST"].astype("category")
+    with pytest.raises(GoldenInvalidoError, match="SOURCES_LIST") as info:
+        consolidate_groups_by_nit_balanced(
+            golden, _correlativa(), verbose=False, prioridad_fuentes=PRIORIDAD
+        )
+    assert "category" in str(info.value) and "Qué hacer" in str(info.value)
 
 
 def test_metricas_de_grupo_exige_columnas_de_la_correlativa() -> None:
