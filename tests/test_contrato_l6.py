@@ -452,7 +452,7 @@ def _tocar(carpeta: Path, nombre: str) -> Path:
 
 def test_verificar_artefactos_detecta_falta_por_nombre_exacto(tmp_path: Path) -> None:
     generados = [
-        _tocar(tmp_path, "golden_records_MUESTRA_100k.xlsx"),
+        _tocar(tmp_path, "golden_records_LEEME.xlsx"),
         _tocar(tmp_path, "golden_records.csv.gz"),
         _tocar(tmp_path, "tabla_correlativa.parquet"),
         _tocar(tmp_path, "tabla_correlativa.csv.gz"),
@@ -464,7 +464,7 @@ def test_verificar_artefactos_detecta_falta_por_nombre_exacto(tmp_path: Path) ->
     assert isinstance(reporte, ReporteL6)
     assert reporte.obligatorios_faltantes == ("golden_records.parquet",)
     assert not reporte.ok
-    assert "golden_records_MUESTRA_100k.xlsx" not in reporte.opcionales_omitidos
+    assert "golden_records_LEEME.xlsx" not in reporte.opcionales_omitidos
     assert "dashboard_ejecutivo.png" in reporte.opcionales_omitidos
 
 

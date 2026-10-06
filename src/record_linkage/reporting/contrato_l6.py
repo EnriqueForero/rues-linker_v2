@@ -8,8 +8,8 @@ lanzaba devolvía ``[]``; un reporte Excel que fallaba se escribía con una sola
 celda «Error generando reporte: …»; un dashboard que fallaba se escribía como
 PNG con el texto del error; y el orquestador verificaba la exportación
 contractual por PREFIJO (``golden_records``, ``tabla_correlativa``), de modo
-que ``golden_records_MUESTRA_100k.xlsx`` bastaba para dar por presente a
-``golden_records.parquet``. Tres fallos internos llegaron así al usuario días
+que la muestra recortada de v1 (``golden_records_MUESTRA…xlsx``, retirada
+en F1.11) bastaba para dar por presente a ``golden_records.parquet``. Tres fallos internos llegaron así al usuario días
 después.
 
 Este módulo DECLARA la lista de artefactos (una sola vez) y la hace
@@ -117,15 +117,17 @@ ARTEFACTOS_OBLIGATORIOS: tuple[ArtefactoDeclarado, ...] = (
 ARTEFACTOS_OPCIONALES: tuple[ArtefactoDeclarado, ...] = (
     ArtefactoDeclarado("tabla_correlativa.xlsx", "DataExportStrategy", "correlativa en Excel"),
     ArtefactoDeclarado(
-        "tabla_correlativa_MUESTRA_*.xlsx",
+        "tabla_correlativa_LEEME.xlsx",
         "DataExportStrategy",
-        "muestra de la correlativa en Excel cuando supera el límite de filas",
+        "cuando la correlativa supera el límite de Excel: filas, parquet y cómo abrirlo "
+        "(F1.11: nunca un recorte)",
     ),
     ArtefactoDeclarado("golden_records.xlsx", "DataExportStrategy", "golden en Excel"),
     ArtefactoDeclarado(
-        "golden_records_MUESTRA_*.xlsx",
+        "golden_records_LEEME.xlsx",
         "DataExportStrategy",
-        "muestra del golden en Excel cuando supera el límite de filas",
+        "cuando el golden supera el límite de Excel: filas, parquet y cómo abrirlo "
+        "(F1.11: nunca un recorte)",
     ),
     ArtefactoDeclarado(
         "reporte_resumen_ejecutivo.xlsx", "ExcelReportsStrategy", "resumen ejecutivo"

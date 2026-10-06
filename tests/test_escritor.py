@@ -841,10 +841,11 @@ _ESCRITORES = {
 #: motivo. Quitar una entrada exige quitar primero la llamada.
 ESCRITORES_PERMITIDOS: dict[str, str] = {
     "exporters/escritor.py": "el escritor único del estándar (F1.10).",
+    "exporters/excel.py": "la primitiva xlsx del escritor (F1.11): completo en flujo o LEEME.",
     "pipeline/orchestrator.py": "checkpoints L1…L5 en _trabajo/.",
     "pipeline/linkage_pipeline.py": "checkpoints del pipeline heredado en _trabajo/.",
     "pipeline/result.py": "PipelineResult.to_excel/to_csv heredados (lo pide el usuario).",
-    "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); F1.11 los unifica en "
+    "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); pendiente unificarlos en "
     "informe_cruce.xlsx a través del escritor.",
     "exporters/smart.py": "SmartExporter: utilidad genérica de exportación, no el estándar.",
     "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",
