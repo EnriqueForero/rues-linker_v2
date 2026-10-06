@@ -70,8 +70,6 @@ class ReportGenerator:
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
 
-        # F1.4: reportes que no se produjeron, con motivo. Se vacía en cada
-        # generate_all_reports(); ExcelReportsStrategy lo lleva al manifiesto.
         # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió;
         # la estrategia que lo usa lo etiqueta con su propia clase.
         self.omitidos: list[tuple[str, str]] = []

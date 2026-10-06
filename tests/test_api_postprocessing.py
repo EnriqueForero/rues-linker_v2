@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from artefactos_l6 import escribir_obligatorios_l6
 
 from record_linkage import linkage
 from record_linkage.api import _collapse_exact_sources, _expand_exact_correlative
@@ -140,33 +141,17 @@ def test_matcher_helper_recalcula_golden_canonico_y_preserva_metadatos():
     assert len(refined["correlative"]) == 2
 
 
-def _escribir_obligatorios(output_dir):
-    """F1.4: L6 exige los artefactos obligatorios por nombre exacto; una
-    estrategia de captura debe dejarlos para que la corrida cuente como válida."""
-    nombres = [
-        "tabla_correlativa.parquet",
-        "tabla_correlativa.csv.gz",
-        "golden_records.parquet",
-        "golden_records.csv.gz",
-        "config_auditoria_prueba.json",
-    ]
-    rutas = []
-    for nombre in nombres:
-        ruta = output_dir / nombre
-        ruta.write_bytes(b"x")
-        rutas.append(ruta)
-    return rutas
-
-
 class _CaptureExport(DataExportStrategy):
     def __init__(self, seen: dict[str, int]) -> None:
+        super().__init__()
         self.seen = seen
 
     def execute(self, ctx, logger):
         self.seen["export_golden"] = len(ctx.golden_df)
         self.seen["export_correlative"] = len(ctx.correlative_df)
         self.seen["metric_total"] = ctx.metrics["total_records"]
-        return _escribir_obligatorios(ctx.output_dir)
+        # F1.4: L6 exige los obligatorios por nombre exacto (lista del contrato).
+        return escribir_obligatorios_l6(ctx.output_dir)
 
 
 class _CaptureAnalytics:

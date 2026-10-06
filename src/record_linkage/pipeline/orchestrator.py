@@ -36,6 +36,7 @@ from ..reporting.contrato_l6 import (
     ArtefactoOmitido,
     artefactos_de,
     es_estrategia_obligatoria,
+    obligatorios_de,
     verificar_artefactos,
 )
 from ..reporting.strategies import (
@@ -1958,8 +1959,10 @@ class Orchestrator:
                     exc = EstrategiaFallo(strategy.name, exc_cruda)
                     exc.__cause__ = exc_cruda  # misma cadena que BaseReportingStrategy
                 if obligatoria:
+                    # Solo los obligatorios: los Excel opcionales de la misma
+                    # estrategia no «faltan», se omiten.
                     raise ArtefactoObligatorioError(
-                        artefactos_de(strategy) or (strategy.name,),
+                        obligatorios_de(strategy) or (strategy.name,),
                         output_dir,
                         detalle=f"{nombre_clase} falló: {type(exc.causa).__name__}: {exc.causa}",
                     ) from exc
@@ -1970,6 +1973,9 @@ class Orchestrator:
             finally:
                 gc.collect()
 
+            # `omitidos` existe desde __init__ en BaseReportingStrategy; el
+            # getattr es solo para una estrategia de solo Protocol, que no lo
+            # declara (sus fallos se registran arriba, por excepción).
             omitidos.extend(getattr(strategy, "omitidos", ()))
             all_files.extend(files)
             self.log.info(f"   ✅ {strategy.name}: {len(files)} archivo(s)")

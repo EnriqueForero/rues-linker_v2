@@ -59,7 +59,8 @@ class ArtefactoDeclarado:
             L6 (``visualizaciones/*.png`` incluye el subdirectorio).
         estrategia: nombre de la clase de ``reporting.strategies`` que lo
             produce.
-        significado: para qué sirve; se copia al diccionario del contrato.
+        significado: para qué sirve (documentación de la lista; nadie lo
+            consume todavía).
     """
 
     patron: str
@@ -244,6 +245,19 @@ def artefactos_de(estrategia: object) -> tuple[str, ...]:
     return tuple(
         a.patron for a in ARTEFACTOS_OBLIGATORIOS + ARTEFACTOS_OPCIONALES if a.estrategia == nombre
     )
+
+
+def obligatorios_de(estrategia: object) -> tuple[str, ...]:
+    """Solo los patrones OBLIGATORIOS que produce una estrategia (instancia,
+    clase o nombre de clase; las subclases heredan la lista).
+
+    Es lo que ``Orchestrator._run_L6`` nombra como faltante cuando una
+    estrategia obligatoria lanza: sus Excel opcionales no faltan, se omiten.
+    Para una estrategia sin obligatorios devuelve una tupla vacía.
+    """
+
+    nombre = estrategia if isinstance(estrategia, str) else clase_declarada(estrategia)
+    return tuple(a.patron for a in ARTEFACTOS_OBLIGATORIOS if a.estrategia == nombre)
 
 
 @dataclass(frozen=True)

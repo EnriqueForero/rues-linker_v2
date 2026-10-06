@@ -41,6 +41,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from artefactos_l6 import NOMBRES_OBLIGATORIOS_L6, escribir_obligatorios_l6
 
 from record_linkage.api import linkage
 from record_linkage.pipeline.errores import ArtefactoObligatorioError, EstrategiaFallo
@@ -62,13 +63,6 @@ TEXTO_PROHIBIDO = "Error generando"
 MOTIVO_DASHBOARD = "matplotlib inventó un fallo en el dashboard"
 MOTIVO_RADAR = "el radar de calidad inventó un fallo en su panel"
 MOTIVO_REPORTE = "el reporte de métricas de calidad reventó a propósito"
-OBLIGATORIOS = (
-    "tabla_correlativa.parquet",
-    "tabla_correlativa.csv.gz",
-    "golden_records.parquet",
-    "golden_records.csv.gz",
-    "config_auditoria_prueba.json",
-)
 
 
 def _correr_linkage(work_dir: Path, **extra: Any) -> dict[str, Any]:
@@ -249,6 +243,13 @@ def test_estrategia_obligatoria_que_lanza_falla_la_corrida(
     assert "disco lleno (inventado)" in mensaje
     assert isinstance(info.value.__cause__, EstrategiaFallo)
     assert info.value.__cause__.__cause__.__class__ is OSError
+    # Solo los obligatorios de la estrategia, no sus Excel opcionales.
+    assert info.value.faltantes == (
+        "tabla_correlativa.parquet",
+        "tabla_correlativa.csv.gz",
+        "golden_records.parquet",
+        "golden_records.csv.gz",
+    )
 
     manifiesto = _leer_manifiesto(tmp_path)
     assert manifiesto.get("L6_reporting", {}).get("status") != "DONE"
@@ -340,7 +341,7 @@ class _ExportacionDePrueba(strategies.DataExportStrategy):
     de tests/test_api_postprocessing.py)."""
 
     def execute(self, ctx: Any, logger: logging.Logger) -> list[Path]:
-        return [_tocar(ctx.output_dir, nombre) for nombre in OBLIGATORIOS]
+        return escribir_obligatorios_l6(ctx.output_dir)
 
 
 class _SoloProtocolQueLanza:
@@ -379,7 +380,7 @@ def test_estrategia_de_solo_protocol_que_lanza_se_omite_con_motivo(tmp_path: Pat
 
     archivos, _ = orq._run_L6(_datos_minimos())
 
-    assert {p.name for p in archivos} == set(OBLIGATORIOS)
+    assert {p.name for p in archivos} == set(NOMBRES_OBLIGATORIOS_L6)
     assert orq.l6_omitidos == [
         {
             "artefacto": "analítica externa",
@@ -397,6 +398,78 @@ def test_estrategia_obligatoria_que_lanza_sin_tipar_falla_la_corrida(tmp_path: P
         orq._run_L6(_datos_minimos())
     assert isinstance(info.value.__cause__, EstrategiaFallo)
     assert isinstance(info.value.__cause__.__cause__, OSError)
+
+
+def test_txt_de_auditoria_que_falla_se_omite_y_el_json_obligatorio_queda(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``config_auditoria_*.txt`` es OPCIONAL: si falla (un perfil con pesos no
+    numéricos, p. ej.) la corrida NO falla, el JSON obligatorio queda y la
+    omisión va al manifiesto. Antes el TypeError subía como ``EstrategiaFallo``
+    de una estrategia obligatoria y la corrida moría diciendo que faltaba un
+    JSON que sí estaba en disco."""
+    motivo = "peso de fuente no numérico (inventado)"
+
+    def _txt_roto(self: Any, path: Path, *args: Any, **kwargs: Any) -> None:
+        path.write_text("a medias", encoding="utf-8")
+        raise TypeError(motivo)
+
+    monkeypatch.setattr(strategies.ConfigAuditStrategy, "_write_txt_audit", _txt_roto)
+    orq = _orquestador_parcial(tmp_path, [_ExportacionDePrueba(), strategies.ConfigAuditStrategy()])
+
+    archivos, _ = orq._run_L6(_datos_minimos())
+
+    salida = orq.dirs[strategies.Phase.L6_REPORTING]
+    # (la exportación de prueba también deja su config_auditoria_prueba.json)
+    jsons = [
+        p for p in salida.glob("config_auditoria_*.json") if p.name not in NOMBRES_OBLIGATORIOS_L6
+    ]
+    assert len(jsons) == 1 and jsons[0].stat().st_size > 0
+    assert jsons[0] in archivos
+    assert list(salida.glob("config_auditoria_*.txt")) == [], "el TXT a medias debe borrarse"
+    assert len(orq.l6_omitidos) == 1
+    omision = orq.l6_omitidos[0]
+    assert omision["estrategia"] == "ConfigAuditStrategy"
+    assert omision["artefacto"] == jsons[0].with_suffix(".txt").name
+    assert omision["motivo"] == f"TypeError: {motivo}"
+    assert orq._meta_extra["L6_reporting"] == {"omitidos": orq.l6_omitidos}
+
+
+def test_omitidos_existe_antes_de_execute_y_omitir_no_revienta() -> None:
+    """Una subclase que sobreescribe ``execute`` (patrón de las capturas en
+    pruebas) puede llamar a ``omitir`` sin haber pasado por el ``execute``
+    de la base."""
+    estrategia = _ExportacionDePrueba()
+    assert estrategia.omitidos == []
+    estrategia.omitir("golden_records.xlsx", "motivo inventado")
+    assert [o.como_dict() for o in estrategia.omitidos] == [
+        {
+            "artefacto": "golden_records.xlsx",
+            "estrategia": "_ExportacionDePrueba",
+            "motivo": "motivo inventado",
+        }
+    ]
+    # Dos instancias no comparten la lista.
+    assert _ExportacionDePrueba().omitidos == []
+
+
+def test_obligatorios_de_filtra_los_opcionales_de_la_estrategia() -> None:
+    assert contrato_l6.obligatorios_de("DataExportStrategy") == (
+        "tabla_correlativa.parquet",
+        "tabla_correlativa.csv.gz",
+        "golden_records.parquet",
+        "golden_records.csv.gz",
+    )
+    assert contrato_l6.obligatorios_de(_ExportacionDePrueba()) == contrato_l6.obligatorios_de(
+        strategies.DataExportStrategy
+    )
+    assert contrato_l6.obligatorios_de("ConfigAuditStrategy") == ("config_auditoria_*.json",)
+    assert contrato_l6.obligatorios_de(strategies.DashboardStrategy()) == ()
+    assert contrato_l6.obligatorios_de(_SoloProtocolQueLanza()) == ()
+    # artefactos_de sigue devolviendo todo (es lo que usa _omisiones_de).
+    assert set(contrato_l6.obligatorios_de("DataExportStrategy")) < set(
+        contrato_l6.artefactos_de("DataExportStrategy")
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

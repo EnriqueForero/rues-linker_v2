@@ -167,10 +167,15 @@ class BaseReportingStrategy(ABC):
 
     Un artefacto OPCIONAL que no se pudo escribir se registra con
     ``self.omitir(artefacto, motivo)``; el orquestador lo lleva al manifiesto.
-    ``omitidos`` se vacía al empezar cada ``execute``.
+    ``omitidos`` existe desde la construcción (una subclase con ``__init__``
+    propio llama a ``super().__init__()``) y se vacía al empezar cada
+    ``execute``.
     """
 
     omitidos: list[ArtefactoOmitido]
+
+    def __init__(self) -> None:
+        self.omitidos = []
 
     @property
     def obligatoria(self) -> bool:
@@ -762,10 +767,22 @@ class ConfigAuditStrategy(BaseReportingStrategy):
             json.dump(audit_data, f, indent=2, default=str, ensure_ascii=False)
         generated.append(json_path)
 
-        # TXT (para lectura humana)
+        # TXT (para lectura humana): OPCIONAL en el contrato de L6. Si falla
+        # (un perfil con pesos no numéricos, p. ej.) no tumba la corrida: el
+        # JSON obligatorio ya está, el TXT a medias se borra y la omisión queda
+        # con su motivo. La misma regla que el Excel en DataExportStrategy.
         txt_path = ctx.output_dir / f"config_auditoria_{timestamp}.txt"
-        self._write_txt_audit(txt_path, audit_data, profile_params, ctx.metrics, ctx.phase_times)
-        generated.append(txt_path)
+        try:
+            self._write_txt_audit(
+                txt_path, audit_data, profile_params, ctx.metrics, ctx.phase_times
+            )
+            generated.append(txt_path)
+        except Exception as e:
+            with contextlib.suppress(OSError):
+                txt_path.unlink(missing_ok=True)
+            motivo = f"{type(e).__name__}: {e}"
+            logger.warning(f"      ⚠️ {txt_path.name} omitido: {motivo}")
+            self.omitir(txt_path.name, motivo)
 
         return generated
 
