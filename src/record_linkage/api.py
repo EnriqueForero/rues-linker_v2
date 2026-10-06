@@ -792,8 +792,10 @@ def _conteos_cruce(corr: pd.DataFrame, nombre_a: str, nombre_b: str) -> tuple[in
     from .pipeline.errores import CruceSinFuenteError
 
     if "SRC" not in corr.columns:
+        # Sin columna no hay etiquetas que falten: ``faltantes`` queda vacío,
+        # como documenta CruceSinFuenteError; ``columnas`` dice qué sí hay.
         raise CruceSinFuenteError(
-            faltantes=[nombre_a, nombre_b],
+            faltantes=[],
             columnas=[str(c) for c in corr.columns],
             nombre_a=nombre_a,
             nombre_b=nombre_b,

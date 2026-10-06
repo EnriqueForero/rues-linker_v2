@@ -56,18 +56,31 @@ class ColapsoExactoError(ErrorPipeline):
         self.fuente = fuente
         self.columnas = list(columnas)
         self.causa = causa
-        lista = ", ".join(repr(c) for c in self.columnas)
         if self.columnas:
+            lista = ", ".join(repr(c) for c in self.columnas)
             que_paso = (
                 f"la fuente '{fuente}' tiene valores no hashables (listas o dicts) "
                 f"en la(s) columna(s) {lista}; el colapso exacto de duplicados "
                 f"no puede comparar esas filas"
+            )
+            # El remedio debe poder pegarse tal cual: df[['A', 'B']] indexa una
+            # lista de columnas; df['A', 'B'] indexaría una tupla (KeyError).
+            que_hacer = (
+                f"convierta esas columnas a texto antes de llamar (p. ej. "
+                f"df[{self.columnas!r}] = df[{self.columnas!r}].astype(str), o "
+                f"'|'.join(...) para listas) o desactive el colapso con "
+                f"collapse_exact_duplicates=False"
             )
         else:
             detalle = f"{type(causa).__name__}: {causa}" if causa is not None else "sin causa"
             que_paso = (
                 f"pandas no pudo comparar las filas de la fuente '{fuente}' para el "
                 f"colapso exacto de duplicados ({detalle})"
+            )
+            que_hacer = (
+                "revise la causa citada; convierta a texto las columnas con objetos "
+                "(listas o dicts) o desactive el colapso con "
+                "collapse_exact_duplicates=False"
             )
         super().__init__(
             mensaje_accionable(
@@ -77,12 +90,7 @@ class ColapsoExactoError(ErrorPipeline):
                     "pidió y cuyas cifras (processed_rows, INPUT_ROW_COUNT) serían "
                     "indistinguibles de una corrida sin duplicados"
                 ),
-                que_hacer=(
-                    f"convierta esas columnas a texto antes de llamar (p. ej. "
-                    f"df[{lista}] = df[{lista}].astype(str), o '|'.join(...) para "
-                    f"listas) o desactive el colapso con "
-                    f"collapse_exact_duplicates=False"
-                ),
+                que_hacer=que_hacer,
             )
         )
 

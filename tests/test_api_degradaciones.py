@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -23,8 +24,10 @@ import pytest
 
 from record_linkage import linkage
 from record_linkage.api import _collapse_exact_sources, link
+from record_linkage.config.profiles import crear_config_orchestrator
 from record_linkage.deduplication.auto import deduplicate_auto
 from record_linkage.pipeline.errores import ColapsoExactoError, CruceSinFuenteError
+from record_linkage.pipeline.orchestrator import Orchestrator
 
 
 @contextlib.contextmanager
@@ -74,6 +77,73 @@ def test_l6_postprocesado_queda_registrado_en_manifest(tmp_path: Path) -> None:
     assert len(resultado["correlative"]) == len(fuente)
 
 
+def _manifiesto(work_dir: Path) -> dict:
+    return json.loads((work_dir / "manifest.json").read_text(encoding="utf-8"))
+
+
+def test_l6_postprocesado_se_regenera_en_cada_corrida(tmp_path: Path) -> None:
+    """La huella de L6 no incorpora el matcher ni el plan de colapso: dos
+    corridas postprocesadas sobre el mismo work_dir tienen el mismo hash L6.
+    Sin invalidar el registro previo, la segunda reutilizaría en silencio los
+    reportes de la primera. L1…L5 sí se reutilizan."""
+    fuente = pd.DataFrame(
+        {
+            "NIT": ["900123456", "900123456", "800000001"],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME SAS", "BETA SAS"],
+            "CIUDAD": ["BOGOTA", "BOGOTA", "CALI"],
+        }
+    )
+    work_dir = tmp_path / "corrida"
+    sellos: list[dict[str, str]] = []
+    for _ in range(2):
+        with _silencio():
+            linkage(
+                {"RUES": fuente},
+                work_dir=str(work_dir),
+                skip_reporting=False,
+                collapse_exact_duplicates=True,
+            )
+        manifiesto = _manifiesto(work_dir)
+        sellos.append(
+            {
+                "L5": manifiesto["L5_golden"]["timestamp"],
+                "L6": manifiesto["L6_reporting"]["timestamp"],
+                "hash_L6": manifiesto["L6_reporting"]["hash"],
+            }
+        )
+
+    assert sellos[0]["hash_L6"] == sellos[1]["hash_L6"], "premisa: la huella L6 no cambia"
+    assert sellos[0]["L5"] == sellos[1]["L5"], "L5 debe reutilizarse"
+    assert sellos[0]["L6"] != sellos[1]["L6"], "L6 debe regenerarse, no reutilizarse"
+
+
+def test_export_reports_queda_registrado_en_manifest(tmp_path: Path) -> None:
+    """``export_reports()`` es el otro camino que generaba L6 fuera del
+    registro de fase; ahora delega en ``ejecutar_reporting_postprocesado``."""
+    fuente = pd.DataFrame(
+        {
+            "NIT": ["900111111", "900222222"],
+            "RAZON_SOCIAL": ["ALFA SAS", "BETA SAS"],
+        }
+    )
+    work_dir = tmp_path / "manual"
+    config = crear_config_orchestrator(perfil="prueba_rapida", workspace=str(work_dir))
+    orquestador = Orchestrator(config, {"RUES": fuente}, str(work_dir))
+    with _silencio():
+        orquestador.run(skip_reporting=True)
+    assert "L6_reporting" not in _manifiesto(work_dir)
+
+    with _silencio():
+        archivos = orquestador.export_reports()
+
+    assert archivos
+    registro = _manifiesto(work_dir)["L6_reporting"]
+    assert registro["status"] == "DONE"
+    assert registro["meta"]["duration"] > 0
+    assert registro["meta"]["postprocesado"] == ["export_reports"]
+    assert {Path(a["path"]).name for a in registro["artifacts"]} == {p.name for p in archivos}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # (b) Celdas no hashables: fallar con mensaje accionable
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,6 +168,48 @@ def test_colapso_exacto_nombra_las_columnas_no_hashables() -> None:
     assert "CRM" in texto and "CIIU" in texto and "EXTRA" in texto
     assert "collapse_exact_duplicates=False" in texto
     assert "texto" in texto.lower()
+
+
+def _snippet_remedio(texto: str) -> str:
+    """Extrae del mensaje la línea ``df[...] = df[...].astype(str)``."""
+    encontrado = re.search(r"df\[.*?\] = df\[.*?\]\.astype\(str\)", texto)
+    assert encontrado is not None, texto
+    return encontrado.group(0)
+
+
+def test_colapso_exacto_remedio_se_puede_ejecutar_tal_cual() -> None:
+    """El «qué hacer» tiene que ser pegable: con dos columnas, ``df['A', 'B']``
+    indexa una tupla y pandas levanta KeyError."""
+    fuente = pd.DataFrame(
+        {
+            "NIT": ["1", "2", "1"],
+            "RAZON_SOCIAL": ["A", "B", "A"],
+            "CIIU": [["4711"], ["4719"], ["4711"]],
+            "EXTRA": [{"k": 1}, {"k": 2}, {"k": 1}],
+        }
+    )
+    with pytest.raises(ColapsoExactoError) as exc:
+        _collapse_exact_sources({"CRM": fuente})
+
+    snippet = _snippet_remedio(str(exc.value))
+    df = fuente.copy()
+    exec(snippet, {}, {"df": df})  # el remedio debe correr tal cual
+    assert df["CIIU"].map(type).eq(str).all() and df["EXTRA"].map(type).eq(str).all()
+    colapsadas, plan = _collapse_exact_sources({"CRM": df})
+    assert len(colapsadas["CRM"]) == 2
+    assert plan["stats"]["CRM"]["collapsed_rows"] == 1
+
+
+def test_colapso_exacto_sin_columnas_no_sugiere_df_vacio() -> None:
+    """Si pandas falló por otra causa no hay columnas que convertir: el
+    remedio cita la causa y no imprime ``df[] = df[]``."""
+    exc = ColapsoExactoError("CRM", [], causa=ValueError("columnas duplicadas"))
+    texto = str(exc)
+    assert exc.columnas == []
+    assert "df[]" not in texto
+    assert "ValueError: columnas duplicadas" in texto
+    assert "collapse_exact_duplicates=False" in texto
+    assert "Qué hacer" in texto
 
 
 def test_linkage_con_celda_lista_falla_en_vez_de_conservar_todo(tmp_path: Path) -> None:
@@ -165,6 +277,9 @@ def test_link_sin_src_falla_con_excepcion_especifica(monkeypatch: pytest.MonkeyP
     assert "SRC" in texto
     assert "Qué pasó" in texto and "Por qué importa" in texto and "Qué hacer" in texto
     assert "-1" not in texto
+    # Documentado en CruceSinFuenteError: vacío si la columna misma falta.
+    assert exc.value.faltantes == []
+    assert "SRC" not in exc.value.columnas
 
 
 def test_link_con_src_sin_alguna_fuente_falla(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,8 +295,9 @@ def test_link_con_src_sin_alguna_fuente_falla(monkeypatch: pytest.MonkeyPatch) -
         }
 
     monkeypatch.setattr("record_linkage.api.linkage", _linkage_una_fuente)
-    with pytest.raises(CruceSinFuenteError, match="ADUANAS"):
+    with pytest.raises(CruceSinFuenteError, match="ADUANAS") as exc:
         link(df_a, df_b, nombre_a="RUES", nombre_b="ADUANAS")
+    assert exc.value.faltantes == ["ADUANAS"]
 
 
 def test_link_camino_normal_devuelve_conteos_reales(tmp_path: Path) -> None:
@@ -195,16 +311,12 @@ def test_link_camino_normal_devuelve_conteos_reales(tmp_path: Path) -> None:
             work_dir=str(tmp_path / "cruce"),
             skip_reporting=True,
         )
-    corr = res.correlativa
-    conteos = corr.groupby(["ID_GRUPO", "SRC"]).size().unstack(fill_value=0)
-    cruzados = conteos[(conteos["RUES"] > 0) & (conteos["ADUANAS"] > 0)]
-    esperado_grupos = len(cruzados)
-    esperado_pares = int((cruzados["RUES"] * cruzados["ADUANAS"]).sum())
-
-    assert esperado_grupos >= 1  # ACME está en ambas tablas
-    assert res.metricas["n_grupos_cruzados"] == esperado_grupos
-    assert res.metricas["n_pares_a_b"] == esperado_pares
-    assert res.metricas["n_grupos_cruzados"] != -1 and res.metricas["n_pares_a_b"] != -1
+    # Oráculo fijo derivado de _tablas_ab(): ACME (NIT 900111222) tiene 2 filas
+    # en RUES y 1 en ADUANAS → 1 grupo cruzado y 2 pares A↔B. GLOBEX (solo A) y
+    # TITAN (solo B) no cruzan.
+    assert "SRC" in res.correlativa.columns
+    assert res.metricas["n_grupos_cruzados"] == 1
+    assert res.metricas["n_pares_a_b"] == 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────

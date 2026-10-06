@@ -689,11 +689,15 @@ class Orchestrator:
         fase no incorpora el matcher ni el plan de colapso, así que reutilizar
         un L6 «válido» devolvería reportes de otro resultado.
 
+        Es el único camino para generar L6 fuera de :meth:`run`:
+        :meth:`export_reports` también delega aquí.
+
         Args:
             results_data: dict con ``golden`` y ``correlative`` ya
                 postprocesados.
             postprocesado: etiquetas de lo que se aplicó tras L5 (p. ej.
-                ``["matcher", "colapso_exacto"]``); quedan en
+                ``["matcher", "colapso_exacto"]``, o ``["export_reports"]``
+                para la exportación manual); quedan en
                 ``manifest["L6_reporting"]["meta"]["postprocesado"]``.
 
         Returns:
@@ -786,6 +790,10 @@ class Orchestrator:
         Útil cuando se ejecutó con skip_reporting=True y luego se quieren
         generar los reportes sin re-ejecutar todo el pipeline.
 
+        Pasa por :meth:`ejecutar_reporting_postprocesado`, así que L6 queda
+        en ``manifest.json`` con ``meta.postprocesado == ["export_reports"]``
+        (hasta F1.13 llamaba a ``_run_L6`` directamente y no dejaba rastro).
+
         Args:
             results: Dict con 'golden' y 'correlative'.
                     Si None, carga de los archivos de L5.
@@ -808,8 +816,7 @@ class Orchestrator:
                 "correlative": pd.read_parquet(corr_path),
             }
 
-        files, _ = self._run_L6(results)
-        return files
+        return self.ejecutar_reporting_postprocesado(results, ["export_reports"])
 
     def add_reporting_strategy(self, strategy: BaseReportingStrategy) -> None:
         """
