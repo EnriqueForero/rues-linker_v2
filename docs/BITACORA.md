@@ -1510,6 +1510,13 @@ banco sigue en `1e365ba8…` y la conformidad en 34/34 en los dos modos.
    pasa por `_exec_phase`, un solo camino.
 6. **`--comparar` del banco rechaza conjuntos distintos.** Comparar `base_f0`
    con una corrida sin `--datos` dio PASA con todas las métricas «mejorando».
+7. **El paso estricto del CI pasa a trinquete por archivo y regla.** Sobre el
+   PR de F1 daba 158 violaciones, todas heredadas de archivos legados que F1
+   toca (`linkage_pipeline.py` 57, `visualizer.py` 18, `orchestrator.py` 18…).
+   `scripts/reglas_estrictas.py` compara BASE y HEAD por (archivo, regla) y
+   falla solo con violaciones nuevas; al medir así aparecieron cinco que el
+   conteo global escondía (dos funciones que subieron de complejidad y tres
+   `os.path` nuevos), corregidas sin `noqa`.
 
 ### Lo que el cruce con la v1 enseñó
 
