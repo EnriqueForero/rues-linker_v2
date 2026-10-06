@@ -48,6 +48,7 @@ from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
+from .errores import ConsolidacionNitError
 from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
 from .state_manager import StateManager
@@ -1710,6 +1711,11 @@ class Orchestrator:
 
         Returns:
             Tupla (dict con 'golden' y 'correlative', [Path, Path])
+
+        Raises:
+            ConsolidacionNitError: si la consolidación final por NIT falla.
+                No hay fallback a los resultados sin consolidar (F1.2): la
+                fase no se persiste y la corrida termina con mensaje accionable.
         """
         phase_dir = self.dirs[Phase.L5_GOLDEN]
         out_gold = phase_dir / "golden.parquet"
@@ -1786,11 +1792,16 @@ class Orchestrator:
             golden_input.release()
         gc.collect()
 
-        # Consolidación final por NIT
+        # Consolidación final por NIT.
+        # F1.2: nada se repara en silencio. Hasta aquí un ``except Exception``
+        # escribía una advertencia, seguía con golden/correl SIN consolidar y
+        # marcaba L5 como DONE: una entrega degradada que nadie veía. Ahora la
+        # fase falla con causa encadenada y mensaje accionable, y como la
+        # excepción sale antes de ``mark_done``, el manifiesto no registra L5.
         try:
             # El orquestador ya registra esta fase. Evitar ``print`` directos
             # impide que una consola Windows CP1252 convierta un emoji en una
-            # excepción y active el fallback funcional de consolidación.
+            # excepción dentro de la consolidación.
             golden_final, correl_final = consolidate_groups_by_nit_balanced(
                 golden,
                 correl,
@@ -1798,14 +1809,15 @@ class Orchestrator:
                 copiar_correlativa=False,
                 prioridad_fuentes=priority,
             )
-            if correl_final is not correl:
-                del correl
-            if golden_final is not golden:
-                del golden
-            self.log.info("   ✅ Consolidación por NIT completada")
         except Exception as e:
-            self.log.warning(f"   ⚠️ Consolidación falló, usando resultados directos: {e}")
-            golden_final, correl_final = golden, correl
+            raise ConsolidacionNitError.desde_causa(
+                e, n_golden=len(golden), n_correlativa=len(correl)
+            ) from e
+        if correl_final is not correl:
+            del correl
+        if golden_final is not golden:
+            del golden
+        self.log.info("   ✅ Consolidación por NIT completada")
 
         # F1.1: red final antes de persistir. Fuera del try anterior a propósito:
         # un golden con métricas nulas o columnas de la correlativa no se

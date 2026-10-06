@@ -29,6 +29,8 @@ DataFrame intacto si no encontraba lo que buscaba.
     generator.py:1341   if missing_cols: ... return df
     orchestrator.py     except Exception: log.warning("Consolidación falló,
                         usando resultados directos")
+                        (eliminado en F1.2: hoy levanta
+                        pipeline.errores.ConsolidacionNitError)
 
 Tres caminos por los que la entrega se degrada sin que nadie se entere, en una
 corrida de cuarenta minutos cuyo registro nadie lee entero. Y ninguna
