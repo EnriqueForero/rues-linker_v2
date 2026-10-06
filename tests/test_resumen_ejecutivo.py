@@ -11,7 +11,9 @@ SQLite de L2/L3 y con el pico de RSS medido por fase.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from record_linkage import linkage
 from record_linkage.evaluation.banco import _contar_filas_sqlite
 from record_linkage.pipeline.orchestrator import Orchestrator
 from record_linkage.reporting.reports import ReportGenerator
+from record_linkage.reporting.strategies import Phase
 
 # Grafías por empresa: dos con NIT (unión por identificador) y una sin NIT
 # (candidata solo por nombre). Así L2 y L3 tienen trabajo real.
@@ -133,22 +136,34 @@ def test_memoria_pico_es_el_maximo_del_rss_por_fase(corrida: dict[str, Any]) -> 
     assert float(coincidencia.group(1)) == round(metricas["rss_pico_mib"] / 1024, 2)
 
 
-def test_sin_bases_en_disco_el_resumen_no_inventa_ceros() -> None:
+def test_sin_bases_en_disco_el_resumen_no_inventa_ceros(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Si L6 no encuentra candidates.db/scored.db, dice N/A; un 0 sería mentira."""
+    # Instancia parcial con lo mínimo REAL: directorios de fase (vacíos, sin
+    # bases) y un logger. La librería no tolera instancias a medio construir.
     orquestador = object.__new__(Orchestrator)
-    orquestador._start_time = None
+    orquestador.dirs = {p: tmp_path / p.value for p in Phase}
+    orquestador.log = logging.getLogger("prueba_resumen")
+    orquestador._start_time = time.time() - 1  # execution_time > 0: se emite RENDIMIENTO
     orquestador._phase_times = {}
     orquestador._phase_peak_rss_mib = {}
     datos = pd.DataFrame({"ID_GRUPO": [1]})
 
-    metricas = orquestador._build_metrics(datos, datos)
+    with caplog.at_level(logging.WARNING, logger="prueba_resumen"):
+        metricas = orquestador._build_metrics(datos, datos)
 
     assert metricas["candidatos"] is None
     assert metricas["pares_puntuados"] is None
     assert metricas["rss_pico_mib"] is None
+    assert metricas["execution_time"] > 0
+    # El aviso dice qué pasó, por qué importa y qué hacer.
+    avisos = [r.getMessage() for r in caplog.records if "candidate_pairs" in r.getMessage()]
+    assert len(avisos) == 1 and "Qué hacer" in avisos[0] and "force_rerun" in avisos[0]
 
     generador = ReportGenerator(correlative_data=datos, golden_records_data=datos, metrics=metricas)
     resumen = generador._generate_executive_summary().set_index("Métrica")["Valor"]
     assert resumen["Candidatos Encontrados"] == "N/A"
     assert resumen["Pares Evaluados"] == "N/A"
+    assert resumen["Memoria Máxima"] == "N/A"
     assert "ERROR" not in resumen.index

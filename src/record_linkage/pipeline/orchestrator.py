@@ -2125,21 +2125,23 @@ class Orchestrator:
         """Filas de una tabla SQLite escrita por una fase, sin cargarla.
 
         Devuelve ``None`` —nunca 0— cuando la base o la tabla no están (p. ej.
-        una instancia parcial sin ``dirs`` o un L6 relanzado tras limpiar el
-        directorio de trabajo): un conteo ausente se muestra como «N/A», un 0
-        sería una cifra falsa. Reutiliza ``evaluation.banco._contar_filas_sqlite``
-        (privada en ese módulo; es la misma regla que usa el banco y se escribe
-        una sola vez).
+        un L6 relanzado tras limpiar el directorio de trabajo): un conteo
+        ausente se muestra como «N/A», un 0 sería una cifra falsa. Reutiliza
+        ``evaluation.banco._contar_filas_sqlite`` (privada en ese módulo; es la
+        misma regla que usa el banco y se escribe una sola vez). ``self.dirs``
+        y ``self.log`` existen desde ``__init__``; una instancia parcial de
+        prueba debe traerlos, no se toleran aquí.
         """
-        carpeta = getattr(self, "dirs", {}).get(fase)
-        if carpeta is None:
-            return None
-        ruta = Path(carpeta) / archivo
+        ruta = Path(self.dirs[fase]) / archivo
         total = _contar_filas_sqlite(ruta, tabla)
-        if total is None and hasattr(self, "log"):
+        if total is None:
             self.log.warning(
-                f"   ⚠️ No se pudo contar {tabla} en {ruta}: el resumen ejecutivo "
-                "mostrará N/A en vez de un número."
+                mensaje_accionable(
+                    f"no se pudo contar {tabla} en {ruta}.",
+                    "el resumen ejecutivo mostrará N/A en vez de un número.",
+                    "si necesita la cifra, relance la fase con force_rerun o conserve el "
+                    "directorio de trabajo entre corridas.",
+                )
             )
         return total
 
@@ -2173,7 +2175,9 @@ class Orchestrator:
         heredados de los mismos valores para los consumidores que siguen en
         inglés (``visualizer``, ``suite``, ``dashboard``); con ``None`` se
         entregan como 0 porque esos consumidores dividen por ellos. El resumen
-        ejecutivo lee las claves en español.
+        ejecutivo lee las claves en español. ``max_memory_gb`` está en GiB
+        (``rss_pico_mib / 1024``, como el muestreador) aunque la clave diga
+        «gb»: sus consumidores lo rotulan GiB.
 
         Args:
             golden_df: DataFrame de Golden Records

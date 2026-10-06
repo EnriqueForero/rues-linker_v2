@@ -327,7 +327,8 @@ class _ExportacionQueLanzaSinTipar(strategies.DataExportStrategy):
 def _orquestador_parcial(tmp_path: Path, estrategias: list[Any]) -> Orchestrator:
     orq = object.__new__(Orchestrator)
     orq.config = {"reporting_use_checkpoints": False}
-    orq.dirs = {strategies.Phase.L6_REPORTING: tmp_path / "reports"}
+    # Directorios de todas las fases (vacíos): _build_metrics cuenta en L2/L3.
+    orq.dirs = {p: tmp_path / p.value for p in strategies.Phase}
     orq._start_time = 1.0
     orq._phase_times = {}
     orq._meta_extra = {}

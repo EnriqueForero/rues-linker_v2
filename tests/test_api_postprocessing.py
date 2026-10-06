@@ -174,12 +174,21 @@ class _SilentLog:
     error = info
 
 
-def test_build_metrics_admite_instancia_parcial_y_copia_picos_rss() -> None:
-    """Compatibilidad con fixtures antiguos sin relajar el contrato de tipos."""
-
+def _orquestador_parcial(tmp_path) -> Orchestrator:
+    """Lo mínimo REAL de un orquestador para `_build_metrics`/`_run_L6`:
+    directorios de fase (vacíos) y logger; la librería no tolera menos."""
     orchestrator = object.__new__(Orchestrator)
+    orchestrator.dirs = {p: tmp_path / p.value for p in Phase}
+    orchestrator.log = _SilentLog()
     orchestrator._start_time = None
     orchestrator._phase_times = {}
+    return orchestrator
+
+
+def test_build_metrics_admite_instancia_parcial_y_copia_picos_rss(tmp_path) -> None:
+    """Compatibilidad con fixtures antiguos sin relajar el contrato de tipos."""
+
+    orchestrator = _orquestador_parcial(tmp_path)
     data = pd.DataFrame({"ID_GRUPO": [1]})
 
     metrics = orchestrator._build_metrics(data, data)
@@ -192,10 +201,8 @@ def test_build_metrics_admite_instancia_parcial_y_copia_picos_rss() -> None:
     assert orchestrator._phase_peak_rss_mib == {"L1_INGESTION": 12.5}
 
 
-def test_build_metrics_no_oculta_un_estado_rss_invalido() -> None:
-    orchestrator = object.__new__(Orchestrator)
-    orchestrator._start_time = None
-    orchestrator._phase_times = {}
+def test_build_metrics_no_oculta_un_estado_rss_invalido(tmp_path) -> None:
+    orchestrator = _orquestador_parcial(tmp_path)
     orchestrator._phase_peak_rss_mib = None
     data = pd.DataFrame({"ID_GRUPO": [1]})
 
@@ -210,14 +217,11 @@ def test_l6_no_trunca_exportacion_postprocesada_bajo_presion_de_ram(tmp_path, mo
     correlative = pd.DataFrame({"ID_GRUPO": np.arange(n_rows, dtype=np.int64), "SRC": "FUENTE"})
     seen: dict[str, int] = {}
 
-    orchestrator = object.__new__(Orchestrator)
+    orchestrator = _orquestador_parcial(tmp_path)
     orchestrator.config = {"reporting_use_checkpoints": False}
-    orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
-    orchestrator._phase_times = {}
     orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [_CaptureExport(seen), _CaptureAnalytics(seen)]
-    orchestrator.log = _SilentLog()
     monkeypatch.setattr(
         "record_linkage.pipeline.orchestrator.psutil.virtual_memory",
         lambda: SimpleNamespace(percent=90.0),
@@ -238,14 +242,11 @@ def test_l6_no_trunca_exportacion_postprocesada_bajo_presion_de_ram(tmp_path, mo
 
 def test_l6_intenta_exportar_aun_con_ram_critica_y_omite_solo_analitica(tmp_path, monkeypatch):
     seen: dict[str, int] = {}
-    orchestrator = object.__new__(Orchestrator)
+    orchestrator = _orquestador_parcial(tmp_path)
     orchestrator.config = {"reporting_use_checkpoints": False}
-    orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
-    orchestrator._phase_times = {}
     orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [_CaptureExport(seen), _CaptureAnalytics(seen)]
-    orchestrator.log = _SilentLog()
     monkeypatch.setattr(
         "record_linkage.pipeline.orchestrator.psutil.virtual_memory",
         lambda: SimpleNamespace(percent=96.0),
@@ -270,14 +271,11 @@ def test_l6_intenta_exportar_aun_con_ram_critica_y_omite_solo_analitica(tmp_path
 def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monkeypatch):
     strategy = DataExportStrategy()
     monkeypatch.setattr(strategy, "execute", lambda _ctx, _logger: [])
-    orchestrator = object.__new__(Orchestrator)
+    orchestrator = _orquestador_parcial(tmp_path)
     orchestrator.config = {"reporting_use_checkpoints": False}
-    orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
-    orchestrator._phase_times = {}
     orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [strategy]
-    orchestrator.log = _SilentLog()
     monkeypatch.setattr(
         "record_linkage.pipeline.orchestrator.psutil.virtual_memory",
         lambda: SimpleNamespace(percent=20.0),
