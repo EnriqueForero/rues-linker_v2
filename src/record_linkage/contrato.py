@@ -151,7 +151,13 @@ CORRELATIVA: tuple[ColumnaContrato, ...] = (
         "Posición del registro en la consolidación de entrada (v1).",
         "FILA_ORIGEN",
     ),
-    _c("ID_GRUPO", pa.int64(), "Grupo de esta corrida al que pertenece el registro.", "ID_GRUPO"),
+    _c(
+        "ID_GRUPO",
+        pa.int64(),
+        "Grupo de esta corrida al que pertenece el registro. Determinista por contenido: "
+        "posición lexicográfica del menor ID_REGISTRO del grupo (entero denso desde 0).",
+        "ID_GRUPO",
+    ),
     _c(
         "ID_ENTIDAD",
         pa.string(),

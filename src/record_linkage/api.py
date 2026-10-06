@@ -512,6 +512,10 @@ def linkage(
         trusted_unique_sources=trusted,
         **(ajustes_perfil or {}),
     )
+    # F2.3: L4 construye la clave por registro (ID_REGISTRO) con col_id para
+    # que ID_GRUPO sea determinista por contenido; el mismo valor va al
+    # manifiesto arriba y a completar_correlativa abajo (una sola regla).
+    config["col_id"] = col_id
     if owned_sources is not None:
         # Orchestrator debe recibir exactamente el mapping cuya propiedad se
         # cedió; así puede vaciar las referencias del llamador después de L1.
@@ -896,9 +900,10 @@ def dedupe(
         el manifiesto (``completar``): ``CONFIANZA`` queda nula (es la del
         golden), ``SCORE_PAR`` queda nulo (esta ruta no deja
         ``L3_scoring/scored.db``) e ``ID_GRUPO`` se recodifica de las
-        etiquetas ``C<n>``/``S<n>`` por régimen a entero por orden de primera
-        aparición (determinista por contenido); ``REGIMEN_AUTO`` sigue
-        diciendo por qué ruta pasó cada registro.
+        etiquetas ``C<n>``/``S<n>`` por régimen a entero determinista por
+        contenido (posición lexicográfica del menor ``ID_REGISTRO`` del
+        grupo, la misma regla de ``linkage``; F2.3, ADR-0013);
+        ``REGIMEN_AUTO`` sigue diciendo por qué ruta pasó cada registro.
 
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué

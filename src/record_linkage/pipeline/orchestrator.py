@@ -54,6 +54,7 @@ from ..reporting.strategies import (
     ReportingContext,
     VisualizationsStrategy,
 )
+from ..salida.identificadores_registro import asignar_id_registro, nombre_efectivo
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
@@ -1757,6 +1758,20 @@ class Orchestrator:
 
         return outfile, [outfile]
 
+    def _col_id_efectivo(self, df: pd.DataFrame) -> str | None:
+        """``config["col_id"]`` con el nombre que tiene en el consolidado de L1.
+
+        El usuario nombra la columna como está en su fuente; si coincide con
+        ``col_name``/``col_nit``/``col_ciudad``, la ingesta la renombró al
+        canónico (``column_mapping`` = {canónico: columna_usuario}).
+        """
+        col_id = self.config.get("col_id")
+        if col_id is None:
+            return None
+        mapeo = self.config.get("column_mapping") or {}
+        canonicos = {usuario: canonico for canonico, usuario in mapeo.items()}
+        return nombre_efectivo(str(col_id), df.columns, canonicos)
+
     def _run_L4(self, df: pd.DataFrame, score_path: Path) -> tuple[dict, list[Path]]:
         """
         L4: Clustering de entidades.
@@ -1766,6 +1781,10 @@ class Orchestrator:
 
         FASE 2 - Paso 2.1: Si HybridStorage está disponible, lee scored.db
         desde disco local para acelerar la lectura de SQLite.
+
+        F2.3: ``ID_GRUPO`` es determinista por contenido (menor ``ID_REGISTRO``
+        del grupo); ``config["col_id"]`` (lo pone ``api.linkage``) dice con qué
+        columna se construye la clave.
 
         Returns:
             Tupla (dict de mapeo record_id → ID_GRUPO, [Path])
@@ -1795,9 +1814,20 @@ class Orchestrator:
 
         self.log.info(f"   📊 Pares para clustering: {n_scored:,}")
 
+        # F2.3: ID_GRUPO determinista por contenido. La clave por registro
+        # (ID_REGISTRO: <SRC>-<col_id> o <SRC>-F<ORIGINAL_INDEX>) se construye
+        # con la MISMA regla que salida/completar (identificadores_registro);
+        # el clusterer etiqueta cada grupo por su menor clave, no por la
+        # posición mínima. Una col_id inexistente falla aquí, con mensaje
+        # accionable, y no al final de la corrida.
+        claves, reglas_id = asignar_id_registro(df, self._col_id_efectivo(df))
+        for fuente, regla in reglas_id.items():
+            if regla["regla"] == "fila" and regla.get("columna"):
+                self.log.warning(f"   ⚠️ ID_REGISTRO por fila en '{fuente}': {regla['motivo']}")
+
         # Ejecutar clustering directamente desde SQLite
         clusterer = OptimizedClusterer(self.profile, self.config)
-        cluster_map = clusterer.cluster_entities(str(read_path), df_full=df)
+        cluster_map = clusterer.cluster_entities(str(read_path), df_full=df, claves_registro=claves)
 
         # Normalizar a dict
         if isinstance(cluster_map, pd.Series):
