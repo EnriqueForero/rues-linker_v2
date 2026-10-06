@@ -538,43 +538,9 @@ def linkage(
 
     # ── Refinamiento opt-in con MatcherPostProcessor ──────────
     if matching_profile is not None:
-        from .matching import (
-            MatcherPostProcessor,
-            default_colombia_profile,
-            default_international_profile,
-        )
-        from .matching.spec import MatchingProfile as MatchingProfileCls
+        from .matching import MatcherPostProcessor
 
-        # Resolver string → instancia
-        if isinstance(matching_profile, str):
-            from .matching import (
-                default_colombia_profile_conservative,
-                default_colombia_profile_recall,
-            )
-
-            if matching_profile in ("colombia", "colombia_balanced"):
-                profile_obj = default_colombia_profile()
-            elif matching_profile == "colombia_conservative":
-                profile_obj = default_colombia_profile_conservative()
-            elif matching_profile == "colombia_recall":
-                profile_obj = default_colombia_profile_recall()
-            elif matching_profile == "international":
-                profile_obj = default_international_profile()
-            else:
-                raise ValueError(
-                    f"matching_profile string desconocido: '{matching_profile}'. "
-                    "Opciones: 'colombia' (balanced, default), "
-                    "'colombia_conservative' (max precision), "
-                    "'colombia_recall' (max recall), 'international', "
-                    "o instancia de MatchingProfile."
-                )
-        elif isinstance(matching_profile, MatchingProfileCls):
-            profile_obj = matching_profile
-        else:
-            raise TypeError(
-                f"matching_profile debe ser str o MatchingProfile, recibido "
-                f"{type(matching_profile).__name__}"
-            )
+        profile_obj = _resolver_matching_profile(matching_profile)
 
         # La correlativa ya contiene el esquema canónico y el orden exacto de
         # L1. Usarla como source evita concatenar de nuevo todas las fuentes
@@ -694,6 +660,47 @@ def linkage(
         ]
         escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
     return res
+
+
+def _resolver_matching_profile(matching_profile: Any) -> Any:
+    """Resuelve el ``matching_profile`` de ``linkage()`` a una instancia.
+
+    Acepta un nombre (``"colombia"``/``"colombia_balanced"``,
+    ``"colombia_conservative"``, ``"colombia_recall"``, ``"international"``) o
+    una ``MatchingProfile``; cualquier otra cosa es un error con las opciones.
+    Extraída de ``linkage()`` sin cambiar un mensaje (trinquete de complejidad).
+    """
+    from .matching import (
+        default_colombia_profile,
+        default_colombia_profile_conservative,
+        default_colombia_profile_recall,
+        default_international_profile,
+    )
+    from .matching.spec import MatchingProfile as MatchingProfileCls
+
+    if isinstance(matching_profile, MatchingProfileCls):
+        return matching_profile
+    if not isinstance(matching_profile, str):
+        raise TypeError(
+            f"matching_profile debe ser str o MatchingProfile, recibido "
+            f"{type(matching_profile).__name__}"
+        )
+    por_nombre = {
+        "colombia": default_colombia_profile,
+        "colombia_balanced": default_colombia_profile,
+        "colombia_conservative": default_colombia_profile_conservative,
+        "colombia_recall": default_colombia_profile_recall,
+        "international": default_international_profile,
+    }
+    if matching_profile not in por_nombre:
+        raise ValueError(
+            f"matching_profile string desconocido: '{matching_profile}'. "
+            "Opciones: 'colombia' (balanced, default), "
+            "'colombia_conservative' (max precision), "
+            "'colombia_recall' (max recall), 'international', "
+            "o instancia de MatchingProfile."
+        )
+    return por_nombre[matching_profile]()
 
 
 def _armar_resultado(
