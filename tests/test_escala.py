@@ -456,3 +456,10 @@ def test_cargar_evidencia_inexistente_nombra_las_disponibles(tmp_path: Path) -> 
     escala.guardar_evidencia({"etiqueta": "hay", "tamanos": {}}, tmp_path, "hay")
     with pytest.raises(FileNotFoundError, match="hay"):
         escala.cargar_evidencia(tmp_path, "no_esta")
+
+
+def test_comparar_sin_tamanos_no_pasa_en_vacio() -> None:
+    """Un JSON sin tamaños medidos no puede dar PASA: la compuerta exige medir."""
+    vacia = {"etiqueta": "x", "tamanos": {}}
+    with pytest.raises(ValueError, match="No hay tamaños que comparar"):
+        escala.comparar_escala(vacia, vacia)

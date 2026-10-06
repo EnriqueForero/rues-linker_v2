@@ -552,6 +552,13 @@ def comparar_escala(
     if tolerancia < 0 or holgura_segundos < 0:
         raise ValueError("tolerancia y holgura_segundos no pueden ser negativas.")
     pedidos = tuple(tamanos) if tamanos else tuple(base["tamanos"])
+    if not pedidos or not base["tamanos"] or not nueva["tamanos"]:
+        # Una comparación sin tamaños «pasaría» en vacío: eso no es una compuerta.
+        raise ValueError(
+            "No hay tamaños que comparar: la corrida base trae "
+            f"{sorted(base['tamanos'])} y la nueva {sorted(nueva['tamanos'])}. "
+            "Corra scripts/escala.py --etiqueta <nombre> con --tamanos antes de comparar."
+        )
     faltan = [t for t in pedidos if t not in base["tamanos"] or t not in nueva["tamanos"]]
     if faltan:
         raise ValueError(
