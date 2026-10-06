@@ -79,6 +79,38 @@ def test_columna_limpia_no_se_copia() -> None:
     assert prepare_spreadsheet_data(df) is df
 
 
+def test_contenedores_y_bytes_quedan_como_el_texto_de_to_csv() -> None:
+    """F1.11 ronda 3: un dict/list/tuple/set/bytes/ndarray en una celda (struct,
+    list o binary de parquet) no lo admite ninguna hoja de cálculo. Se vuelve el
+    MISMO texto que ``to_csv`` escribe (``str``): csv.gz y xlsx dicen lo mismo y
+    la salida CSV no cambia ni un byte. La fuente no se muta."""
+    import numpy as np
+
+    df = pd.DataFrame(
+        {
+            "O": [{"a": 1}, [1, 2], b"abc", (3, 4), {5}, np.array([6, 7]), None],
+            "M": [1, "x", [b"=y"], None, 2.5, bytearray(b"z"), "f"],
+            "N": [1, 2, 3, 4, 5, 6, 7],
+            "S": pd.array(["a", None, "b", "c", "d", "e", "f"], dtype="string"),
+        }
+    )
+    copia = df.copy(deep=True)
+    out = prepare_spreadsheet_data(df)
+    assert out.to_csv(index=False) == df.to_csv(index=False)
+    assert out["O"].tolist()[:6] == ["{'a': 1}", "[1, 2]", "b'abc'", "(3, 4)", "{5}", "[6 7]"]
+    assert pd.isna(out["O"].iloc[6])
+    assert out["M"].tolist()[:3] == [1, "x", "[b'=y']"]
+    assert out["M"].iloc[5] == "bytearray(b'z')"
+    # El texto de un contenedor pasa DESPUÉS por la neutralización, como cualquier otro.
+    sola = prepare_spreadsheet_data(pd.DataFrame({"C": [[1], "=f", None]}))
+    assert sola["C"].tolist()[:2] == ["[1]", "'=f"]
+    assert out["N"].to_numpy(copy=False) is df["N"].to_numpy(copy=False) or (
+        out["N"].to_numpy(copy=False).base is df["N"].to_numpy(copy=False).base
+    )
+    pd.testing.assert_frame_equal(df, copia)  # la fuente intacta: el dict sigue siendo dict
+    assert df["O"].iloc[0] == {"a": 1}
+
+
 def test_to_excel_escribe_la_razon_social_con_mojibake(tmp_path) -> None:
     """La ruta que usa el notebook 07: PipelineResult.to_excel con openpyxl."""
     resultado = PipelineResult(work_dir=tmp_path, extra={"CORRELATIVA": _tabla()})

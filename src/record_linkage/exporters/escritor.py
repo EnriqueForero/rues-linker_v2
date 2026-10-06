@@ -52,15 +52,17 @@ Reglas
 * **Determinista.** Los parquet se escriben con ``pyarrow`` fijando el
   esquema del contrato y sin metadatos variables (sin el bloque ``pandas``
   con versiones): dos escrituras del mismo resultado producen los mismos
-  bytes. Los ``.xlsx`` no son reproducibles byte a byte (openpyxl guarda la
-  fecha de creación en ``docProps/core.xml``); el manifiesto registra su
-  huella real igual.
+  bytes. Los ``.xlsx`` no son reproducibles byte a byte (openpyxl y
+  xlsxwriter guardan la fecha de creación en ``docProps/core.xml``); el
+  manifiesto registra su huella real igual.
 * **Excel completo o nada.** ``correlativa.xlsx``/``golden.xlsx`` se escriben
   completos hasta ``LIMITE_FILAS_EXCEL`` filas de datos (1.048.576 filas de
   hoja menos el encabezado). Si no caben, NO se escribe un recorte: se
   escribe ``<tabla>_LEEME.xlsx`` que dice cuántas filas tiene el parquet y
   cómo abrirlo (pandas, DuckDB, Power Query), y el manifiesto lo lista en
-  ``omitidos`` con su motivo. F1.11 refina (``informe_cruce.xlsx``).
+  ``omitidos`` con su motivo. La regla y la escritura en flujo (xlsxwriter,
+  ``constant_memory``) viven en ``exporters.excel`` (F1.11); los alias de v1
+  de L6 usan la misma función: nunca más la muestra recortada de v1.
 * **Un solo punto de escritura.** Es el ÚNICO módulo que escribe la carpeta
   del estándar; ``tests/test_escritor.py`` lo verifica sobre ``src/``. L6
   (``reporting/strategies.py``) escribe sus alias de v1 a través de las
@@ -114,6 +116,14 @@ from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
 from ._spreadsheet import prepare_spreadsheet_data, validate_leaf_name
+from .excel import (
+    LIMITE_FILAS_EXCEL,
+    escribir_excel_o_leeme,
+    hoja_de_lineas,
+    leeme_no_cabe,
+    miles,
+    motivo_no_cabe,
+)
 
 __all__ = [
     "LIMITE_FILAS_EXCEL",
@@ -124,16 +134,19 @@ __all__ = [
     "escribir_csv",
     "escribir_csv_gz",
     "escribir_csv_gz_por_lotes",
+    "escribir_excel_o_leeme",
     "escribir_parquet",
     "escribir_resultado",
     "escribir_xlsx",
     "leeme_alias_v1",
+    "leeme_no_cabe",
     "leer_resultado",
+    "miles",
+    "motivo_no_cabe",
 ]
 
-#: Filas de DATOS que caben en una hoja de Excel: 1.048.576 filas de hoja
-#: menos una de encabezado. Por encima no se recorta: se escribe el LEEME.
-LIMITE_FILAS_EXCEL = 1_048_575
+# ``LIMITE_FILAS_EXCEL`` (1.048.575 filas de datos) vive en ``exporters.excel``
+# y se reexporta aquí: la regla «completo o LEEME» se escribe una vez (F1.11).
 
 #: Versión en la que desaparecen los alias de v1 de L6 (``tabla_correlativa.*``,
 #: ``golden_records.*``): dos versiones menores después de 0.23.0.
@@ -457,9 +470,12 @@ def escribir_xlsx(
     leeme: pd.DataFrame | None = None,
     hoja: str = "datos",
 ) -> None:
-    """Escribe ``df`` en ``ruta`` neutralizado; con ``leeme`` esa hoja va PRIMERO.
+    """Escribe ``df`` en ``ruta`` neutralizado (openpyxl); con ``leeme`` esa hoja va PRIMERO.
 
-    Con ``df=None`` el libro solo lleva la hoja ``LEEME`` (el caso «no cabe»).
+    Es la primitiva de los libros PEQUEÑOS (``reporte_*.xlsx`` de L6): arma el
+    libro entero en RAM. Las tablas del estándar y los alias de v1 van por
+    ``escribir_excel_o_leeme`` (``exporters.excel``: en flujo, completo o
+    LEEME). Con ``df=None`` el libro solo lleva la hoja ``LEEME``.
     """
     if df is None and leeme is None:
         raise ValueError("escribir_xlsx: hace falta df, leeme o ambos.")
@@ -470,13 +486,9 @@ def escribir_xlsx(
             prepare_spreadsheet_data(df).to_excel(escritor, sheet_name=hoja, index=False)
 
 
-def _hoja_de_lineas(lineas: Sequence[str]) -> pd.DataFrame:
-    return pd.DataFrame({"LEEME": list(lineas)})
-
-
 def leeme_alias_v1(archivo_nuevo: str) -> pd.DataFrame:
     """Hoja LEEME de un alias de v1: remite al archivo del estándar y avisa el retiro."""
-    return _hoja_de_lineas(
+    return hoja_de_lineas(
         [
             "Este archivo es un ALIAS de v1 y se mantiene por compatibilidad.",
             f"El archivo nuevo es {archivo_nuevo} dentro de la carpeta del estándar "
@@ -485,24 +497,6 @@ def leeme_alias_v1(archivo_nuevo: str) -> pd.DataFrame:
             "Los datos están en la hoja siguiente, sin cambios respecto a v1.",
         ]
     )
-
-
-def _leeme_no_cabe(tabla: str, n_filas: int) -> pd.DataFrame:
-    parquet = f"{tabla}.parquet"
-    return _hoja_de_lineas(
-        [
-            f"{parquet} tiene {_miles(n_filas)} filas y una hoja de Excel admite "
-            f"{_miles(LIMITE_FILAS_EXCEL + 1)} (incluido el encabezado).",
-            "No se escribe un recorte: la tabla completa está en el parquet.",
-            f"pandas: pd.read_parquet('{parquet}')",
-            f"DuckDB: SELECT * FROM '{parquet}'",
-            "Power Query (Excel 365): Datos → Obtener datos → De archivo → Parquet.",
-        ]
-    )
-
-
-def _miles(n: int) -> str:
-    return f"{n:,}".replace(",", ".")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -783,22 +777,36 @@ def _excel(
         if df is None:
             omitidos.append({"artefacto": f"excel/{tabla}.xlsx", "motivo": f"res.{tabla} es None."})
             continue
-        if len(df) > LIMITE_FILAS_EXCEL:
-            ruta = dir_excel / f"{tabla}_LEEME.xlsx"
-            escribir_xlsx(None, ruta, leeme=_leeme_no_cabe(tabla, len(df)))
-            _registrar(artefactos, carpeta, ruta)
+        # F1.11: completo hasta LIMITE_FILAS_EXCEL o <tabla>_LEEME.xlsx; nunca recorte.
+        # El límite se pasa explícito para que una prueba pueda fijarlo en este módulo.
+        # El LEEME queda en excel/ y el parquet un nivel arriba: la ruta que cita es relativa.
+        try:
+            ruta = escribir_excel_o_leeme(
+                df,
+                dir_excel / f"{tabla}.xlsx",
+                limite=LIMITE_FILAS_EXCEL,
+                hoja=tabla,
+                ruta_parquet=f"../{tabla}.parquet",
+            )
+        except EscrituraSalidaError as exc:
+            # El Excel es opcional: un valor que xlsxwriter rechaza (celda > 32.767
+            # caracteres, fecha con zona horaria, un objeto que ni como texto se
+            # representa) no tumba la carpeta tras la corrida entera: escribir_excel_o_leeme
+            # nunca deja salir un TypeError. El parquet completo ya está escrito; nada se
+            # repara en silencio: el manifiesto y el log lo dicen con el motivo.
+            logger.warning("excel/%s.xlsx omitido: %s", tabla, exc)
+            omitidos.append({"artefacto": f"excel/{tabla}.xlsx", "motivo": str(exc)})
+            continue
+        _registrar(artefactos, carpeta, ruta)
+        if ruta.name != f"{tabla}.xlsx":
             omitidos.append(
                 {
                     "artefacto": f"excel/{tabla}.xlsx",
-                    "motivo": f"{_miles(len(df))} filas superan el límite de Excel "
-                    f"({_miles(LIMITE_FILAS_EXCEL)} de datos); no se recorta, "
-                    f"ver excel/{tabla}_LEEME.xlsx.",
+                    "motivo": motivo_no_cabe(
+                        len(df), f"excel/{ruta.name}", limite=LIMITE_FILAS_EXCEL
+                    ),
                 }
             )
-            continue
-        ruta = dir_excel / f"{tabla}.xlsx"
-        escribir_xlsx(df, ruta, hoja=tabla)
-        _registrar(artefactos, carpeta, ruta)
 
 
 def _figuras_sin_choques(figuras: Sequence[Path]) -> list[Path]:

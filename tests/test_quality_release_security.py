@@ -138,7 +138,7 @@ def test_l6_streaming_exports_escape_spreadsheet_formulas(tmp_path: Path) -> Non
 
     strategy = DataExportStrategy()
     files = strategy._export_from_disk_streaming(
-        source, "resultado", tmp_path, excel_limit=100, logger=logging.getLogger(__name__)
+        source, "resultado", tmp_path, logger=logging.getLogger(__name__)
     )
 
     csv_path = next(path for path in files if path.name.endswith(".csv.gz"))

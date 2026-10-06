@@ -286,14 +286,117 @@ def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
     texto = "\n".join(celdas)
     assert f"{len(res.correlativa):,}".replace(",", ".") in texto
     assert "read_parquet" in texto and "duckdb" in texto.lower() and "Power Query" in texto
+    # El LEEME vive en excel/ y el parquet un nivel arriba: la ruta que cita funciona tal cual.
+    assert "pd.read_parquet('../correlativa.parquet')" in texto
+    assert "SELECT * FROM '../correlativa.parquet'" in texto
     assert {o["artefacto"] for o in man.omitidos} == {
         "excel/correlativa.xlsx",
         "excel/golden.xlsx",
     }
+    # El motivo es el único texto de «no cabe» (exporters.excel.motivo_no_cabe), con el
+    # límite que rigió la escritura y puntos de millar.
+    motivos = {o["artefacto"]: o["motivo"] for o in man.omitidos}
+    assert motivos["excel/correlativa.xlsx"] == escritor.motivo_no_cabe(
+        len(res.correlativa), "excel/correlativa_LEEME.xlsx", limite=10
+    )
+    assert "(10 de datos)" in motivos["excel/golden.xlsx"]
     assert [a["ruta"] for a in man.artefactos if a["ruta"].startswith("excel/")] == [
         "excel/correlativa_LEEME.xlsx",
         "excel/golden_LEEME.xlsx",
     ]
+
+
+def test_celda_de_mas_de_32767_caracteres_omite_el_excel_y_publica(
+    res: ResultadoLinkage, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Revisión F1.11 (2): el Excel es opcional. Una celda que xlsxwriter rechaza
+    (> 32.767 caracteres; objeto social, observaciones…) no tumba la carpeta tras
+    la corrida entera: el parquet completo está, el Excel no, y ``omitidos`` lo dice."""
+    correl = res.correlativa.copy()
+    columnas_fuente = [
+        c for c in correl.columns if c not in {c.nombre for c in contrato.CORRELATIVA}
+    ]
+    columna = columnas_fuente[0]
+    correl[columna] = pd.array(["x" * 40_000] * len(correl), dtype="string")
+    with caplog.at_level(logging.WARNING, logger="record_linkage.exporters.escritor"):
+        man = escribir_resultado(
+            _con(res, correlativa=correl), tmp_path, "prueba", marca_tiempo=MARCA
+        )
+    assert man.carpeta.is_dir() and (man.carpeta / "correlativa.parquet").is_file()
+    assert not (man.carpeta / "excel" / "correlativa.xlsx").exists()
+    assert (man.carpeta / "excel" / "golden.xlsx").is_file()  # el golden sí cabe y sí se escribe
+    motivos = {o["artefacto"]: o["motivo"] for o in man.omitidos}
+    assert "32.767" in motivos["excel/correlativa.xlsx"]
+    assert "linkage()" not in motivos["excel/correlativa.xlsx"]
+    assert "excel/correlativa.xlsx" not in {a["ruta"] for a in man.artefactos}
+    assert any("excel/correlativa.xlsx" in r.getMessage() for r in caplog.records)
+    assert man.verificar() == []
+    leido = pd.read_parquet(man.carpeta / "correlativa.parquet")
+    assert leido[columna].str.len().eq(40_000).all()  # el parquet lleva la celda entera
+
+
+def test_columna_de_la_fuente_con_listas_se_publica_con_excel_como_texto(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Revisión F1.11 ronda 3 (medio): la correlativa lleva TODAS las columnas de la
+    fuente y una de ``list``/``struct`` sobrevive al parquet. xlsxwriter la rechazaba
+    con ``TypeError`` y la carpeta entera fallaba tras la corrida. Ahora la celda va
+    como el mismo texto que csv.gz, el parquet conserva la lista y nada se omite."""
+    correl = res.correlativa.copy()
+    columnas_fuente = [
+        c for c in correl.columns if c not in {c.nombre for c in contrato.CORRELATIVA}
+    ]
+    columna = columnas_fuente[0]
+    correl[columna] = pd.Series([["a", "b"]] * len(correl), dtype=object)
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "prueba", marca_tiempo=MARCA)
+    assert man.verificar() == []
+    assert "excel/correlativa.xlsx" in {a["ruta"] for a in man.artefactos}
+    assert [o["artefacto"] for o in man.omitidos] == []
+    from openpyxl import load_workbook
+
+    libro = load_workbook(man.carpeta / "excel" / "correlativa.xlsx", read_only=True)
+    try:
+        hoja = libro["correlativa"]
+        filas = hoja.iter_rows(values_only=True)
+        posicion = list(next(filas)).index(columna)
+        assert next(filas)[posicion] == "['a', 'b']"
+    finally:
+        libro.close()
+    leido = pd.read_parquet(man.carpeta / "correlativa.parquet")
+    assert list(leido[columna].iloc[0]) == ["a", "b"]  # el parquet conserva la lista
+
+
+def test_columna_de_la_fuente_con_datetime_con_zona_omite_el_excel_y_publica(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Revisión F1.11 ronda 4 (medio): una columna extra de la fuente ``object`` con
+    ``datetime`` con ``tzinfo`` (driver de base de datos, JSON de API) hacía fallar la
+    carpeta ENTERA con ``TypeError`` tras la corrida completa. Ahora el Excel de la
+    correlativa queda en ``omitidos`` nombrando la columna y la zona horaria, el golden
+    se escribe y la carpeta se publica íntegra."""
+    from datetime import timedelta, timezone
+
+    correl = res.correlativa.copy()
+    columnas_fuente = [
+        c for c in correl.columns if c not in {c.nombre for c in contrato.CORRELATIVA}
+    ]
+    columna = columnas_fuente[0]
+    bogota = timezone(timedelta(hours=-5))
+    correl[columna] = pd.Series(
+        [datetime(2026, 1, 1, 8, 30, tzinfo=bogota)] * len(correl), dtype=object
+    )
+    assert correl[columna].dtype == object
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "prueba", marca_tiempo=MARCA)
+    assert man.carpeta.is_dir() and (man.carpeta / "correlativa.parquet").is_file()
+    assert not (man.carpeta / "excel" / "correlativa.xlsx").exists()
+    assert (man.carpeta / "excel" / "golden.xlsx").is_file()
+    motivos = {o["artefacto"]: o["motivo"] for o in man.omitidos}
+    assert set(motivos) == {"excel/correlativa.xlsx"}
+    assert "zona horaria" in motivos["excel/correlativa.xlsx"]
+    assert columna in motivos["excel/correlativa.xlsx"]
+    assert "TypeError" not in motivos["excel/correlativa.xlsx"]
+    assert "excel/correlativa.xlsx" not in {a["ruta"] for a in man.artefactos}
+    assert man.verificar() == []
 
 
 def test_dos_escrituras_producen_las_mismas_huellas(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -877,10 +980,11 @@ _ESCRITORES = {
 #: motivo. Quitar una entrada exige quitar primero la llamada.
 ESCRITORES_PERMITIDOS: dict[str, str] = {
     "exporters/escritor.py": "el escritor único del estándar (F1.10).",
+    "exporters/excel.py": "la primitiva xlsx del escritor (F1.11): completo en flujo o LEEME.",
     "pipeline/orchestrator.py": "checkpoints L1…L5 en _trabajo/.",
     "pipeline/linkage_pipeline.py": "checkpoints del pipeline heredado en _trabajo/.",
     "pipeline/result.py": "PipelineResult.to_excel/to_csv heredados (lo pide el usuario).",
-    "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); F1.11 los unifica en "
+    "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); pendiente unificarlos en "
     "informe_cruce.xlsx a través del escritor.",
     "exporters/smart.py": "SmartExporter: utilidad genérica de exportación, no el estándar.",
     "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",

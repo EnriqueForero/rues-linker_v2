@@ -42,6 +42,14 @@ con ``version`` real e insumos con huella). La estrategia escribe
 (``config.auditoria.parametros_motor``: una regla, una vez), es OPCIONAL en
 el contrato de L6 y avisa con ``DeprecationWarning``; el ``.txt`` ya no se
 escribe.
+
+hasta que se unifique en ``informe_cruce.xlsx``.
+
+F1.11: el ``.xlsx`` de los alias se escribe COMPLETO hasta
+``LIMITE_FILAS_EXCEL`` filas (en flujo, ``exporters.excel``) o, si no cabe,
+``<alias>_LEEME.xlsx``; nunca más la muestra recortada de v1. La perilla
+``export_settings.excel_max_rows`` (recortaba a N filas) ya no hace nada y se
+avisa una vez por proceso si aparece en la configuración.
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ import shutil
 import time
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -69,10 +78,12 @@ from ..exporters.escritor import (
     VERSION_RETIRO_ALIAS_V1,
     escribir_csv_gz,
     escribir_csv_gz_por_lotes,
+    escribir_excel_o_leeme,
     escribir_parquet,
     escribir_xlsx,
     leeme_alias_v1,
 )
+from ..exporters.excel import LIMITE_FILAS_EXCEL, miles, motivo_no_cabe
 from ..pipeline._internal import _class_exists
 from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
@@ -95,7 +106,12 @@ ARCHIVO_NUEVO_DE_ALIAS: dict[str, str] = {
 }
 
 _ALIAS_V1_AVISADO = False
+_PERILLA_EXCEL_AVISADA = False
 _logger = logging.getLogger(__name__)
+
+#: Perilla de v1 que recortaba el Excel a N filas. Retirada en F1.11: el Excel
+#: va completo o se escribe el LEEME. Se avisa, no se ignora en silencio.
+PERILLA_EXCEL_RETIRADA = "excel_max_rows"
 
 
 def _avisar_alias_v1() -> None:
@@ -145,6 +161,21 @@ def _avisar_auditoria_v1() -> None:
     )
     warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
     _logger.warning(mensaje)
+
+
+def _avisar_perilla_excel(export_config: Mapping[str, Any], logger: logging.Logger) -> None:
+    """``export_settings.excel_max_rows`` ya no recorta nada: se avisa una vez por proceso."""
+    global _PERILLA_EXCEL_AVISADA
+    if _PERILLA_EXCEL_AVISADA or PERILLA_EXCEL_RETIRADA not in export_config:
+        return
+    _PERILLA_EXCEL_AVISADA = True
+    logger.warning(
+        f"export_settings.{PERILLA_EXCEL_RETIRADA}={export_config[PERILLA_EXCEL_RETIRADA]!r} "
+        "ya no aplica (F1.11): el Excel se escribe completo hasta "
+        f"{miles(LIMITE_FILAS_EXCEL)} filas o se deja <alias>_LEEME.xlsx; nunca un recorte. "
+        "Por qué importa: una muestra sin rótulo pasaba por la tabla completa. "
+        "Qué hacer: retire la perilla de la configuración."
+    )
 
 
 def _leeme_de(base_name: str) -> pd.DataFrame:
@@ -401,7 +432,6 @@ class DataExportStrategy(BaseReportingStrategy):
     """
 
     STREAMING_BATCH_SIZE: int = 50_000
-    EXCEL_ROW_LIMIT: int = 100_000
     MEMORY_WARNING_PERCENT: float = 80.0
 
     @property
@@ -420,10 +450,7 @@ class DataExportStrategy(BaseReportingStrategy):
         mem_percent = psutil.virtual_memory().percent
         logger.info(f"   💾 Memoria al inicio: {mem_percent:.1f}%")
 
-        export_config = ctx.config.get("export_settings", {})
-        excel_limit = min(
-            export_config.get("excel_max_rows", self.EXCEL_ROW_LIMIT), self.EXCEL_ROW_LIMIT
-        )
+        _avisar_perilla_excel(ctx.config.get("export_settings", {}) or {}, logger)
 
         checkpoint_dir = (
             self._find_checkpoint_dir(ctx.output_dir)
@@ -451,35 +478,30 @@ class DataExportStrategy(BaseReportingStrategy):
         # EstrategiaFallo → ArtefactoObligatorioError. Solo el Excel (opcional)
         # se omite con constancia.
         for task in export_tasks:
-            files = self._process_export_task(task, ctx.output_dir, excel_limit, logger)
+            files = self._process_export_task(task, ctx.output_dir, logger)
             generated_files.extend(files)
             gc.collect()
 
         return generated_files
 
     def _process_export_task(
-        self, task: ExportTask, output_dir: Path, excel_limit: int, logger: logging.Logger
+        self, task: ExportTask, output_dir: Path, logger: logging.Logger
     ) -> list[Path]:
         """Procesa una tarea de exportación."""
         checkpoint_path = task.find_checkpoint()
 
         if checkpoint_path and PYARROW_AVAILABLE:
             logger.info(f"   📂 {task.name}: Streaming desde disco")
-            return self._export_from_disk_streaming(
-                checkpoint_path, task.name, output_dir, excel_limit, logger
-            )
+            return self._export_from_disk_streaming(checkpoint_path, task.name, output_dir, logger)
         else:
             logger.info(f"   🧠 {task.name}: Desde memoria ({len(task.df_source):,} filas)")
-            return self._export_from_memory(
-                task.df_source, task.name, output_dir, excel_limit, logger
-            )
+            return self._export_from_memory(task.df_source, task.name, output_dir, logger)
 
     def _export_from_disk_streaming(
         self,
         source_path: Path,
         base_name: str,
         output_dir: Path,
-        excel_limit: int,
         logger: logging.Logger,
     ) -> list[Path]:
         """Exporta usando streaming REAL desde disco."""
@@ -505,31 +527,49 @@ class DataExportStrategy(BaseReportingStrategy):
             logger.info(f"      ✅ {parquet_dest.name} (copia)")
             files.append(parquet_dest)
 
-        # 3. Excel (opcional: si falla se omite con constancia, no se traga)
-        if total_rows <= excel_limit:
-            xlsx_path = output_dir / f"{base_name}.xlsx"
-            try:
-                df_excel = pd.read_parquet(source_path)
-                escribir_xlsx(df_excel, xlsx_path, leeme=_leeme_de(base_name))
-                del df_excel
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name}")
-                files.append(xlsx_path)
-            except Exception as e:
-                self._omitir_excel(xlsx_path, e, logger)
-        else:
-            xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
-            try:
-                df_sample = next(parquet_file.iter_batches(batch_size=excel_limit)).to_pandas()
-                escribir_xlsx(df_sample, xlsx_path, leeme=_leeme_de(base_name))
-                del df_sample
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name} (muestra)")
-                files.append(xlsx_path)
-            except Exception as e:
-                self._omitir_excel(xlsx_path, e, logger)
+        # 3. Excel (opcional: si falla se omite con constancia, no se traga).
+        # F1.11: completo (por lotes desde el parquet) o <alias>_LEEME.xlsx.
+        files.extend(self._excel_o_leeme(parquet_file, base_name, output_dir, total_rows, logger))
 
         return files
+
+    def _excel_o_leeme(
+        self,
+        fuente: pd.DataFrame | pq.ParquetFile,
+        base_name: str,
+        output_dir: Path,
+        n_rows: int,
+        logger: logging.Logger,
+    ) -> list[Path]:
+        """Excel completo hasta ``LIMITE_FILAS_EXCEL`` o ``<alias>_LEEME.xlsx``, nunca recorte.
+
+        Si la tabla no cabe, ``<alias>.xlsx`` queda en ``omitidos`` con el motivo
+        y el LEEME (que remite al parquet del alias y al archivo nuevo) se
+        devuelve como generado. Un fallo de escritura se omite con constancia.
+        """
+        xlsx_path = output_dir / f"{base_name}.xlsx"
+        try:
+            # hoja="datos": el nombre que F1.10 daba a los alias (escribir_xlsx); un
+            # lector con pd.read_excel(sheet_name="datos") distingue mayúsculas.
+            escrito = escribir_excel_o_leeme(
+                fuente,
+                xlsx_path,
+                hoja="datos",
+                leeme=_leeme_de(base_name),
+                filas_por_lote=self.STREAMING_BATCH_SIZE,
+            )
+        except Exception as e:
+            self._omitir_excel(xlsx_path, e, logger)
+            return []
+        gc.collect()
+        if escrito == xlsx_path:
+            logger.info(f"      ✅ {xlsx_path.name}")
+            return [escrito]
+        motivo = motivo_no_cabe(n_rows, escrito.name)  # el mismo texto que el estándar
+        logger.warning(f"      ⚠️ {xlsx_path.name} omitido: {motivo}")
+        self.omitir(xlsx_path.name, motivo)
+        logger.info(f"      ✅ {escrito.name} (la tabla completa está en {base_name}.parquet)")
+        return [escrito]
 
     def _omitir_excel(self, xlsx_path: Path, causa: Exception, logger: logging.Logger) -> None:
         """Un Excel que falla no se escribe a medias ni se olvida: se borra el
@@ -544,7 +584,6 @@ class DataExportStrategy(BaseReportingStrategy):
         df: pd.DataFrame,
         base_name: str,
         output_dir: Path,
-        excel_limit: int,
         logger: logging.Logger,
     ) -> list[Path]:
         """Exporta desde DataFrame en memoria.
@@ -571,26 +610,11 @@ class DataExportStrategy(BaseReportingStrategy):
         logger.info(f"      ✅ {csv_path.name}")
         files.append(csv_path)
 
-        # 3. Excel (opcional; solo si es seguro para la RAM)
+        # 3. Excel (opcional; completo o LEEME, F1.11). Con la RAM al límite se
+        # omite con constancia: la escritura va por lotes, pero cada lote copia.
         mem_percent = psutil.virtual_memory().percent
-        if n_rows <= excel_limit and mem_percent < 85:
-            xlsx_path = output_dir / f"{base_name}.xlsx"
-            try:
-                escribir_xlsx(df, xlsx_path, leeme=_leeme_de(base_name))
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name}")
-                files.append(xlsx_path)
-            except Exception as e:
-                self._omitir_excel(xlsx_path, e, logger)
-        elif n_rows > excel_limit:
-            xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
-            try:
-                escribir_xlsx(df.head(excel_limit), xlsx_path, leeme=_leeme_de(base_name))
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name} (muestra)")
-                files.append(xlsx_path)
-            except Exception as e:
-                self._omitir_excel(xlsx_path, e, logger)
+        if mem_percent < 85:
+            files.extend(self._excel_o_leeme(df, base_name, output_dir, n_rows, logger))
         else:
             self.omitir(
                 f"{base_name}.xlsx",

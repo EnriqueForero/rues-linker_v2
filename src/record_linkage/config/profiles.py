@@ -77,7 +77,8 @@ DEPRECATED_CONFIG_KEYS: set[str] = {
 # Claves con lectura parcial (no son dead pero su comportamiento es limitado)
 PARTIAL_CONFIG_KEYS: set[str] = {
     "source_quality_weights",  # Solo se usa el orden de las keys, no los valores
-    "export_settings",  # Solo excel_max_rows se respeta consistentemente
+    "export_settings",  # Ninguna clave se lee desde F1.11 (excel_max_rows retirada:
+    # el Excel va completo o <alias>_LEEME.xlsx; L6 avisa si la ve)
 }
 
 
@@ -713,7 +714,6 @@ config_produccion_it7 = {
     "remove_test_data": False,
     "remove_invalid_nits": False,
     "export_settings": {
-        "excel_max_rows": 800_000,
         "csv_compression": "gzip",
         "parquet_compression": "snappy",
         "include_diagnostics": True,

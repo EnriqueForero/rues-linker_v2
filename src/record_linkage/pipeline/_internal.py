@@ -92,7 +92,6 @@ DEFAULT_CONFIG = {
         "min_quality_score": 0.30,
     },
     "export_settings": {
-        "excel_max_rows": 1_000_000,
         "csv_compression": "gzip",
         "parquet_compression": "snappy",
         "include_diagnostics": True,
