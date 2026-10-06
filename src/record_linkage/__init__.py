@@ -40,7 +40,7 @@ from .config.paths import Rutas
 from .config.profiles import crear_config_orchestrator, get_profile
 from .config.settings import Config
 from .deduplication.auto import deduplicate_auto
-from .deduplication.unified import deduplicate_unified
+from .deduplication.unified import AjustesDeduplicacion, deduplicate_unified
 from .engine.cobertura import ResultadoCobertura, cobertura_estrella
 from .evaluation.pairwise import evaluar_pares
 from .exporters.escritor import Manifiesto, escribir_resultado, exportar_vistas, leer_resultado
@@ -108,6 +108,7 @@ __all__ = [
     "GENERICOS_GEOGRAFIA",
     "GENERICOS_SECTOR",
     "SUFIJOS_INTERNACIONALES",
+    "AjustesDeduplicacion",
     "CampoSpec",
     "ColumnType",
     "Compression",

@@ -7,6 +7,14 @@ Componentes:
 NOTA: Lógica de negocio preservada exactamente como en el notebook
 fuente. Solo se agregan imports, docstring de módulo y se eliminan
 directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+
+DEPRECADO (F2.9): ``RecordLinkagePipeline`` avisa con ``DeprecationWarning``
+al construirse. El ``Orchestrator`` ya no lo necesita (sus componentes de
+preparación salen de ``pipeline.componentes``), y los scripts y pruebas que
+lo ejecutaban directamente pasan por ``deduplication.deduplicate_unified``
+con ``AjustesDeduplicacion``. Se retira en F5, cuando ``dedupe()`` deje de
+usarlo como motor; hasta entonces ``deduplicate_unified`` lo construye con
+``_uso_interno=True`` para no avisar a quien no puede hacer nada al respecto.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from __future__ import annotations
 import gc
 import os
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +34,7 @@ from ..engine.similarity import BasicSimilarityCalculator, SimilarityCalculator
 from ..exporters.smart import SmartExporter
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import GoldenRecordGeneratorV7
-from ..processing.nit import NitProcessor
-from ..processing.text import TextProcessor
 from ..processing.validator import DataValidator
-from ..reporting.data_handler import DataHandler
 from ..reporting.reports import ReportGenerator
 from ..utils.logger import CustomLogger
 from ..utils.memory import MemoryManager
@@ -41,6 +47,7 @@ from ..utils.performance import track_performance
 # o cuando alguien solo necesita importar las clases del pipeline.
 # La disponibilidad se chequea ahora con _class_exists() en lugar de globals().
 from ._internal import DEFAULT_CONFIG, PROFILES, _class_exists as _class_is_importable
+from .componentes import fabricar_componentes
 from .errores import ErrorPipeline
 
 
@@ -55,29 +62,46 @@ class RecordLinkagePipeline:
     - Manejo robusto de errores y recursos
     """
 
-    def __init__(self, config: dict[str, Any] | None = None, profile: str = "standard"):
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        profile: str = "standard",
+        *,
+        _uso_interno: bool = False,
+    ):
         """
         Constructor que inicializa el pipeline con configuración y perfil.
+
+        DEPRECADO (F2.9): avisa con ``DeprecationWarning``. Use
+        ``deduplication.deduplicate_unified`` (con ``AjustesDeduplicacion`` si
+        necesita forzar el motor o una perilla del perfil) o ``api.linkage``.
 
         Args:
             config: Diccionario de configuración personalizada
             profile: Perfil de configuración ('standard', 'high_precision', 'high_recall', etc.)
+            _uso_interno: solo para ``deduplicate_unified``, que lo usa como
+                motor hasta F5: con ``True`` no se emite el aviso.
         """
+        if not _uso_interno:
+            warnings.warn(
+                "RecordLinkagePipeline está deprecado (F2.9) y se retira en F5: use "
+                "record_linkage.deduplication.deduplicate_unified(..., ajustes=AjustesDeduplicacion(...)) "
+                "o record_linkage.linkage().",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.config = config or DEFAULT_CONFIG.copy()
         self.config["profile"] = profile
         self.profile_name = profile
         self.logger = CustomLogger("RecordLinkagePipeline")
 
-        # ✅ FIX BUG 1 (Fase 3): Leer cleaning_mode del profile, no del top-level
-        _profile_cfg = self.config.get("profiles", {}).get(profile, {})
-        _cleaning_mode = _profile_cfg.get(
-            "cleaning_mode", self.config.get("cleaning_mode", "BALANCEADO")
-        )
-
-        # Inicialización directa de componentes (sin lazy loading para depuración)
-        self._data_handler = DataHandler(self.config)
-        self._text_processor = TextProcessor(_cleaning_mode)
-        self._nit_processor = NitProcessor(self.config)
+        # Inicialización directa de componentes (sin lazy loading para depuración).
+        # F2.9: la regla del cleaning_mode (perfil > nivel superior > BALANCEADO)
+        # vive en pipeline.componentes, compartida con el Orchestrator.
+        _componentes = fabricar_componentes(self.config, profile)
+        self._data_handler = _componentes.data_handler
+        self._text_processor = _componentes.text_processor
+        self._nit_processor = _componentes.nit_processor
         self._validator = DataValidator(self.config)
 
         # El motor sí mantiene lazy loading porque su implementación puede cambiar
@@ -122,24 +146,19 @@ class RecordLinkagePipeline:
         if profile_name and profile_name not in self.config.get("profiles", {}):
             raise ValueError(f"Perfil '{profile_name}' no encontrado en la configuración")
 
-    # Propiedades para lazy loading de componentes
+    # Propiedades de los componentes (F2.9: los crea la fábrica en __init__;
+    # el «lazy loading» que había aquí nunca se ejercía y aplicaba una regla
+    # de cleaning_mode distinta a la del constructor).
     @property
     def data_handler(self):
-        if self._data_handler is None:
-            self._data_handler = DataHandler(self.config)
         return self._data_handler
 
     @property
     def text_processor(self):
-        if self._text_processor is None:
-            cleaning_mode = self.config.get("cleaning_mode", "BALANCEADO")
-            self._text_processor = TextProcessor(cleaning_mode)
         return self._text_processor
 
     @property
     def nit_processor(self):
-        if self._nit_processor is None:
-            self._nit_processor = NitProcessor(self.config)
         return self._nit_processor
 
     @property

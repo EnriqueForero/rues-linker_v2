@@ -16,16 +16,59 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 
 from ..exporters.smart import SmartExporter
 from ..pipeline._internal import DEDUPLICATION_PROFILES
+from ..pipeline.errores import mensaje_accionable
 from ..pipeline.linkage_pipeline import RecordLinkagePipeline
 from ..processing.nit import AdvancedNitProcessor
 from ..processing.text import EnhancedTextProcessor
 from ..utils.logger import setup_logger
+
+MOTORES_LSH = ("default", "disk_based")
+
+
+@dataclass(frozen=True)
+class AjustesDeduplicacion:
+    """Ajustes puntuales sobre la configuración que arma ``deduplicate_unified``.
+
+    F2.9: los scripts de calibración (``medir_con_ground_truth``,
+    ``replicar_v2_8_0``) y la prueba del camino en disco construían
+    ``RecordLinkagePipeline`` a mano solo para forzar el motor o una perilla
+    del perfil. Esta clase es esa perilla, en la función que se conserva.
+
+    Attributes:
+        motor: ``"default"`` (en memoria) o ``"disk_based"``; ``None`` deja
+            la decisión por tamaño (> 1M registros → disco).
+        perfil: claves que sobreescriben el perfil activo después de que
+            ``_build_deduplication_config`` lo eligió (p. ej.
+            ``{"score_threshold": 0.0}``). Se aplican antes de la preparación,
+            así que ``remove_top_words`` también cuenta.
+    """
+
+    motor: str | None = None
+    perfil: dict[str, Any] = field(default_factory=dict)
+
+    def aplicar(self, config: dict[str, Any]) -> None:
+        """Escribe los ajustes en ``config`` (en el sitio). Falla si el motor no existe."""
+        if self.motor is not None:
+            if self.motor not in MOTORES_LSH:
+                raise ValueError(
+                    mensaje_accionable(
+                        f"AjustesDeduplicacion.motor = {self.motor!r} no es un motor LSH.",
+                        "un motor desconocido se ignoraría o fallaría a mitad de L2 sin "
+                        "decir por qué.",
+                        f"use uno de {list(MOTORES_LSH)} o deje motor=None para que se "
+                        "decida por tamaño.",
+                    )
+                )
+            config["linkage_engine_class"] = self.motor
+        if self.perfil:
+            config["profiles"][config["profile"]].update(self.perfil)
 
 
 def deduplicate_unified(
@@ -37,6 +80,7 @@ def deduplicate_unified(
     output_dir: str = "resultados_deduplicacion",
     validate_against_legacy: bool = False,
     extra_features: list[dict[str, Any]] | None = None,
+    ajustes: AjustesDeduplicacion | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Función principal unificada que encapsula toda la complejidad
@@ -99,6 +143,9 @@ def deduplicate_unified(
 
             Si es None o lista vacía, el comportamiento es idéntico a v2.6.0
             (paridad bit-a-bit). Default None.
+        ajustes: ``AjustesDeduplicacion`` para forzar el motor LSH o
+            sobreescribir perillas del perfil activo (F2.9). ``None`` = sin
+            ajustes, comportamiento idéntico.
 
     Returns:
         Tupla ``(tabla_correlativa, estadisticas)``.
@@ -148,6 +195,8 @@ def deduplicate_unified(
         _validate_extra_features(extra_features, df_input.columns)
 
     config = _build_deduplication_config(profile, mode, len(df_input))
+    if ajustes is not None:
+        ajustes.aplicar(config)
 
     # Inyectar extra_features en el perfil activo para que el VectorizedScorer
     # las lea. El scorer busca profile["extra_features"]; lo propagamos al
@@ -282,7 +331,9 @@ def deduplicate_unified(
     # ahora retorna un PipelineResult con carga lazy desde checkpoints parquet,
     # así que la tabla correlativa siempre está disponible vía `result.get(...)`
     # sin requerir que el pipeline retenga DataFrames en memoria.
-    pipeline = RecordLinkagePipeline(config, profile=profile)
+    # F2.9: construcción interna, sin el DeprecationWarning que sí recibe quien
+    # instancia RecordLinkagePipeline por su cuenta.
+    pipeline = RecordLinkagePipeline(config, profile=profile, _uso_interno=True)
     result = pipeline.run(
         sources={"DEDUP_SOURCE": df_prepared},
         output_dir=output_dir,
