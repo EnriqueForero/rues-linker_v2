@@ -26,7 +26,7 @@
         "marcador": "<MARCA_TIEMPO>"
       },
       {
-        "patron": "(?<![0-9a-zA-Z])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}(?![0-9a-zA-Z])",
+        "patron": "(?<![0-9a-zA-Z])(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{8,}(?![0-9a-zA-Z])",
         "marcador": "<HASH>"
       },
       {

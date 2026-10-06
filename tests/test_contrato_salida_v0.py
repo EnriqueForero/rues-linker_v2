@@ -9,22 +9,33 @@ fuente ``{"P2": df}`` leída con ``dtype=str`` y ``keep_default_na=False``,
 vacío y ``col_ciudad="CIUDAD"``— y compara contra el fixture
 ``tests/contratos/esquema_salida_v0.json``:
 
-1. nombres, ORDEN y tipos (``str(dtype)``) de las columnas de
-   ``L5_golden/correlative.parquet`` y ``L5_golden/golden.parquet`` leídos
-   con pandas;
+1. nombres, ORDEN y tipos de las columnas de ``L5_golden/correlative.parquet``
+   y ``L5_golden/golden.parquet`` leídos con pandas. El tipo se registra con
+   ``_nombre_tipo``: las columnas de texto quedan como ``str`` con
+   independencia de la versión de pandas (en 3.x un parquet de texto se lee
+   como ``str``; en 2.x, que es lo que instala el job de CI en Python 3.10
+   porque pandas 3 exige Python ≥ 3.11, se lee como ``object``), y el resto
+   como ``str(dtype)`` (``int64``, ``float64``…). Sin esa canonización la
+   compuerta no podría pasar en 3.10 y enseñaría a desactivarla;
 2. la lista ordenada de rutas relativas de TODOS los archivos escritos bajo
-   ``work_dir`` (L1…L6 + ``manifest.json``). Las partes variables se
+   ``work_dir`` (L1…L6 + ``manifest.json``), con multiplicidad: dos archivos
+   que normalizan al mismo patrón cuentan como dos. Las partes variables se
    sustituyen por marcadores con las expresiones regulares de
    ``NORMALIZACIONES`` (marca de tiempo → ``<MARCA_TIEMPO>``, hash hexadecimal
-   → ``<HASH>``, sufijo aleatorio de ``tempfile`` → ``<ALEATORIO>``): el
-   fixture guarda el patrón, nunca el valor;
+   en minúsculas, mayúsculas o mezcla → ``<HASH>``, sufijo aleatorio de
+   ``tempfile`` → ``<ALEATORIO>``): el fixture guarda el patrón, nunca el
+   valor;
 3. las claves de primer nivel de ``manifest.json``, las de ``_meta`` y, por
    fase (``L1_prep`` … ``L6_reporting``), las claves de la fase y de su
    ``meta``;
 4. el número de filas de la correlativa (= filas del dataset) y del golden;
 5. (adicional) las claves del ``dict`` que devuelve ``linkage()``: F1.9 lo
    reemplaza por ``ResultadoLinkage`` y conviene que ese cambio también
-   quede declarado aquí.
+   quede declarado aquí;
+6. (adicional) el ``_meta`` del fixture (dataset, filas de entrada,
+   parámetros de la llamada y patrones de normalización) se compara con lo
+   que el código produce hoy, para que no documente algo rancio si alguien
+   cambia ``NORMALIZACIONES`` o ``PARAMETROS_LINKAGE`` sin regenerarlo.
 
 Por qué existe
 --------------
@@ -91,9 +102,11 @@ import importlib.util
 import json
 import os
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -117,14 +130,20 @@ PARAMETROS_LINKAGE: dict[str, Any] = {
 
 # Partes variables de los nombres de archivo → marcador. Se aplican en orden;
 # la marca de tiempo va primero para que sus dígitos no se confundan con un
-# hash. El patrón de hash exige al menos una letra a-f para no absorber
-# contadores decimales (p. ej. ``chunk_00000001``).
+# hash. El patrón de hash acepta hexadecimal en cualquier caja (un
+# ``code_fingerprint`` en mayúsculas también es un valor, no un patrón) y
+# exige al menos una letra a-f para no absorber contadores decimales
+# (p. ej. ``chunk_00000001``).
 NORMALIZACIONES: tuple[tuple[str, str], ...] = (
     (r"\d{8}_\d{6}", "<MARCA_TIEMPO>"),
     (r"\d{4}-\d{2}-\d{2}[T_ ]\d{2}[-:]\d{2}[-:]\d{2}", "<MARCA_TIEMPO>"),
-    (r"(?<![0-9a-zA-Z])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}(?![0-9a-zA-Z])", "<HASH>"),
+    (r"(?<![0-9a-zA-Z])(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{8,}(?![0-9a-zA-Z])", "<HASH>"),
     (r"(?<![0-9a-zA-Z])tmp[a-z0-9_]{8}(?![0-9a-zA-Z])", "<ALEATORIO>"),
 )
+
+# Nombre canónico con el que la foto registra una columna de texto, sea cual
+# sea la versión de pandas que la lea (3.x: ``str``; 2.x: ``object``).
+TIPO_TEXTO = "str"
 
 RECORDATORIO = (
     "El esquema de salida de linkage() cambió respecto al fixture "
@@ -152,8 +171,24 @@ def normalizar_ruta(ruta: str) -> str:
     return ruta
 
 
+def _nombre_tipo(dtype: Any) -> str:
+    """Nombre del tipo de una columna, estable entre versiones de pandas.
+
+    Una columna de texto leída de parquet es ``str`` en pandas 3 (``future.infer_string``)
+    y ``object`` en pandas 2.x; también puede llegar como ``string``/``string[pyarrow]``
+    si alguien activa ``string_storage``. Todas se registran como ``TIPO_TEXTO`` para
+    que un cambio de versión no se lea como cambio de contrato. El resto (``int64``,
+    ``float64``, ``bool``…) conserva ``str(dtype)``.
+    """
+    if pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.StringDtype):
+        return TIPO_TEXTO
+    return str(dtype)
+
+
 def _columnas(df: pd.DataFrame) -> Columnas:
-    return [{"nombre": str(nombre), "tipo": str(dtype)} for nombre, dtype in df.dtypes.items()]
+    return [
+        {"nombre": str(nombre), "tipo": _nombre_tipo(dtype)} for nombre, dtype in df.dtypes.items()
+    ]
 
 
 def _archivos_relativos(work_dir: Path) -> list[str]:
@@ -243,11 +278,21 @@ def diferencias_columnas(esperadas: Columnas, actuales: Columnas, tabla: str) ->
 
 
 def diferencias_listas(esperada: list[str], actual: list[str], que: str) -> list[str]:
-    """Dice qué elemento (archivo, clave) apareció o desapareció."""
-    faltan = [x for x in esperada if x not in actual]
-    sobran = [x for x in actual if x not in esperada]
-    mensajes = [f"{que}: desapareció {x!r}" for x in faltan]
-    mensajes += [f"{que}: apareció {x!r}" for x in sobran]
+    """Dice qué elemento (archivo, clave) apareció, desapareció o cambió de multiplicidad.
+
+    La multiplicidad importa: dos archivos que normalizan al mismo patrón (p. ej. dos
+    ``config_auditoria_<MARCA_TIEMPO>.json`` en una corrida) son dos entradas, y que
+    pasen de una a dos es un cambio de esquema aunque el conjunto no cambie.
+    """
+    conteo_esperado = Counter(esperada)
+    conteo_actual = Counter(actual)
+    mensajes = [f"{que}: desapareció {x!r}" for x in conteo_esperado if x not in conteo_actual]
+    mensajes += [f"{que}: apareció {x!r}" for x in conteo_actual if x not in conteo_esperado]
+    mensajes += [
+        f"{que}: {x!r} aparece {conteo_actual[x]} veces (antes {conteo_esperado[x]})"
+        for x in conteo_esperado
+        if x in conteo_actual and conteo_actual[x] != conteo_esperado[x]
+    ]
     return mensajes
 
 
@@ -282,6 +327,19 @@ def diferencias_filas(esperado: int, actual: int, tabla: str) -> list[str]:
     if esperado == actual:
         return []
     return [f"{tabla}: el número de filas cambió: {esperado} → {actual}"]
+
+
+def diferencias_meta(esperado: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Dice qué campo de ``_meta`` del fixture ya no coincide con lo que produce el código."""
+    mensajes = diferencias_listas(list(esperado), list(actual), "_meta del fixture")
+    mensajes += [
+        f"_meta.{clave} del fixture está rancio:\n"
+        f"    fixture: {esperado[clave]!r}\n"
+        f"    código:  {actual[clave]!r}"
+        for clave in esperado
+        if clave in actual and esperado[clave] != actual[clave]
+    ]
+    return mensajes
 
 
 def _fallar_si_hay(mensajes: list[str]) -> None:
@@ -373,7 +431,13 @@ def test_archivos_escritos(foto_esperada: dict[str, Any], foto_actual: dict[str,
             foto_esperada["archivos"], foto_actual["archivos"], "archivo en work_dir"
         )
     )
-    assert foto_actual["archivos"] == sorted(foto_actual["archivos"])
+    # Protege el fixture editado a mano (la foto actual sale ordenada por construcción).
+    assert foto_esperada["archivos"] == sorted(foto_esperada["archivos"]), (
+        "el fixture tiene los archivos desordenados: regenérelo, no lo edite a mano"
+    )
+    assert len(set(foto_esperada["archivos"])) == len(foto_esperada["archivos"]), (
+        "el fixture tiene archivos repetidos: regenérelo, no lo edite a mano"
+    )
     assert "manifest.json" in foto_actual["archivos"]
 
 
@@ -404,6 +468,13 @@ def test_claves_resultado(foto_esperada: dict[str, Any], foto_actual: dict[str, 
     )
 
 
+def test_meta_del_fixture_coincide_con_el_codigo(
+    foto_esperada: dict[str, Any], foto_actual: dict[str, Any]
+) -> None:
+    """``_meta`` documenta cómo se tomó la foto; si el código cambia, el fixture también."""
+    _fallar_si_hay(diferencias_meta(foto_esperada["_meta"], foto_actual["_meta"]))
+
+
 def test_fixture_no_guarda_valores_variables(foto_esperada: dict[str, Any]) -> None:
     """El fixture guarda patrones: ninguna ruta conserva una marca de tiempo."""
     for ruta in foto_esperada["archivos"]:
@@ -425,10 +496,28 @@ def test_normalizar_ruta_sustituye_partes_variables() -> None:
         == "L6_reporting/config_auditoria_<MARCA_TIEMPO>.json"
     )
     assert normalizar_ruta("L3/lote_3fa9c2b1e0d4.db") == "L3/lote_<HASH>.db"
+    # Un hash en mayúsculas o en caja mixta también es un valor, no un patrón.
+    assert normalizar_ruta("L6_reporting/DEADBEEF01.png") == "L6_reporting/<HASH>.png"
+    assert normalizar_ruta("L6_reporting/huella_DeadBeef01.png") == "L6_reporting/huella_<HASH>.png"
     assert normalizar_ruta("tmpab12cd34/x.parquet") == "<ALEATORIO>/x.parquet"
     # Un contador decimal no es un hash y una marca de tiempo no se toma por hash.
     assert normalizar_ruta("L2/chunk_00000001.parquet") == "L2/chunk_00000001.parquet"
     assert normalizar_ruta("L5_golden/golden.parquet") == "L5_golden/golden.parquet"
+
+
+def test_nombre_tipo_canoniza_el_texto_entre_versiones_de_pandas() -> None:
+    assert _nombre_tipo(np.dtype(object)) == "str"  # pandas 2.x
+    assert _nombre_tipo(pd.StringDtype()) == "str"  # string[python]
+    assert _nombre_tipo(pd.StringDtype("pyarrow")) == "str"  # string[pyarrow]
+    assert _nombre_tipo(pd.StringDtype(na_value=np.nan)) == "str"  # pandas 3 "str"
+    assert _nombre_tipo(np.dtype("int64")) == "int64"
+    assert _nombre_tipo(np.dtype("float64")) == "float64"
+    assert _nombre_tipo(np.dtype("bool")) == "bool"
+    # Y lo mismo leyendo un DataFrame con y sin future.infer_string (pandas 3 vs 2.x).
+    df = pd.DataFrame({"texto": ["a", "b"], "n": [1, 2]})
+    with pd.option_context("future.infer_string", False):
+        sin_inferencia = _columnas(df.astype({"texto": object}))
+    assert sin_inferencia == _columnas(df) == _col([("texto", "str"), ("n", "int64")])
 
 
 def _col(pares: list[tuple[str, str]]) -> Columnas:
@@ -470,6 +559,35 @@ def test_diferencias_manifest_describe_fases_y_claves() -> None:
     assert "manifest.json.L1_prep.meta: desapareció 'duration'" in mensajes
     assert "manifest.json: apareció la fase 'L6_reporting'" in mensajes
     assert diferencias_manifest(esperado, esperado) == []
+
+
+def test_diferencias_listas_detecta_la_multiplicidad() -> None:
+    patron = "L6_reporting/config_auditoria_<MARCA_TIEMPO>.json"
+    assert diferencias_listas(["a", patron], ["a", patron, patron], "archivo") == [
+        f"archivo: {patron!r} aparece 2 veces (antes 1)"
+    ]
+    assert diferencias_listas(["a", patron, patron], ["a", patron], "archivo") == [
+        f"archivo: {patron!r} aparece 1 veces (antes 2)"
+    ]
+    assert diferencias_listas(["a", "b"], ["b", "c"], "clave") == [
+        "clave: desapareció 'a'",
+        "clave: apareció 'c'",
+    ]
+    assert diferencias_listas(["a", "b"], ["b", "a"], "clave") == []
+
+
+def test_diferencias_meta_describe_el_campo_rancio() -> None:
+    esperado = {"dataset": "x.csv", "filas_entrada": 28, "normalizaciones": [{"patron": "a"}]}
+    actual = {"dataset": "x.csv", "filas_entrada": 28, "normalizaciones": [{"patron": "b"}]}
+    mensajes = diferencias_meta(esperado, actual)
+    assert len(mensajes) == 1
+    assert mensajes[0].startswith("_meta.normalizaciones del fixture está rancio")
+    assert "fixture: [{'patron': 'a'}]" in mensajes[0]
+    assert "código:  [{'patron': 'b'}]" in mensajes[0]
+    assert diferencias_meta(esperado, {**esperado, "extra": 1}) == [
+        "_meta del fixture: apareció 'extra'"
+    ]
+    assert diferencias_meta(esperado, esperado) == []
 
 
 def test_fallar_si_hay_recuerda_que_el_esquema_cambia_a_proposito() -> None:
