@@ -56,6 +56,8 @@ __all__ = [
     "escribir_excel_o_leeme",
     "hoja_de_lineas",
     "leeme_no_cabe",
+    "miles",
+    "motivo_no_cabe",
 ]
 
 #: Filas de DATOS que caben en una hoja de Excel: 1.048.576 filas de hoja
@@ -85,6 +87,15 @@ _OPCIONES_LIBRO: dict[str, Any] = {
     "default_date_format": "yyyy-mm-dd hh:mm:ss",
 }
 
+#: Lo que se puede hacer cuando un Excel no se escribe: el estándar y L6 lo
+#: dejan en ``omitidos`` y publican la carpeta (el parquet está completo), así
+#: que nunca hay que repetir la corrida de ``linkage()``.
+_QUE_HACER_SIN_EXCEL = (
+    "la tabla completa está en el parquet y la carpeta se publica sin este Excel "
+    "(queda en omitidos del manifiesto). Si hace falta el Excel, léalo del parquet, "
+    "corrija la columna y vuelva a escribirlo con escribir_excel_o_leeme():"
+)
+
 _CODIGOS_XLSXWRITER = {
     -1: "fila o columna fuera del rango de la hoja (o fila ya volcada en constant_memory)",
     -2: "una cadena supera los 32.767 caracteres que admite una celda",
@@ -94,8 +105,27 @@ _CODIGOS_XLSXWRITER = {
 }
 
 
-def _miles(n: int) -> str:
+def miles(n: int) -> str:
+    """``1048576`` → ``'1.048.576'`` (puntos de millar, como se lee en español)."""
     return f"{n:,}".replace(",", ".")
+
+
+def _limite(limite: int | None) -> int:
+    """``None`` → ``LIMITE_FILAS_EXCEL`` resuelto AL LLAMAR (una prueba puede fijarlo en el módulo)."""
+    return LIMITE_FILAS_EXCEL if limite is None else limite
+
+
+def motivo_no_cabe(n_filas: int, nombre_leeme: str, *, limite: int | None = None) -> str:
+    """El motivo, escrito UNA vez, con que ``<base>.xlsx`` queda en ``omitidos`` cuando no cabe.
+
+    Lo usan el escritor del estándar (``escritor._excel``) y los alias de v1
+    (``reporting/strategies.py``): el mismo texto y los mismos puntos de millar
+    que la hoja LEEME.
+    """
+    return (
+        f"{miles(n_filas)} filas superan el límite de Excel ({miles(_limite(limite))} de datos); "
+        f"no se recorta, ver {nombre_leeme}."
+    )
 
 
 def hoja_de_lineas(lineas: Sequence[str]) -> pd.DataFrame:
@@ -103,16 +133,34 @@ def hoja_de_lineas(lineas: Sequence[str]) -> pd.DataFrame:
     return pd.DataFrame({HOJA_LEEME: list(lineas)})
 
 
-def leeme_no_cabe(base: str, n_filas: int, *, limite: int = LIMITE_FILAS_EXCEL) -> pd.DataFrame:
-    """Hoja LEEME de «no cabe»: filas, nombre del parquet y cómo abrirlo."""
+def leeme_no_cabe(
+    base: str,
+    n_filas: int,
+    *,
+    limite: int | None = None,
+    ruta_parquet: str | None = None,
+) -> pd.DataFrame:
+    """Hoja LEEME de «no cabe»: filas, nombre del parquet y cómo abrirlo.
+
+    Args:
+        base: tronco del parquet (``<base>.parquet``).
+        n_filas: filas de datos de la tabla.
+        limite: filas de datos que caben; ``None`` usa ``LIMITE_FILAS_EXCEL``.
+        ruta_parquet: la ruta del parquet RELATIVA a la carpeta del LEEME, para
+            que ``pd.read_parquet(...)`` funcione tal cual desde ahí (el
+            estándar escribe el LEEME en ``excel/`` y el parquet un nivel
+            arriba: ``../<base>.parquet``). ``None`` cita ``<base>.parquet``
+            (los alias de v1 tienen el parquet al lado).
+    """
     parquet = f"{base}.parquet"
+    abrir = parquet if ruta_parquet is None else ruta_parquet
     return hoja_de_lineas(
         [
-            f"{parquet} tiene {_miles(n_filas)} filas y una hoja de Excel admite "
-            f"{_miles(limite + 1)} (incluido el encabezado).",
+            f"{parquet} tiene {miles(n_filas)} filas y una hoja de Excel admite "
+            f"{miles(_limite(limite) + 1)} (incluido el encabezado).",
             "No se escribe un recorte: la tabla completa está en el parquet.",
-            f"pandas: pd.read_parquet('{parquet}')",
-            f"DuckDB: SELECT * FROM '{parquet}'",
+            f"pandas: pd.read_parquet('{abrir}')",
+            f"DuckDB: SELECT * FROM '{abrir}'",
             "Power Query (Excel 365): Datos → Obtener datos → De archivo → Parquet.",
         ]
     )
@@ -136,12 +184,27 @@ def _fallo(ruta: Path, codigo: int, fila: int) -> EscrituraSalidaError:
     motivo = _CODIGOS_XLSXWRITER.get(codigo, f"código {codigo} de xlsxwriter")
     return EscrituraSalidaError(
         mensaje_accionable(
-            f"xlsxwriter no pudo escribir la fila {_miles(fila)} de {ruta.name}: {motivo}.",
+            f"xlsxwriter no pudo escribir la fila {miles(fila)} de {ruta.name}: {motivo}.",
             "el Excel quedaría incompleto y nadie lo sabría.",
-            "la tabla completa está en el parquet; si hace falta el Excel, acorte o retire "
-            "la columna con ese valor antes de llamar a linkage().",
+            f"{_QUE_HACER_SIN_EXCEL} acorte o retire la columna con ese valor.",
         )
     )
+
+
+def _fallo_zona_horaria(ruta: Path, columnas: list[str]) -> EscrituraSalidaError:
+    return EscrituraSalidaError(
+        mensaje_accionable(
+            f"{ruta.name}: las columnas {columnas} traen fechas con zona horaria.",
+            "Excel no admite zona horaria en una celda y quitarla en silencio cambiaría "
+            "la hora que el lector ve.",
+            f"{_QUE_HACER_SIN_EXCEL} convierta esas columnas "
+            "(df[col].dt.tz_convert('UTC').dt.tz_localize(None) o astype('string')).",
+        )
+    )
+
+
+def _columnas_con_zona_horaria(lote: pd.DataFrame) -> list[str]:
+    return [str(c) for c, d in lote.dtypes.items() if isinstance(d, pd.DatetimeTZDtype)]
 
 
 def _escribir_hoja_leeme(libro: Any, leeme: pd.DataFrame) -> None:
@@ -151,8 +214,14 @@ def _escribir_hoja_leeme(libro: Any, leeme: pd.DataFrame) -> None:
 
 
 def _celdas(lote: pd.DataFrame) -> np.ndarray:
-    """Matriz de objetos lista para ``write_row``: ausente → ``None``, ±inf → texto."""
-    valores = lote.to_numpy(dtype=object)
+    """Matriz de objetos lista para ``write_row``: ausente → ``None``, ±inf → texto.
+
+    ``copy=True`` es obligatorio: con pandas 3 ``to_numpy`` devuelve un arreglo
+    de SOLO LECTURA cuando el frame tiene un único bloque (todas las columnas
+    int, todas float, una sola de texto…) y la asignación siguiente lanzaría
+    ``ValueError: assignment destination is read-only``.
+    """
+    valores = lote.to_numpy(dtype=object, copy=True)
     valores[pd.isna(valores)] = None  # ausente → celda vacía (nunca "nan")
     for i, dtipo in enumerate(lote.dtypes):
         if not pd.api.types.is_float_dtype(dtipo):
@@ -175,6 +244,8 @@ def _escribir_datos(
         raise _fallo(ruta, codigo, 0)
     fila = 1
     for lote in lotes:
+        if con_zona := _columnas_con_zona_horaria(lote):
+            raise _fallo_zona_horaria(ruta, con_zona)
         valores = _celdas(prepare_spreadsheet_data(lote))
         for celdas in valores.tolist():
             codigo = ws.write_row(fila, 0, celdas)
@@ -193,6 +264,7 @@ def escribir_excel_o_leeme(
     hoja: str = "DATOS",
     leeme: pd.DataFrame | None = None,
     filas_por_lote: int = FILAS_POR_LOTE,
+    ruta_parquet: str | None = None,
 ) -> Path:
     """Escribe ``df`` completo en ``ruta`` o, si no cabe, ``<base>_LEEME.xlsx``.
 
@@ -209,16 +281,21 @@ def escribir_excel_o_leeme(
         leeme: hoja LEEME que va PRIMERO (los alias de v1 remiten al archivo
             nuevo). Si la tabla no cabe, sus líneas preceden a las de «no cabe».
         filas_por_lote: tamaño del lote de escritura.
+        ruta_parquet: ruta del parquet relativa a la carpeta del LEEME (ver
+            ``leeme_no_cabe``); ``None`` cita ``<base>.parquet``.
 
     Returns:
         La ruta escrita: ``ruta`` o ``ruta.with_name(f"{base}_LEEME.xlsx")``.
 
     Raises:
         EscrituraSalidaError: si xlsxwriter rechaza un valor (p. ej. una cadena
-            de más de 32.767 caracteres); el archivo parcial se borra.
+            de más de 32.767 caracteres) o una columna trae fechas con zona
+            horaria (Excel no la admite y no se quita en silencio); el archivo
+            parcial se borra. El Excel es opcional en el estándar: quien llama
+            lo deja en ``omitidos`` con este mensaje y publica el resto.
     """
     ruta = Path(ruta)
-    tope = LIMITE_FILAS_EXCEL if limite is None else limite
+    tope = _limite(limite)
     if filas_por_lote <= 0:
         raise ValueError("filas_por_lote debe ser > 0.")
     es_parquet = isinstance(df, pq.ParquetFile)
@@ -227,7 +304,7 @@ def escribir_excel_o_leeme(
 
     if n_filas > tope:
         destino = ruta.with_name(f"{base}{SUFIJO_LEEME}{ruta.suffix}")
-        hoja_leeme = leeme_no_cabe(base, n_filas, limite=tope)
+        hoja_leeme = leeme_no_cabe(base, n_filas, limite=tope, ruta_parquet=ruta_parquet)
         if leeme is not None:
             hoja_leeme = pd.concat([leeme, hoja_leeme], ignore_index=True)
         _con_libro(destino, hoja_leeme, None, (), iter(()))

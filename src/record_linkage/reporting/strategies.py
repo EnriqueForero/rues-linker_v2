@@ -69,7 +69,7 @@ from ..exporters.escritor import (
     escribir_xlsx,
     leeme_alias_v1,
 )
-from ..exporters.excel import LIMITE_FILAS_EXCEL
+from ..exporters.excel import LIMITE_FILAS_EXCEL, miles, motivo_no_cabe
 from ..pipeline._internal import _class_exists
 from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
@@ -131,7 +131,7 @@ def _avisar_perilla_excel(export_config: Mapping[str, Any], logger: logging.Logg
     logger.warning(
         f"export_settings.{PERILLA_EXCEL_RETIRADA}={export_config[PERILLA_EXCEL_RETIRADA]!r} "
         "ya no aplica (F1.11): el Excel se escribe completo hasta "
-        f"{LIMITE_FILAS_EXCEL:,} filas o se deja <alias>_LEEME.xlsx; nunca un recorte. "
+        f"{miles(LIMITE_FILAS_EXCEL)} filas o se deja <alias>_LEEME.xlsx; nunca un recorte. "
         "Por qué importa: una muestra sin rótulo pasaba por la tabla completa. "
         "Qué hacer: retire la perilla de la configuración."
     )
@@ -501,9 +501,12 @@ class DataExportStrategy(BaseReportingStrategy):
         """
         xlsx_path = output_dir / f"{base_name}.xlsx"
         try:
+            # hoja="datos": el nombre que F1.10 daba a los alias (escribir_xlsx); un
+            # lector con pd.read_excel(sheet_name="datos") distingue mayúsculas.
             escrito = escribir_excel_o_leeme(
                 fuente,
                 xlsx_path,
+                hoja="datos",
                 leeme=_leeme_de(base_name),
                 filas_por_lote=self.STREAMING_BATCH_SIZE,
             )
@@ -514,10 +517,7 @@ class DataExportStrategy(BaseReportingStrategy):
         if escrito == xlsx_path:
             logger.info(f"      ✅ {xlsx_path.name}")
             return [escrito]
-        motivo = (
-            f"{n_rows:,} filas superan el límite de Excel ({LIMITE_FILAS_EXCEL:,} de datos); "
-            f"no se recorta, ver {escrito.name}."
-        )
+        motivo = motivo_no_cabe(n_rows, escrito.name)  # el mismo texto que el estándar
         logger.warning(f"      ⚠️ {xlsx_path.name} omitido: {motivo}")
         self.omitir(xlsx_path.name, motivo)
         logger.info(f"      ✅ {escrito.name} (la tabla completa está en {base_name}.parquet)")

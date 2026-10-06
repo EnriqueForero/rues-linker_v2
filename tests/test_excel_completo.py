@@ -15,8 +15,16 @@ Qué congela
       ausente queda como celda vacía y un número negativo sigue siendo número;
 * ``DataExportStrategy`` (alias de v1 de L6) ya NO escribe ``_MUESTRA_<n>k``:
   por encima del límite deja ``tabla_correlativa_LEEME.xlsx`` /
-  ``golden_records_LEEME.xlsx`` y lo registra en ``omitidos``; la perilla
+  ``golden_records_LEEME.xlsx`` y lo registra en ``omitidos`` con el MISMO
+  motivo que el estándar (``motivo_no_cabe``, puntos de millar); la hoja de
+  datos del alias sigue llamándose ``datos`` (F1.10); la perilla
   ``export_settings.excel_max_rows`` ya no recorta nada y se avisa;
+* revisión F1.11: una tabla de un solo bloque (todas int, todas fecha, una
+  columna de texto) se escribe (``to_numpy`` de pandas 3 es de solo lectura);
+  una celda > 32.767 caracteres o una fecha con zona horaria falla con
+  ``EscrituraSalidaError`` sin pedir otra corrida (el escritor del estándar la
+  deja en ``omitidos``, ver ``test_escritor.py``); el LEEME cita la ruta
+  relativa real del parquet;
 * en ``src/`` no queda ningún ``_MUESTRA_`` ni ``excel_limit``: una sola
   regla (``LIMITE_FILAS_EXCEL`` del escritor).
 
@@ -45,7 +53,13 @@ from openpyxl import load_workbook
 
 from record_linkage.evaluation.banco import MuestreadorRecursos
 from record_linkage.exporters import escritor, excel
-from record_linkage.exporters.excel import LIMITE_FILAS_EXCEL, escribir_excel_o_leeme
+from record_linkage.exporters.excel import (
+    LIMITE_FILAS_EXCEL,
+    escribir_excel_o_leeme,
+    leeme_no_cabe,
+    motivo_no_cabe,
+)
+from record_linkage.pipeline.errores import EscrituraSalidaError
 from record_linkage.reporting import strategies
 from record_linkage.reporting.strategies import DataExportStrategy
 
@@ -209,6 +223,88 @@ def test_tabla_vacia_deja_solo_el_encabezado(tmp_path: Path) -> None:
     assert _contar_filas(ruta, "golden") == 1
 
 
+def _filas(ruta: Path, hoja: str = "DATOS") -> list[tuple]:
+    libro = load_workbook(ruta, read_only=True)
+    try:
+        return list(libro[hoja].iter_rows(values_only=True))
+    finally:
+        libro.close()
+
+
+def test_tabla_de_un_solo_bloque_numerico_se_escribe(tmp_path: Path) -> None:
+    """Revisión F1.11 (1): con pandas 3 ``to_numpy`` devuelve un arreglo de SOLO
+    LECTURA cuando el frame tiene un único bloque (todas int, todas float, una
+    columna de texto…); la conversión de ausentes debe trabajar sobre una copia."""
+    ruta = escribir_excel_o_leeme(pd.DataFrame({"A": [1, 2]}), tmp_path / "int.xlsx")
+    assert _filas(ruta) == [("A",), (1,), (2,)]
+    tres = pd.DataFrame({"A": [1.5, np.nan, 3.0], "B": [np.nan, 2.0, 3.0], "C": [1.0, 2.0, np.nan]})
+    assert _filas(escribir_excel_o_leeme(tres, tmp_path / "float.xlsx")) == [
+        ("A", "B", "C"),
+        (1.5, None, 1.0),
+        (None, 2.0, 2.0),
+        (3.0, 3.0, None),
+    ]
+    texto = pd.DataFrame({"T": pd.array(["a", None, "=b"], dtype="string")})
+    assert _filas(escribir_excel_o_leeme(texto, tmp_path / "texto.xlsx")) == [
+        ("T",),
+        ("a",),
+        (None,),
+        ("'=b",),
+    ]
+
+
+def test_tabla_de_solo_fechas_con_nat_deja_celdas_vacias(tmp_path: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "DESDE": pd.to_datetime(["2026-10-06 14:30:59", None, "2026-01-01"], format="ISO8601"),
+            "HASTA": pd.to_datetime([None, "2026-02-02", "2026-03-03"], format="ISO8601"),
+        }
+    )
+    filas = _filas(escribir_excel_o_leeme(df, tmp_path / "fechas.xlsx"))
+    assert len(filas) == 4 and filas[0] == ("DESDE", "HASTA")
+    assert str(filas[1][0]).startswith("2026-10-06 14:30:59") and filas[1][1] is None
+    assert filas[2][0] is None and str(filas[2][1]).startswith("2026-02-02")
+    assert filas[3] == (pd.Timestamp("2026-01-01"), pd.Timestamp("2026-03-03"))
+
+
+def test_fecha_con_zona_horaria_falla_con_mensaje_y_sin_restos(tmp_path: Path) -> None:
+    """Excel no admite zona horaria; no se quita en silencio: se dice qué columna y qué hacer."""
+    df = pd.DataFrame(
+        {"ID": [1, 2], "CUANDO": pd.to_datetime(["2026-01-01", "2026-01-02"]).tz_localize("UTC")}
+    )
+    with pytest.raises(EscrituraSalidaError, match=r"CUANDO.*zona horaria"):
+        escribir_excel_o_leeme(df, tmp_path / "tz.xlsx")
+    assert not list(tmp_path.iterdir())
+
+
+def test_celda_de_mas_de_32767_caracteres_falla_sin_pedir_otra_corrida(tmp_path: Path) -> None:
+    df = pd.DataFrame({"OBS": ["x" * 40_000], "N": [1]})
+    with pytest.raises(EscrituraSalidaError, match=r"32\.767") as info:
+        escribir_excel_o_leeme(df, tmp_path / "largo.xlsx")
+    assert "linkage()" not in str(info.value)  # la carpeta se publica; no se repite la corrida
+    assert "parquet" in str(info.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_motivo_no_cabe_se_redacta_una_vez_con_puntos_de_millar() -> None:
+    motivo = motivo_no_cabe(1_100_000, "correlativa_LEEME.xlsx")
+    assert "1.100.000" in motivo and "1.048.575" in motivo and "correlativa_LEEME.xlsx" in motivo
+    assert "," not in motivo.replace(", ", "")  # nunca el separador inglés 1,100,000
+    assert motivo_no_cabe(11, "a_LEEME.xlsx", limite=10).startswith("11 filas superan")
+    assert escritor.miles(1_048_576) == "1.048.576"
+    assert not hasattr(escritor, "_miles")  # la copia de escritor.py desapareció
+
+
+def test_leeme_cita_la_ruta_relativa_del_parquet() -> None:
+    hoja = leeme_no_cabe("correlativa", 5, limite=4, ruta_parquet="../correlativa.parquet")
+    texto = "\n".join(hoja["LEEME"])
+    assert "pd.read_parquet('../correlativa.parquet')" in texto
+    assert "SELECT * FROM '../correlativa.parquet'" in texto
+    assert "correlativa.parquet tiene 5 filas" in texto
+    # Sin ruta explícita, el parquet se cita por su nombre (los alias de v1 lo tienen al lado).
+    assert "pd.read_parquet('golden.parquet')" in "\n".join(leeme_no_cabe("golden", 5)["LEEME"])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # (c) Neutralización: una regla escrita una vez (prepare_spreadsheet_data)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,11 +373,19 @@ def test_l6_desde_memoria_no_recorta(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "tabla_correlativa.parquet" in texto and "11" in texto
     assert "excel/correlativa.xlsx" in texto  # el alias remite al archivo nuevo
     assert [o.artefacto for o in estrategia.omitidos] == ["tabla_correlativa.xlsx"]
-    assert "LEEME" in estrategia.omitidos[0].motivo
-    # Cabe → completo, con LEEME delante (alias).
+    # El motivo es el mismo texto que escribe el estándar (una regla, una redacción).
+    assert estrategia.omitidos[0].motivo == motivo_no_cabe(11, "tabla_correlativa_LEEME.xlsx")
+    assert "(10 de datos)" in estrategia.omitidos[0].motivo
+    # Cabe → completo, con LEEME delante (alias) y la hoja «datos» de F1.10
+    # (pd.read_excel(sheet_name="datos") distingue mayúsculas: el alias no cambia).
     files = estrategia._export_from_memory(_sintetico(10), "golden_records", tmp_path, log)
     assert "golden_records.xlsx" in _archivos(files)
-    assert _contar_filas(tmp_path / "golden_records.xlsx", "DATOS") == 11
+    libro = load_workbook(tmp_path / "golden_records.xlsx", read_only=True)
+    try:
+        assert libro.sheetnames == ["LEEME", "datos"]
+    finally:
+        libro.close()
+    assert _contar_filas(tmp_path / "golden_records.xlsx", "datos") == 11
 
 
 def test_l6_desde_disco_no_recorta_ni_lee_entero(
@@ -307,7 +411,7 @@ def test_excel_max_rows_ya_no_recorta_y_se_avisa(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """La perilla de v1 pedía recortar a N filas; ahora no hace nada y se dice."""
-    strategies._PERILLA_EXCEL_AVISADA = False
+    monkeypatch.setattr(strategies, "_PERILLA_EXCEL_AVISADA", False)
     ctx = strategies.ReportingContext(
         correlative_df=_sintetico(30),
         golden_df=_sintetico(3),
@@ -319,9 +423,10 @@ def test_excel_max_rows_ya_no_recorta_y_se_avisa(
     with caplog.at_level(logging.WARNING, logger="record_linkage.reporting.strategies"):
         files = DataExportStrategy().execute(ctx, logging.getLogger(__name__))
     assert "tabla_correlativa.xlsx" in _archivos(files)
-    assert _contar_filas(tmp_path / "tabla_correlativa.xlsx", "DATOS") == 31
+    assert _contar_filas(tmp_path / "tabla_correlativa.xlsx", "datos") == 31
     assert not list(tmp_path.glob("*MUESTRA*"))
-    assert any("excel_max_rows" in r.getMessage() for r in caplog.records)
+    avisos = [r.getMessage() for r in caplog.records if "excel_max_rows" in r.getMessage()]
+    assert len(avisos) == 1 and "1.048.575" in avisos[0]  # puntos de millar, como el LEEME
     assert not hasattr(DataExportStrategy, "EXCEL_ROW_LIMIT")
 
 

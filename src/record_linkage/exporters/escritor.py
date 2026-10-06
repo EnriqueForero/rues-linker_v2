@@ -110,6 +110,8 @@ from .excel import (
     escribir_excel_o_leeme,
     hoja_de_lineas,
     leeme_no_cabe,
+    miles,
+    motivo_no_cabe,
 )
 
 __all__ = [
@@ -128,6 +130,8 @@ __all__ = [
     "leeme_alias_v1",
     "leeme_no_cabe",
     "leer_resultado",
+    "miles",
+    "motivo_no_cabe",
 ]
 
 # ``LIMITE_FILAS_EXCEL`` (1.048.575 filas de datos) vive en ``exporters.excel``
@@ -453,10 +457,6 @@ def leeme_alias_v1(archivo_nuevo: str) -> pd.DataFrame:
     )
 
 
-def _miles(n: int) -> str:
-    return f"{n:,}".replace(",", ".")
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Rutas anidadas: reubicar tras el rename y relativizar en el manifiesto
 # ─────────────────────────────────────────────────────────────────────────────
@@ -692,17 +692,31 @@ def _excel(
             continue
         # F1.11: completo hasta LIMITE_FILAS_EXCEL o <tabla>_LEEME.xlsx; nunca recorte.
         # El límite se pasa explícito para que una prueba pueda fijarlo en este módulo.
-        ruta = escribir_excel_o_leeme(
-            df, dir_excel / f"{tabla}.xlsx", limite=LIMITE_FILAS_EXCEL, hoja=tabla
-        )
+        # El LEEME queda en excel/ y el parquet un nivel arriba: la ruta que cita es relativa.
+        try:
+            ruta = escribir_excel_o_leeme(
+                df,
+                dir_excel / f"{tabla}.xlsx",
+                limite=LIMITE_FILAS_EXCEL,
+                hoja=tabla,
+                ruta_parquet=f"../{tabla}.parquet",
+            )
+        except EscrituraSalidaError as exc:
+            # El Excel es opcional: un valor que xlsxwriter rechaza (celda > 32.767
+            # caracteres, fecha con zona horaria) no tumba la carpeta tras la corrida
+            # entera. El parquet completo ya está escrito; nada se repara en silencio:
+            # el manifiesto y el log lo dicen con el motivo.
+            logger.warning("excel/%s.xlsx omitido: %s", tabla, exc)
+            omitidos.append({"artefacto": f"excel/{tabla}.xlsx", "motivo": str(exc)})
+            continue
         _registrar(artefactos, carpeta, ruta)
         if ruta.name != f"{tabla}.xlsx":
             omitidos.append(
                 {
                     "artefacto": f"excel/{tabla}.xlsx",
-                    "motivo": f"{_miles(len(df))} filas superan el límite de Excel "
-                    f"({_miles(LIMITE_FILAS_EXCEL)} de datos); no se recorta, "
-                    f"ver excel/{ruta.name}.",
+                    "motivo": motivo_no_cabe(
+                        len(df), f"excel/{ruta.name}", limite=LIMITE_FILAS_EXCEL
+                    ),
                 }
             )
 
