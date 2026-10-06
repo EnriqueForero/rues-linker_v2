@@ -15,19 +15,23 @@
 
 - **Notebooks:** se leyó el JSON de los 11 archivos de `notebooks/` (numerados
   01–10; hay dos 06) y se buscaron, **solo en el `source` de las celdas**
-  (no en las salidas), los patrones `tabla_correlativa`, `golden_records`,
-  `correlative.parquet`, `golden.parquet`, `L6_reporting`, `PipelineResult`,
-  `to_excel`, `to_csv`, `CORRELATIVA`, `GOLDEN`, `ENLACES`, `REVISION`,
-  `leer_resultado`, `ejecutar_cruce`, `deduplicar_importadores`, `linkage(`,
-  `dedupe(`, `link(`. El plan habla de «notebooks 01–11»: **no existe un
+  (no en las salidas ni en `metadata`), los patrones `tabla_correlativa`,
+  `golden_records`, `correlative.parquet`, `golden.parquet`, `L6_reporting`,
+  `PipelineResult`, `to_excel`, `to_csv`, `CORRELATIVA`, `GOLDEN`, `ENLACES`,
+  `REVISION`, `leer_resultado`, `ejecutar_cruce`, `deduplicar_importadores`,
+  `linkage(`, `dedupe(`, `link(`. El plan habla de «notebooks 01–11»: **no existe un
   notebook 11** en el repositorio.
 - **Scripts, `src/`, `tests/`, `docs/`, `README.md`:** `grep -rn` con los mismos
   patrones, y lectura del contexto de cada coincidencia para separar un
   **lector real** (abre el archivo o usa la clave/columna) de una **mención**
-  (docstring, comentario, nombre de variable, cadena de log).
+  (docstring, comentario, nombre de variable, cadena de log). **El inventario
+  se excluye a sí mismo de todos los conteos** (`--exclude=CONSUMIDORES.md`):
+  este archivo nombra cada patrón que busca y, si contara, todo conteo que era
+  0 dejaría de serlo por su sola existencia.
 - **Skill `record-linkage-empresas`:** no está en el repositorio
   (`grep -rl vinculacion` sobre `src tests scripts notebooks docs README.md
-  pyproject.toml` → 0 archivos). Se leyó la copia sincronizada fuera del repo
+  pyproject.toml`, excluido este inventario → 0 archivos). Se leyó la copia
+  sincronizada fuera del repo
   (`~/.claude/skills/synced/…/record-linkage-empresas/SKILL.md`) y se trata
   como consumidor **declarado**, porque describe la API de 0.23.0 que F3 aún no
   ha construido.
@@ -69,7 +73,7 @@ del atributo.
 | `06_ejemplo_rues_x_exportaciones` | archivo + tabla: `ejecutar_cruce()` deja `golden.parquet`, `correlativa.parquet`, `metadatos_corrida.json`; el notebook usa `resultado.rutas` | `resultado.correlativa`, `.metricas`, `.tiempos`, `.rutas`; métodos `cruce_por_fuente`, `conflictos_identificador`, `distribucion_grupos`, `entidades_multifuente`, `grupos_sospechosos`, `identidad_adoptada`, `identificadores_por_fuente`; `exportar_sin_pareja`, `pares_enlazados` → escribe `sin_pareja_en_<fuente>.parquet`, `entidades_cruzadas.parquet` | celda 4 L36; celda 13 L46; celda 15; celda 17 L5-26 | verificado en repo |
 | `06_orquestador_configurable` | archivo + tabla: `ejecutar_cruce()` en modo disco | `resultado.golden`, `.correlativa`, `.metricas`, `.tiempos`, `.rutas` (incluida `rutas["generation_dir"]`, que copia a un snapshot persistente); métodos `cruce_por_fuente`, `entidades_ausentes_de`, `identidad_adoptada`, `matriz_presencia` | celda 8 L1; celda 10; celda 12 L35-48 | verificado en repo |
 | `07_deduplicar_importadores_razon_social_pais` | tabla: `deduplicar_importadores()` → `ResultadoImportadores` | `correlativa` (`RAZON_SOCIAL_IMPORTADOR`, `PAIS_ESTANDAR`, `RAZON_SOCIAL_FINAL`, `PAIS_FINAL`), `golden` (`USD_FOB_TOTAL`, `NUM_REGISTROS`), `paises`, `revision`, `muestra` (`VEREDICTO_MANUAL`), `metricas`, `invariantes`. Escribe `<base>__<HOJA>.parquet` por tabla y `<base>.xlsx` con `PipelineResult.to_excel`; `CORRELATIVA` es obligatoria | celda 0 L113-120; celda 3 L25, L37, L489-496, L626-644; celda 11 L10; celda 15 L7-11, L31 | verificado en repo |
-| `08_PUBLICAR_GITHUB` | ninguno: es el publicador. Contiene el texto del `README.md` (con los ejemplos `linkage(`, `ejecutar_cruce(`, `deduplicar_importadores(`) y la lista de notebooks que copia | — | celda 8 L181; coincidencias de `grep` sobre el JSON crudo que **no** aparecen en el `source` de ninguna celda como código | verificado en repo (no consume salidas) |
+| `08_PUBLICAR_GITHUB` | ninguno: es el publicador. Lleva el texto del `README.md` (con los ejemplos `linkage(`, `ejecutar_cruce(`, `deduplicar_importadores(`) como residuo de estado de un widget, y la lista de notebooks que copia | — | celda 8 L181 (lista de notebooks); el texto del README está en `metadata.widgets` (estado residual de un `TextareaModel`, 31.147 caracteres, línea 4586 del JSON), **no** en el `source` ni en los `outputs` de ninguna celda (el notebook tiene 44 celdas y 0 con salidas) | verificado en repo (no consume salidas) |
 | `09_vincular_segmentacion_orbis_fdi` | tabla: motor propio en celdas (reutiliza piezas de `flujo.importadores`); **no** llama a `deduplicar_importadores` (lo descarta explícitamente) | lee `revision_adjudicada_piloto.csv` con `COLUMNAS_REVISION = TIPO, FUENTE, CLAVE_A, NOMBRE_A, CLAVE_B, NOMBRE_B, DECISION, ORIGEN_REVISION, RAZON`; escribe hojas `RELACIONES_PROPIEDAD`, `EXCLUIDOS_REVISION`, `REVISION_PENDIENTE`, `DEDUP_PENDIENTE`, `PARAMETROS`, … a `<nombre>.xlsx` con `PipelineResult.to_excel`; columnas `N_ENLACES_ORBIS`, `N_ENLACES_FDI` | celda 0 L48; celda 4 L11; celda 6 L22, L416; celda 7 L14-16, L241, L364-368, L508; celda 21 L7 | verificado en repo |
 | `10_vincular_exportadores_orbis_fdi` | archivo + tabla: motor propio en celda 4 (`vinculador_empresas.py`); lee 0..N archivos de decisiones (CSV con `COLUMNAS_DECISION`, o XLSX con hojas `DECISIONES`/`REVISION`) | produce `EXPORTADORES`, `ENLACES` (`NIVEL_FINAL`, `CONFIANZA`, `MOTIVO`, `ORIGEN`, huella sha256/16), `REVISION` (`ESTADO_REVISION`, `PRIORIDAD`, `AUTOR` con marca `(verificar)`), `DECISIONES`, `CONTACTOS`, `DEDUPLICACION`, `VALIDACION`, `VALIDACION_DETALLE`, `COMPARACION_REVISIONES`, `PARAMETROS`; el único `to_csv` es `DataFrame.to_csv` de la plantilla de decisiones, no `PipelineResult.to_csv` | celda 0 L7; celda 4 L829-864, L898, L1974-2058, L2193-2197, L2508, L2627; celda 7 L13-21, L139; celda 13 L7-8; celda 16 L3-7 | verificado en repo |
 
@@ -83,13 +87,19 @@ orquestador); `deduplicar_importadores(` como llamada en **1** (07);
 `linkage(` como llamada en **1** (03); `dedupe(` en **1** (01); `link(` en
 **1** (02); `leer_resultado` en **0** (todavía no existe).
 
+Pendiente que deja esta sección: **limpiar `metadata.widgets` del 08** (residuo
+de 31 KB con el README completo) en la próxima tarea que toque notebooks. La
+prueba `test_notebooks_v014` exige notebooks «sin salidas embebidas», pero mira
+`outputs` y `execution_count` de las celdas, no `metadata`, y por eso no lo
+detecta.
+
 ### 3.2 Scripts (`scripts/*.py`)
 
 | Consumidor | Artefacto que lee | Columnas / claves que usa | Evidencia | Estado |
 | --- | --- | --- | --- | --- |
 | `benchmark_duckdb_flow.py`, `smoke_installed_release.py`, `verificar_rues_x_exportaciones.py` | tabla: `ejecutar_cruce()` (`ResultadoCruce` / `ResultadoCruceDisco`) | resultado en memoria y carpeta de corrida de `flujo.cruce` | `:290`, `:18,79`, `:33,104` | verificado en repo |
 | `active_labeling.py`, `benchmark_e2e_matcher.py`, `verify_real_archives.py` | tabla: `linkage()` → dict | `"golden"`, `"correlative"` (+ auditoría del matcher en `benchmark_e2e_matcher`) | `:181`, `:112,138`, `:217` (`recalibrate_from_labels.py:135` solo imprime la llamada) | verificado en repo |
-| `ejecutar_produccion.py`, `stress_test.py` (modo `orchestrator`) | tabla: `Orchestrator.run()` | resultado en memoria; escriben vía L6 | `:34`, `:173` | verificado en repo |
+| `ejecutar_produccion.py`, `stress_test.py` (modo `orchestrator`) | tabla: `Orchestrator.run()` | resultado en memoria; escriben vía L6 | `:34,174,179`, `:47,59-60` | verificado en repo |
 | `generar_pares_para_etiquetar.py`, `medir_con_ground_truth.py`, `replicar_v2_8_0.py` | tabla: `RecordLinkagePipeline(config, profile="deduplication_standard")` | `PipelineResult` y sus claves (`correlative_table`, `golden_records`) | `:51,71`, `:81,96`, `:44,105` | verificado en repo |
 | `medir_baseline_v0_9_0.py`, `replicar_v2_5_0.py`, `replicar_v2_6_0.py`, `replicar_v2_7_0.py`, `replicar_v2_8_0.py`, `stress_test.py`, `verificar_determinismo.py` | tabla: `deduplicate_unified()` → `(correlativa, estadísticas)` | correlativa en memoria | `:50,232`, `:30,44`, `:33,61`, `:38,54`, `:41,181,190`, `:85,91`, `:29,64` | verificado en repo |
 | Ningún script | archivo `tabla_correlativa.*`, `golden_records.*`, `L6_reporting/` | — | `grep -lE 'tabla_correlativa\|golden_records\|L6_reporting' scripts/*.py` → **0** | verificado en repo (sin consumidor) |
@@ -133,7 +143,7 @@ revisaron y se excluyeron de la tabla.
 | Consumidor | Artefacto que lee | Columnas / claves que usa | Evidencia | Estado |
 | --- | --- | --- | --- | --- |
 | `README.md` (ejemplo publicado para usuarios) | enseña a guardar `result["golden"]` y `result["correlative"]` como `golden_records.parquet` y `tabla_correlativa.parquet` | claves `golden`, `correlative` | `README.md:452-453` | verificado en repo: es el patrón que cualquier usuario externo pudo copiar |
-| `docs/*.md`, `docs/adr/*.md` | ninguno menciona `tabla_correlativa`, `golden_records` ni `L6_reporting` | — | `grep` → **0** | verificado en repo |
+| `docs/*.md`, `docs/adr/*.md` | ninguno salvo este inventario menciona `tabla_correlativa`, `golden_records` ni `L6_reporting` | — | `grep` → **0** (excluido `CONSUMIDORES.md`, anexo A) | verificado en repo |
 | `notebooks/README_notebooks.md` | describe las exportaciones `GOLDEN/CORRELATIVA/MATRIZ/RESUMEN` de los notebooks 01–04 | hojas | `:92` | verificado en repo |
 | `docs/evidencia_importadores/` | CSV `INVARIANTES`, `METRICAS`, `MUESTRA_REVISION`, `PAISES`, `PARAMETROS`, `RECALL_BLOQUEO`, `SENSIBILIDAD` (7 archivos: la forma de las tablas de `flujo.importadores`) | — | `ls docs/evidencia_importadores` | verificado en repo |
 
@@ -156,7 +166,7 @@ revisaron y se excluyeron de la tabla.
 | `RecordLinkagePipeline` en el `Orchestrator` | «solo como fábrica de componentes (`orchestrator.py:280-283`, `940-963`)» | import en `:51`; instancia perezosa en `:280-282`; **5** usos de `self.pipeline.` en `:940` (`data_handler.load_sources`), `:947` (`data_handler.consolidate_sources`), `:952` (`text_processor.process_series`), `:957` (`text_processor.derivar_nombre_bloqueo`), `:963` (`nit_processor.process_series`) | coincide |
 | `RecordLinkagePipeline` en scripts | 3 scripts | **3**: `generar_pares_para_etiquetar.py:71`, `medir_con_ground_truth.py:96`, `replicar_v2_8_0.py:105` | coincide |
 | `RecordLinkagePipeline` en pruebas | 3 archivos de prueba | **3 lo mencionan**, pero solo **1 lo instancia**: `tests/test_disk_based_path.py:62`. `tests/test_reproduce_bugs.py:11,113` y `tests/integration/test_pipeline_result.py:26` lo nombran en docstrings | el plan cuenta menciones; la dependencia real es 1 prueba |
-| `RecordLinkagePipeline` en otros módulos de `src/` | no los enumera | **`deduplication/unified.py:25,285` lo instancia y ejecuta `run()`** (es el motor de `deduplicate_unified`); `optimization/engine.py:283-286` lo instancia (retirable en F2.8); `evaluation/banco.py:564` solo silencia su logger; `optimization/parameters.py:148` y `pipeline/result.py:4,140` son docstrings | **hallazgo:** `RecordLinkagePipeline` no es retirable mientras `deduplicate_unified` (que F2.10 conserva) lo use como motor. F2.9 debe migrar también `unified.py:285`, no solo la fábrica del `Orchestrator` |
+| `RecordLinkagePipeline` en otros módulos de `src/` | no los enumera | **`deduplication/unified.py:25,285` lo instancia y ejecuta `run()`** (es el motor de `deduplicate_unified`); `optimization/engine.py:283-286` lo instancia (retirable en F2.8); `evaluation/banco.py:564` solo silencia su logger; `optimization/engine.py:33` es un comentario; `optimization/parameters.py:148` y `pipeline/result.py:4,140` son docstrings (es todo lo que `grep -rn RecordLinkagePipeline src` devuelve fuera de `orchestrator.py` y `linkage_pipeline.py`) | **hallazgo:** `RecordLinkagePipeline` no es retirable mientras `deduplicate_unified` (que F2.10 conserva) lo use como motor. F2.9 debe migrar también `unified.py:285`, no solo la fábrica del `Orchestrator` |
 | `deduplicate_unified` en pruebas | 17 archivos de prueba | **18** archivos lo mencionan; **14** lo importan o llaman; **2** más dependen del nombre (`test_colab_safe_cache.py:104` monkeypatch, `test_api_linkage.py:13` exportación pública); **2** solo en docstring (`integration/conftest.py:4`, `test_deduplicate_auto.py:4,116`) | 16 dependen de verdad (el plan dice 17; la diferencia es cómo se cuentan las menciones en docstrings) |
 | `deduplicate_unified` en scripts | 8 scripts | **8** lo mencionan; **7** lo llaman; `medir_con_ground_truth.py:71` dice en su docstring que **no** lo usa | 7 dependen de verdad |
 | `deduplicate_unified` en `src/` | no lo enumera | lo llaman `deduplication/auto.py:114,128,143,152` (y por él `api.dedupe()`, `api.py:709-721`), `deduplication/colab.py:527,618`, `deduplication/dataframe.py:107,199`, `deduplication/validator.py:39`; lo exporta `__init__.py:43,147` | `api.dedupe()` → `deduplicate_auto` → `deduplicate_unified` → `RecordLinkagePipeline`: los notebooks 01 y 02 dependen, por transitividad, de los dos |
@@ -274,18 +284,25 @@ la versión que publique F1.10, y solo se retiran con esta tabla sin VACÍOS.
 
 ## 5. Anexo A · Comandos de medición y sus resultados
 
-Todos corridos en `/home/user/wt/f0_7` (commit `33827cc`) el 2026-10-06. Los
+Todos corridos en `/home/user/wt/f0_7` el 2026-10-06 sobre `33827cc` y vueltos
+a correr sobre la rama `claude/f0/t7` con este archivo ya en el árbol: cada
+cifra es la que devuelve el comando que la acompaña. **El inventario se excluye
+a sí mismo de todos los conteos** (`--exclude=CONSUMIDORES.md` en los que
+recorren `docs`); sin esa exclusión, siete conteos cambiarían solo por existir
+este archivo. Todo `grep -r` lleva además `--exclude-dir=__pycache__`: los
+`.pyc` conservan las cadenas del código y, en un árbol donde ya corrió pytest,
+`grep -rli snowflake src` pasaba de 4 a 7 por tres `.pyc` de `config/`. Los
 conteos sobre notebooks que distinguen `source` de salidas se hicieron con un
 lector del JSON (celda por celda); los `grep -l` sobre `*.ipynb` cuentan el
-archivo completo y por eso el 08 (que incluye el texto del README) aparece en
-algunos y no en el inventario.
+archivo completo y por eso el 08 (que lleva el README en `metadata.widgets`, no
+en celdas) aparece en algunos y no en el inventario.
 
 ```text
 ls notebooks/*.ipynb | wc -l                                                        → 11
 grep -l 'from record_linkage.pipeline.result import PipelineResult' notebooks/*.ipynb | wc -l → 6  (01 02 03 04 07 09)
 grep -l '\.to_excel(' notebooks/*.ipynb | wc -l                                     → 6  (01 02 03 04 07 09)
 grep -l '\.to_csv(' notebooks/*.ipynb | wc -l                                       → 1  (10)
-grep -lE 'tabla_correlativa|golden_records|L6_reporting|correlative\.parquet' notebooks/*.ipynb | wc -l → 1 (08: texto del README, no código)
+grep -lE 'tabla_correlativa|golden_records|L6_reporting|correlative\.parquet' notebooks/*.ipynb | wc -l → 1 (08: README en `metadata.widgets`)
 grep -l 'golden\.parquet' notebooks/*.ipynb | wc -l                                 → 1  (06_ejemplo, comentario)
 grep -l 'ejecutar_cruce(' notebooks/*.ipynb | wc -l                                 → 4  (05 06 06_orq + 08 por el README)
 grep -l 'ejecutar_cruce(' scripts/*.py | wc -l                                      → 3
@@ -293,40 +310,40 @@ grep -l 'deduplicar_importadores(' notebooks/*.ipynb | wc -l                    
 grep -lE '=\s*linkage\(' scripts/*.py | wc -l                                       → 4  (3 llamadas + recalibrate_from_labels.py:135, que la imprime)
 grep -lE '=\s*dedupe\(' notebooks/*.ipynb | wc -l                                   → 1  (01)
 grep -lE '=\s*link\(' notebooks/*.ipynb | wc -l                                     → 1  (02)
-grep -rl 'leer_resultado' src tests scripts notebooks docs README.md | wc -l        → 0
-grep -rl 'vinculacion' src tests scripts notebooks docs README.md pyproject.toml | wc -l → 0
+grep -rl --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md 'leer_resultado' src tests scripts notebooks docs README.md | wc -l → 0
+grep -rl --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md 'vinculacion' src tests scripts notebooks docs README.md pyproject.toml | wc -l → 0
 grep -c 'RecordLinkagePipeline' src/record_linkage/pipeline/orchestrator.py         → 3   (:51 :274 :280)
 grep -c 'self\.pipeline\.' src/record_linkage/pipeline/orchestrator.py              → 5   (:940 :947 :952 :957 :963)
 grep -l 'RecordLinkagePipeline(' scripts/*.py | wc -l                               → 3
-grep -rl 'RecordLinkagePipeline' tests | wc -l                                      → 3
-grep -rl 'RecordLinkagePipeline(' tests | wc -l                                     → 1   (test_disk_based_path.py)
-grep -rl 'RecordLinkagePipeline(' src | wc -l                                       → 3   (orchestrator.py, deduplication/unified.py, optimization/engine.py)
-grep -rl 'deduplicate_unified' tests | wc -l                                        → 18
-grep -rlE 'import.*deduplicate_unified|deduplicate_unified\(' tests | wc -l         → 14
-grep -rlE '"deduplicate_unified"' tests | wc -l                                     → 2   (test_colab_safe_cache.py, test_api_linkage.py)
+grep -rl --exclude-dir=__pycache__ 'RecordLinkagePipeline' tests | wc -l                                      → 3
+grep -rl --exclude-dir=__pycache__ 'RecordLinkagePipeline(' tests | wc -l                                     → 1   (test_disk_based_path.py)
+grep -rl --exclude-dir=__pycache__ 'RecordLinkagePipeline(' src | wc -l                                       → 3   (orchestrator.py, deduplication/unified.py, optimization/engine.py)
+grep -rl --exclude-dir=__pycache__ 'deduplicate_unified' tests | wc -l                                        → 18
+grep -rlE --exclude-dir=__pycache__ 'import.*deduplicate_unified|deduplicate_unified\(' tests | wc -l         → 14
+grep -rlE --exclude-dir=__pycache__ '"deduplicate_unified"' tests | wc -l                                     → 2   (test_colab_safe_cache.py, test_api_linkage.py)
 grep -l 'deduplicate_unified' scripts/*.py | wc -l                                  → 8
 grep -lE 'import.*deduplicate_unified|deduplicate_unified\(|^\s+deduplicate_unified,' scripts/*.py | wc -l → 7
-grep -rl 'deduplicate_unified(' src | wc -l                                         → 5   (auto, colab, dataframe, validator, unified)
+grep -rl --exclude-dir=__pycache__ 'deduplicate_unified(' src | wc -l                                         → 5   (auto, colab, dataframe, validator, unified)
 grep -cE 'golden_records|tabla_correlativa' src/record_linkage/pipeline/orchestrator.py → 1 (:1926)
 grep -cE 'name="(golden_records|tabla_correlativa)"' src/record_linkage/reporting/strategies.py → 2
 grep -cE 'tabla_correlativa|golden_records' README.md                               → 2   (:452-453)
-cat docs/*.md docs/adr/*.md | grep -cE 'tabla_correlativa|golden_records|L6_reporting' → 0
+ls docs/*.md docs/adr/*.md | grep -v CONSUMIDORES | xargs cat | grep -cE 'tabla_correlativa|golden_records|L6_reporting' → 0
 grep -lE 'tabla_correlativa|golden_records|L6_reporting' scripts/*.py | wc -l       → 0
-grep -rl 'golden_records\.csv' tests | wc -l                                        → 1   (integration/test_pipeline_result_v2_1.py)
-grep -rlE 'golden_records\*|tabla_correlativa\*' tests | wc -l                      → 0
-grep -rl '_MUESTRA_' tests notebooks scripts docs README.md | wc -l                 → 1   (06_orq: LIMITE_MUESTRA_DEFAULT, falso positivo → 0 lectores)
-grep -rl 'config_auditoria' tests notebooks scripts docs README.md | wc -l          → 0
-grep -rlE 'reporte_[a-z_]+\.xlsx' tests | wc -l                                     → 0
-grep -rlE 'L6_reporting|L6_REPORTING' tests | wc -l                                 → 1   (test_api_postprocessing.py:211,238,261)
+grep -rl --exclude-dir=__pycache__ 'golden_records\.csv' tests | wc -l                                        → 1   (integration/test_pipeline_result_v2_1.py)
+grep -rlE --exclude-dir=__pycache__ 'golden_records\*|tabla_correlativa\*' tests | wc -l                      → 0
+grep -rl --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md '_MUESTRA_' tests notebooks scripts docs README.md | wc -l → 1   (06_orq: LIMITE_MUESTRA_DEFAULT, falso positivo → 0 lectores)
+grep -rl --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md 'config_auditoria' tests notebooks scripts docs README.md | wc -l → 0
+grep -rlE --exclude-dir=__pycache__ 'reporte_[a-z_]+\.xlsx' tests | wc -l                                     → 0
+grep -rlE --exclude-dir=__pycache__ 'L6_reporting|L6_REPORTING' tests | wc -l                                 → 1   (test_api_postprocessing.py:211,238,261)
 grep -l 'L6_reporting' notebooks/*.ipynb | wc -l                                    → 0
-grep -rl 'metadatos_corrida' tests | wc -l                                          → 3
-grep -rl 'resultados.generations' tests | wc -l                                     → 3
-grep -rn 'golden_records\.parquet' src | wc -l                                      → 1   (strategies.py:304, patrón de lectura; nadie lo escribe)
-grep -rli snowflake src | wc -l                                                     → 4
-grep -rli snowflake notebooks | wc -l                                               → 3   (07, 08, README_notebooks)
-grep -rliE '(subir|cargar|escribir|write|upload)[^\n]{0,40}snowflake' src notebooks scripts docs README.md | wc -l → 0
-grep -rlw 'VPI' src tests scripts notebooks docs README.md | wc -l                  → 0
-grep -rlw 'Caro' src tests scripts notebooks docs README.md | wc -l                 → 0
+grep -rl --exclude-dir=__pycache__ 'metadatos_corrida' tests | wc -l                                          → 3
+grep -rl --exclude-dir=__pycache__ 'resultados.generations' tests | wc -l                                     → 3
+grep -rn --exclude-dir=__pycache__ 'golden_records\.parquet' src | wc -l                                      → 1   (strategies.py:304, patrón de lectura; nadie lo escribe)
+grep -rli --exclude-dir=__pycache__ snowflake src | wc -l                                                     → 4
+grep -rli --exclude-dir=__pycache__ snowflake notebooks | wc -l                                               → 3   (07, 08, README_notebooks)
+grep -rliE --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md '(subir|cargar|escribir|write|upload)[^\n]{0,40}snowflake' src notebooks scripts docs README.md | wc -l → 0
+grep -rlw --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md 'VPI' src tests scripts notebooks docs README.md | wc -l → 0
+grep -rlw --exclude-dir=__pycache__ --exclude=CONSUMIDORES.md 'Caro' src tests scripts notebooks docs README.md | wc -l → 0
 ls docs/evidencia_importadores | wc -l                                              → 7
 ```
 
@@ -352,5 +369,6 @@ Scripts que lo llaman (7): `medir_baseline_v0_9_0.py`, `replicar_v2_5_0.py`,
   versión prevista de retiro (dos menores después). Cuando F2.9 migre la fábrica
   y `unified.py:285`, se cierra la fila de `RecordLinkagePipeline`.
 - Antes de retirar cualquier nombre de la lista (a), se vuelven a correr los
-  comandos del anexo A y se actualizan los conteos; si un conteo que era 0 dejó
-  de serlo, el retiro espera.
+  comandos del anexo A **tal como están escritos** (con la exclusión de este
+  archivo) y se actualizan los conteos; si un conteo que era 0 dejó de serlo,
+  el retiro espera.
