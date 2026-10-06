@@ -1,7 +1,9 @@
 """tests/integration/test_pipeline_result_v2_1.py
 
 Tests para las features nuevas de v2.1.0 sobre PipelineResult:
-    - F6.4: métodos to_excel() y to_csv()
+    - F6.4: métodos to_excel() y to_csv() — desde F2.11 son ALIAS de la función
+      libre del estándar ``exporters.escritor.exportar_vistas`` (avisan con
+      ``DeprecationWarning``); aquí se congela que el alias conserva su contrato.
     - F6.5: items(), values(), __iter__, __len__
 """
 
@@ -78,8 +80,31 @@ def test_dict_conversion(result_with_data: PipelineResult):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# F6.4 — Exportadores
+# F6.4 — Exportadores (alias de ``exportar_vistas`` desde F2.11)
 # ─────────────────────────────────────────────────────────────────────────────
+def test_to_excel_y_to_csv_son_alias_de_exportar_vistas(
+    result_with_data: PipelineResult, tmp_path: Path
+):
+    """Avisan con DeprecationWarning que nombra la función libre del estándar."""
+    with pytest.warns(DeprecationWarning, match="exportar_vistas"):
+        result_with_data.to_excel(tmp_path / "alias.xlsx")
+    with pytest.warns(DeprecationWarning, match="exportar_vistas"):
+        result_with_data.to_csv(tmp_path / "alias_csv")
+
+
+def test_to_excel_exige_xlsx_y_openpyxl(result_with_data: PipelineResult, tmp_path: Path):
+    """El alias no escribe otra cosa que lo que ``exportar_vistas`` escribe."""
+    with pytest.raises(ValueError, match=r"\.xlsx"):
+        result_with_data.to_excel(tmp_path / "salida.xls")
+    with pytest.raises(ValueError, match="openpyxl"):
+        result_with_data.to_excel(tmp_path / "salida.xlsx", engine="xlsxwriter")
+
+
+def test_to_csv_exige_utf8(result_with_data: PipelineResult, tmp_path: Path):
+    with pytest.raises(ValueError, match=r"(?i)utf-8"):
+        result_with_data.to_csv(tmp_path / "csvs", encoding="latin-1")
+
+
 def test_to_excel_creates_file(result_with_data: PipelineResult, tmp_path: Path):
     out_path = tmp_path / "salida.xlsx"
     returned = result_with_data.to_excel(out_path)

@@ -66,44 +66,33 @@ def correr_sistema(
     mode: str,
     engine: str = "disk_based",
 ) -> pd.DataFrame:
-    """Corre v2.10.0 con engine_type forzado y devuelve la correlativa.
+    """Corre el sistema con el motor LSH forzado y devuelve la correlativa.
 
-    v2.10.0: usa el pipeline directamente (no `deduplicate_unified`) para
-    forzar `engine_type=disk_based` independientemente del tamaño del
-    dataset. Esto es CRÍTICO para que los resultados de la calibración
-    coincidan con el comportamiento de producción (>1M registros usan
-    disk_based automáticamente; aquí se fuerza para muestras más chicas).
+    Forzar `engine=disk_based` independientemente del tamaño del dataset es
+    CRÍTICO para que los resultados de la calibración coincidan con el
+    comportamiento de producción (>1M registros usan disk_based
+    automáticamente; aquí se fuerza para muestras más chicas). F2.9: antes
+    se construía `RecordLinkagePipeline` a mano para eso; ahora la perilla es
+    `AjustesDeduplicacion(motor=...)` de `deduplicate_unified` (misma
+    partición, medido sobre el dataset robusto con los dos motores).
     """
     from record_linkage.deduplication.unified import (
-        _build_deduplication_config,
-        _prepare_for_deduplication,
+        AjustesDeduplicacion,
+        deduplicate_unified,
     )
-    from record_linkage.pipeline.linkage_pipeline import RecordLinkagePipeline
 
     logging.disable(logging.CRITICAL)
     try:
         with open(os.devnull, "w") as dn, redirect_stdout(dn), redirect_stderr(dn):
-            config = _build_deduplication_config("deduplication_standard", mode, len(df_input))
-            config["linkage_engine_class"] = engine
-            active = config["profiles"][config["profile"]]
-            df_prep = _prepare_for_deduplication(
-                df_input[[col_nit, col_name]].copy(),
-                col_nit,
-                col_name,
-                mode,
-                remove_top_words=int(active.get("remove_top_words", 20)),
-            )
-            pipeline = RecordLinkagePipeline(config, profile="deduplication_standard")
             with tempfile.TemporaryDirectory() as tmp:
-                result = pipeline.run(
-                    sources={"DEDUP_SOURCE": df_prep},
+                corr, _ = deduplicate_unified(
+                    df_input[[col_nit, col_name]].copy(),
+                    col_nit=col_nit,
+                    col_name=col_name,
+                    mode=mode,
                     output_dir=tmp,
-                    source_priority=["DEDUP_SOURCE"],
-                    validate_data=False,
-                    generate_visualizations=False,
-                    show_progress=False,
+                    ajustes=AjustesDeduplicacion(motor=engine),
                 )
-                corr = result.get("correlative_table").copy()
     finally:
         logging.disable(logging.NOTSET)
     return corr.sort_values("ORIGINAL_INDEX").reset_index(drop=True)

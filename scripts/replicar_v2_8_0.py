@@ -36,12 +36,10 @@ from pathlib import Path
 import pandas as pd
 
 from record_linkage.deduplication.unified import (
-    _build_deduplication_config,
-    _prepare_for_deduplication,
+    AjustesDeduplicacion,
     deduplicate_unified,
 )
 from record_linkage.evaluation.pairwise import evaluar_pares
-from record_linkage.pipeline.linkage_pipeline import RecordLinkagePipeline
 
 # Repo root: scripts/ está al lado de tests/.
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,23 +94,25 @@ def generar_dataset_sintetico(out_path: Path) -> pd.DataFrame:
 
 
 def _correr(df: pd.DataFrame, override: bool, boost: float) -> pd.DataFrame:
-    """Corre el pipeline con perillas configuradas vía override del perfil."""
-    config = _build_deduplication_config("deduplication_standard", "BALANCEADO", len(df))
-    active = config["profile"]
-    config["profiles"][active]["nit_identical_overrides_name_filter"] = override
-    config["profiles"][active]["nit_identical_score_boost"] = boost
-    df_prep = _prepare_for_deduplication(df, "NIT", "RAZON_SOCIAL", "BALANCEADO")
-    pipeline = RecordLinkagePipeline(config, profile="deduplication_standard")
+    """Corre el pipeline con las perillas del fix sobreescritas en el perfil.
+
+    F2.9: `deduplicate_unified` + `AjustesDeduplicacion` en lugar de
+    `RecordLinkagePipeline` a mano. Misma partición que antes, medida sobre
+    los dos ground truth con las perillas OFF y ON (la preparación directa no
+    quitaba palabras frecuentes, pero L1 del pipeline las quita igual con el
+    `remove_top_words` del perfil, así que no hay nada que compensar).
+    """
+    ajustes = AjustesDeduplicacion(
+        perfil={
+            "nit_identical_overrides_name_filter": override,
+            "nit_identical_score_boost": boost,
+        }
+    )
     with tempfile.TemporaryDirectory() as tmp:
-        result = pipeline.run(
-            sources={"DEDUP_SOURCE": df_prep},
-            output_dir=tmp,
-            source_priority=["DEDUP_SOURCE"],
-            validate_data=False,
-            generate_visualizations=False,
-            show_progress=False,
+        corr, _ = deduplicate_unified(
+            df, "NIT", "RAZON_SOCIAL", "BALANCEADO", output_dir=tmp, ajustes=ajustes
         )
-        return result.get("correlative_table").copy()
+        return corr
 
 
 def _evaluar(df_truth: pd.DataFrame, corr: pd.DataFrame):

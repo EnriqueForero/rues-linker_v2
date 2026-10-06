@@ -58,6 +58,7 @@ from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
+from .componentes import ComponentesPreparacion, fabricar_componentes
 from .errores import (
     ArtefactoObligatorioError,
     ConsolidacionNitError,
@@ -65,7 +66,6 @@ from .errores import (
     mensaje_accionable,
 )
 from .fingerprints import fingerprint_sources
-from .linkage_pipeline import RecordLinkagePipeline
 from .metricas import (
     CLAVES_METRICAS,
     RUTA_CANDIDATES_DB,
@@ -222,7 +222,7 @@ class Orchestrator:
 
         # Cache de datos procesados
         self._df_clean: pd.DataFrame | None = None
-        self._pipeline_instance = None
+        self._componentes: ComponentesPreparacion | None = None
 
         # (v2.1.0) Set de fases explícitamente forzadas a re-ejecutar.
         # Lo manipula `run()` con el kwarg `force_rerun_phases`.
@@ -307,18 +307,17 @@ class Orchestrator:
     # ==========================================================================
 
     @property
-    def pipeline(self):
-        """
-        Lazy initialization del RecordLinkagePipeline subyacente.
+    def componentes(self) -> ComponentesPreparacion:
+        """Componentes de preparación (L1), creados la primera vez que se piden.
 
-        Se crea solo cuando se necesita, permitiendo que el Orchestrator
-        se inicialice sin cargar todas las dependencias.
+        F2.9: antes salían de una instancia de ``RecordLinkagePipeline`` que el
+        Orchestrator no ejecutaba nunca; ahora los entrega
+        ``pipeline.componentes.fabricar_componentes`` con la misma regla de
+        ``cleaning_mode``. Se invalidan cuando cambian las fuentes.
         """
-        if not self._pipeline_instance:
-            self._pipeline_instance = RecordLinkagePipeline(
-                self.config, profile=self.config.get("profile")
-            )
-        return self._pipeline_instance
+        if self._componentes is None:
+            self._componentes = fabricar_componentes(self.config, self.config.get("profile"))
+        return self._componentes
 
     @property
     def profile(self) -> dict:
@@ -598,7 +597,7 @@ class Orchestrator:
                 )
                 self.data_sig = current_data_sig
                 self._df_clean = None
-                self._pipeline_instance = None
+                self._componentes = None
 
         # Invalidar fases si se especifica punto de inicio
         if from_phase:
@@ -1055,30 +1054,30 @@ class Orchestrator:
 
         # Cargar y consolidar fuentes
         self.log.info("   📥 Cargando fuentes...")
-        loaded, load_report = self.pipeline.data_handler.load_sources(self.sources)
+        loaded, load_report = self.componentes.data_handler.load_sources(self.sources)
 
         if load_report.get("errors"):
             for err in load_report["errors"]:
                 self.log.warning(f"   ⚠️ {err}")
 
         self.log.info("   🔄 Consolidando fuentes...")
-        df = self.pipeline.data_handler.consolidate_sources(loaded)
+        df = self.componentes.data_handler.consolidate_sources(loaded)
         self.log.info(f"   📊 Registros consolidados: {len(df):,}")
 
         # Limpiar nombres
         self.log.info("   🧹 Limpiando nombres...")
-        df["NOMBRE_LIMPIO"] = self.pipeline.text_processor.process_series(df["RAZON_SOCIAL"])
+        df["NOMBRE_LIMPIO"] = self.componentes.text_processor.process_series(df["RAZON_SOCIAL"])
         # v0.17.1 — firma de bloqueo separada del nombre de decisión. El LSH
         # la usa para que los tokens genéricos no llenen los buckets; el
         # scorer sigue viendo NOMBRE_LIMPIO íntegro. Derivar cuesta un filtro
         # de tokens cacheado por valor único, no una segunda limpieza.
-        df["NOMBRE_BLOQUEO"] = self.pipeline.text_processor.derivar_nombre_bloqueo(
+        df["NOMBRE_BLOQUEO"] = self.componentes.text_processor.derivar_nombre_bloqueo(
             df["NOMBRE_LIMPIO"]
         )
 
         # Procesar NITs
         self.log.info("   🔢 Procesando NITs...")
-        nit_res = self.pipeline.nit_processor.process_series(df["NIT"])
+        nit_res = self.componentes.nit_processor.process_series(df["NIT"])
 
         # ✅ CORRECCIÓN CRÍTICA: Mapear columnas correctamente
         # NitProcessor retorna IS_VALID, no NIT_VALID
