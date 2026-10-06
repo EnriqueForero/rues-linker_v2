@@ -117,7 +117,9 @@
   "precision": 1.0,
   "recall": 1.0,
   "f1": 1.0,
-  "nota": "",
+  "nota": "sin corroboración por contacto (F3 apagado)",
+  "corroborar": false,
+  "camino": "dedupe_esquema",
   "extra": {
     "base_a": 20,
     "base_b": 21

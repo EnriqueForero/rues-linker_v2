@@ -1,6 +1,6 @@
 {
   "etiqueta": "corroborado",
-  "version": "0.19.0",
+  "version": "0.22.4",
   "escenario": "linkage",
   "casos": [
     {
@@ -117,7 +117,9 @@
   "precision": 1.0,
   "recall": 1.0,
   "f1": 1.0,
-  "nota": "F3 activo",
+  "nota": "F3 activo: corroboración por contacto (EMAIL y TELEFONO)",
+  "corroborar": true,
+  "camino": "dedupe_esquema",
   "extra": {
     "base_a": 20,
     "base_b": 21

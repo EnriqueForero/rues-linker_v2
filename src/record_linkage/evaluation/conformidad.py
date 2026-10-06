@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 
 __all__ = [
+    "CAMINO_POR_DEFECTO",
     "DIRECTORIO_POR_DEFECTO",
     "VARIABLE_ENTORNO",
     "ConjuntoConformidad",
@@ -135,6 +136,12 @@ TIPOS_FRONTERA = frozenset({"TP_DIFICIL"})
 #: se identifican explícitamente en vez de inferirse.
 TIPOS_NEGATIVOS = frozenset({"FP_trap", "TN", "TRUSTED"})
 
+#: Camino del motor con el que se produce la partición evaluada. Hoy el único
+#: es `api.dedupe_esquema` (`scripts/conformidad.py` lo usa para los dos
+#: escenarios); se registra por nombre para que, cuando exista otro, la
+#: evidencia diga con cuál se midió.
+CAMINO_POR_DEFECTO = "dedupe_esquema"
+
 
 @dataclass(frozen=True)
 class ResultadoCaso:
@@ -167,7 +174,17 @@ class ResultadoCaso:
 
 @dataclass(frozen=True)
 class Informe:
-    """Resultado completo de una corrida de conformidad."""
+    """Resultado completo de una corrida de conformidad.
+
+    Attributes:
+        corroborar: si la partición se produjo con la corroboración por
+            contacto (F3, `--corroborar`) activa. Es lo que quien evaluó
+            DECLARA haber activado — `evaluar_dedup`/`evaluar_linkage` reciben
+            una partición ya hecha y no pueden comprobarlo—, y va en la
+            evidencia porque C09 y C21 solo pasan con ella: un JSON sin este
+            campo no dice qué midió (F0.3).
+        camino: camino del motor que produjo la partición (`CAMINO_POR_DEFECTO`).
+    """
 
     etiqueta: str
     version: str
@@ -177,6 +194,8 @@ class Informe:
     recall: float
     f1: float
     nota: str = ""
+    corroborar: bool = False
+    camino: str = CAMINO_POR_DEFECTO
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -213,6 +232,7 @@ class Informe:
             linea,
             f"  CONFORMIDAD · {self.escenario} · {self.etiqueta} · rues-linker {self.version}",
             linea,
+            f"  CAMINO         {self.camino} · corroborar: {'sí' if self.corroborar else 'no'}",
             f"  PARES          precision {self.precision:.4f}   recall {self.recall:.4f}"
             f"   F1 {self.f1:.4f}",
             f"  CASOS FIRMES   {aprobados}/{len(firmes)} aprobados",
@@ -373,6 +393,8 @@ def evaluar_dedup(
     etiqueta: str,
     version: str,
     nota: str = "",
+    corroborar: bool = False,
+    camino: str = CAMINO_POR_DEFECTO,
 ) -> Informe:
     """Evalúa la deduplicación caso por caso.
 
@@ -383,6 +405,10 @@ def evaluar_dedup(
         etiqueta: nombre corto de la corrida.
         version: versión de la librería que produjo el resultado.
         nota: qué se estaba probando.
+        corroborar: si ``grupos_predichos`` se produjo con F3 activo. Se
+            registra tal cual en el informe; quien llama es responsable de
+            decir la verdad.
+        camino: camino del motor que produjo la partición.
 
     Raises:
         ValueError: si la longitud no coincide con el conjunto.
@@ -416,6 +442,8 @@ def evaluar_dedup(
         recall=recall,
         f1=f1,
         nota=nota,
+        corroborar=corroborar,
+        camino=camino,
         extra={"registros": len(registros), "pares": len(esperados)},
     )
 
@@ -427,6 +455,8 @@ def evaluar_linkage(
     etiqueta: str,
     version: str,
     nota: str = "",
+    corroborar: bool = False,
+    camino: str = CAMINO_POR_DEFECTO,
 ) -> Informe:
     """Evalúa el cruce A↔B caso por caso.
 
@@ -434,6 +464,9 @@ def evaluar_linkage(
         pares_predichos: conjunto de ``(REG_ID_A, REG_ID_B)`` que la librería
             declaró la misma entidad. Los identificadores son cadenas, como en
             el conjunto.
+        corroborar: si ``pares_predichos`` se produjo con F3 activo; se
+            registra en el informe, no se comprueba.
+        camino: camino del motor que produjo los pares.
     """
     verdad = conjunto.linkage_verdad
     predichos = {(str(a), str(b)) for a, b in pares_predichos}
@@ -469,5 +502,7 @@ def evaluar_linkage(
         recall=recall,
         f1=f1,
         nota=nota,
+        corroborar=corroborar,
+        camino=camino,
         extra={"base_a": len(conjunto.linkage_a), "base_b": len(conjunto.linkage_b)},
     )
