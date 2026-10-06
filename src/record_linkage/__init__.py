@@ -99,6 +99,7 @@ from .matching.nombre_idf import SimilitudNombre, neutralizar_genericos
 from .paises import CATALOGO_PAISES, ResultadoPaises, canonizar_pais, sugerir_alias_pais
 from .pipeline.orchestrator import Orchestrator
 from .processing.saneamiento import ascii_mayusculas, sanear_texto, unir_iniciales
+from .resultado import ReporteValidacion
 
 __all__ = [
     "CATALOGO_PAISES",
@@ -122,6 +123,7 @@ __all__ = [
     "NumericFormat",
     "Orchestrator",
     "PoliticaFaltante",
+    "ReporteValidacion",
     "ResultadoCobertura",
     "ResultadoImportadores",
     "ResultadoLinkage",

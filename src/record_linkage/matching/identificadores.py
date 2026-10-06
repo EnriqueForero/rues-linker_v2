@@ -46,6 +46,7 @@ __all__ = [
     "PESOS_DIAN",
     "base_canonica",
     "bases_canonicas",
+    "bases_validas",
     "digito_verificacion_dian",
     "es_extension_por_digito_verificacion",
     "formas_canonicas",
@@ -203,3 +204,24 @@ def bases_canonicas(valores: np.ndarray) -> np.ndarray:
     unicos = serie.drop_duplicates()
     mapa = {valor: base_canonica(valor) for valor in unicos}
     return serie.map(mapa).to_numpy(dtype=object)
+
+
+def bases_validas(valores: np.ndarray) -> np.ndarray:
+    """``bases_canonicas`` dejando vacía toda base que no sirve para agrupar.
+
+    Una base más corta que ``LONGITUD_MINIMA_BASE`` (o vacía) no identifica a
+    nadie. Es la base canónica del preámbulo: ``salida/completar.py`` la
+    aplica a ``NIT_FINAL`` para ``ID_ENTIDAD = NIT-<base>`` y, SOLO cuando la
+    correlativa no trae las técnicas del motor, a la columna de identificador.
+    ``METODO_UNION`` y el QA de conflictos NO la usan: parten de
+    ``NIT_BASE``/``NIT_VALID`` de NitProcessor, porque esta reducción
+    (encadena DV, exige longitud mínima) discrepa del motor en el 16 % de las
+    filas válidas del banco y sobre un ``NIT`` crudo (flotante
+    ``900111222.0``, prefijos) no reproduce su limpieza.
+
+    Returns:
+        Arreglo de ``object`` con la base canónica, o ``""`` si no es válida.
+    """
+    bases = bases_canonicas(valores)
+    longitudes = pd.Series(bases, dtype="string").str.len().fillna(0).to_numpy()
+    return np.where(longitudes >= LONGITUD_MINIMA_BASE, bases, "")

@@ -121,8 +121,11 @@ def test_end_to_end_no_fusiona_nits_validos_distintos() -> None:
     """El caso real completo, por la fachada pública."""
     resultado = rl.dedupe(CASO_REAL.copy(), mode="AGRESIVO")
     correlativa = resultado.correlativa
-    grupos = correlativa.groupby("ID_GRUPO")["NIT_BASE"].nunique()
-    assert (grupos <= 1).all(), (
+    # F1.9: NIT_BASE/NIT_VALID son técnicas y ya no viajan en el entregable; la
+    # cifra única del QA (grupos que mezclan dos bases válidas del motor) la
+    # publica el contrato en el manifiesto. No se re-deriva la regla aquí.
+    conflictos = resultado.manifiesto["completar"]["identificador"]["grupos_con_bases_distintas"]
+    assert conflictos == 0, (
         "ningún grupo puede contener dos NIT base válidos distintos: "
         f"{correlativa[['NIT', 'RAZON_SOCIAL', 'ID_GRUPO']].to_dict('records')}"
     )

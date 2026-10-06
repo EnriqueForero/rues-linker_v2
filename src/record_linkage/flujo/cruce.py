@@ -30,6 +30,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
+from .. import contrato
 from ..api import linkage
 from ..golden.columnas_finales import COLUMNAS_FINALES, faltantes, faltantes_en
 from ..ingestion import (
@@ -41,7 +42,7 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
-from ..pipeline.errores import ColumnasArrastreError
+from ..pipeline.errores import ColumnasArrastreError, ContratoSalidaError, mensaje_accionable
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
 from .insumos import (
@@ -342,16 +343,38 @@ class ControlCalidad(Protocol):
 _AJUSTES_QA = DuckDBIngestionSettings(memory_limit="512MB", threads=2)
 
 
-def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
+def _conflictos_del_contrato(metricas: Mapping[str, Any]) -> int:
+    """Grupos que mezclan dos bases de identificador válidas distintas.
+
+    Desde F1.9 las columnas técnicas (``NIT_BASE``, ``NIT_VALID``…) ya no
+    viajan en el entregable —quedan en ``_trabajo/``—, así que el conteo NO se
+    recalcula aquí desde ``NIT``: lo calcula una sola vez
+    ``salida.completar`` con las técnicas del motor (``NIT_BASE`` donde
+    ``NIT_VALID``, la misma regla que decide ``METODO_UNION``), lo publica en
+    el manifiesto del contrato y :func:`ejecutar_cruce` lo copia a
+    ``metricas["conflictos_identificador"]``. Recalcularlo desde ``NIT``
+    daba un falso conflicto con un identificador flotante (``900111222.0``).
+    """
+    conflictos = metricas.get("conflictos_identificador")
+    if conflictos is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "el resultado no trae metricas['conflictos_identificador'].",
+                    "el QA de identificador se calcula con las técnicas del motor al "
+                    "completar el contrato, no desde la correlativa publicada.",
+                    "construya el resultado con ejecutar_cruce(); si lo arma a mano, "
+                    "copie el conteo de manifiesto['completar']['identificador'].",
+                )
+            ]
+        )
+    return int(conflictos)
+
+
+def _qa_desde_dataframe(correlativa: pd.DataFrame, conflictos: int) -> dict[str, Any]:
     """Métricas de QA sobre una correlativa materializada."""
     from .diagnostico import diagnosticar_identificadores
 
-    validos = correlativa[
-        correlativa["NIT_BASE"].notna()
-        & (correlativa["NIT_BASE"].astype("string").fillna("") != "")
-        & correlativa["NIT_VALID"].astype(str).isin(["True", "1", "true"])
-    ]
-    conflictos = int((validos.groupby("ID_GRUPO")["NIT_BASE"].nunique() > 1).sum())
     tam = correlativa.groupby("ID_GRUPO").size()
     variedad = correlativa.groupby("ID_GRUPO")["RAZON_SOCIAL"].nunique()
     return {
@@ -367,24 +390,18 @@ def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _qa_desde_parquet(ruta: Path, settings: Any) -> dict[str, Any]:
-    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM."""
+def _qa_desde_parquet(ruta: Path, settings: Any, conflictos: int) -> dict[str, Any]:
+    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM.
+
+    El conteo de conflictos llega calculado (ver ``_conflictos_del_contrato``):
+    no se materializa ninguna columna para recalcularlo.
+    """
     import duckdb
 
     con = duckdb.connect()
     try:
         _configure_connection(con, settings)
         origen = f"read_parquet({_quote_literal(str(ruta))})"
-        conflictos = con.execute(
-            f"""
-            SELECT COUNT(*) FROM (
-                SELECT ID_GRUPO FROM {origen}
-                WHERE NIT_BASE IS NOT NULL AND NIT_BASE <> ''
-                  AND lower(CAST(NIT_VALID AS VARCHAR)) IN ('true', '1')
-                GROUP BY ID_GRUPO HAVING COUNT(DISTINCT NIT_BASE) > 1
-            )
-            """
-        ).fetchone()[0]
         tam = (
             con.execute(f"SELECT ID_GRUPO, COUNT(*) n FROM {origen} GROUP BY ID_GRUPO")
             .df()
@@ -609,7 +626,11 @@ class ResultadoCruce:
     def _qa(self) -> dict[str, Any]:
         """Métricas de QA cacheadas por resultado."""
         if getattr(self, "_qa_cache", None) is None:
-            object.__setattr__(self, "_qa_cache", _qa_desde_dataframe(self.correlativa))
+            object.__setattr__(
+                self,
+                "_qa_cache",
+                _qa_desde_dataframe(self.correlativa, _conflictos_del_contrato(self.metricas)),
+            )
         return self._qa_cache  # type: ignore[return-value]
 
     def conflictos_identificador(self) -> int:
@@ -721,7 +742,11 @@ class ResultadoCruceDisco:
             object.__setattr__(
                 self,
                 "_qa_cache",
-                _qa_desde_parquet(Path(self.correlativa.path), _AJUSTES_QA),
+                _qa_desde_parquet(
+                    Path(self.correlativa.path),
+                    _AJUSTES_QA,
+                    _conflictos_del_contrato(self.metricas),
+                ),
             )
         return self._qa_cache  # type: ignore[return-value]
 
@@ -1576,29 +1601,17 @@ QUE_HACER_ENTREGA_INCOMPLETA = (
     "se repite, reporte el caso con el manifiesto y el registro de la corrida"
 )
 
-#: Columnas que el motor pandas ESCRIBE en la correlativa, además de sus
-#: entradas (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False``
-#: las columnas de arrastre viajan por el motor y una con uno de estos nombres
+#: Columnas que el motor ESCRIBE en la correlativa, además de sus entradas
+#: (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False`` las
+#: columnas de arrastre viajan por el motor y una con uno de estos nombres
 #: queda PISADA: es la única forma de declarar ese choque en vez de afirmar
-#: que se adjuntó (revisión r3 de F1.8). La prueba
+#: que se adjuntó (revisión r3 de F1.8). Desde F1.9 son EXACTAMENTE las
+#: columnas fijas del contrato de salida (``contrato.COLUMNAS_CORRELATIVA``:
+#: las técnicas ya no están en el entregable, quedan en ``_trabajo/``); la
+#: regla se escribe una vez, en ``contrato.py``. La prueba
 #: ``test_las_columnas_que_produce_el_motor_son_exactamente_las_declaradas``
-#: ata esta constante a lo observado; si el motor cambia su salida (p. ej.
-#: cuando F1 saque las técnicas del entregable), se actualiza aquí.
-COLUMNAS_QUE_PRODUCE_EL_MOTOR: frozenset[str] = frozenset(
-    {
-        "SRC",
-        "ORIGINAL_INDEX",
-        "ID_GRUPO",
-        *COLUMNAS_FINALES,
-        # técnicas (F1 las moverá a ``_trabajo/``)
-        "NOMBRE_LIMPIO",
-        "NOMBRE_BLOQUEO",
-        "NIT_OK",
-        "NIT_BASE",
-        "NIT_VALID",
-        "PHONETIC_KEY1",
-    }
-)
+#: ata esta constante a lo observado.
+COLUMNAS_QUE_PRODUCE_EL_MOTOR: frozenset[str] = frozenset(contrato.COLUMNAS_CORRELATIVA)
 
 
 @dataclass(frozen=True)
@@ -2126,8 +2139,40 @@ def _ejecutar_cruce_medido(
             consume_sources=True,
         )
     segundos_link = time.time() - inicio_link
-    golden_compacta = salida["golden"]
-    correlativa_compacta = salida["correlative"]
+    # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
+    # dict viejo siguen funcionando pero avisan, y la librería no se avisa a
+    # sí misma.
+    golden_compacta = salida.golden
+    correlativa_compacta = salida.correlativa
+    if golden_compacta is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un resultado sin golden.",
+                    "el flujo de cruce publica golden y correlativa.",
+                    "revise la ruta de linkage/collapse_exact_duplicates usada por ejecutar_cruce.",
+                )
+            ]
+        )
+    # El QA de identificador (grupos que mezclan dos bases válidas) lo calculó
+    # salida.completar con las técnicas del motor; de aquí sale a `metricas`.
+    conflictos_identificador = (
+        salida.manifiesto.get("completar", {})
+        .get("identificador", {})
+        .get("grupos_con_bases_distintas")
+    )
+    if conflictos_identificador is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un manifiesto sin completar.identificador."
+                    "grupos_con_bases_distintas.",
+                    "el QA de identificador del cruce se toma de ahí, no se recalcula "
+                    "desde la correlativa publicada (sin columnas técnicas).",
+                    "revise que linkage() complete el contrato con salida.completar.",
+                )
+            ]
+        )
     publicacion: PublicacionResultadosDisco | None = None
     golden: pd.DataFrame | TablaParquet
     correlativa: pd.DataFrame | TablaParquet
@@ -2235,6 +2280,7 @@ def _ejecutar_cruce_medido(
         "filas_entrada": filas_entrada,
         "filas_correlativa": filas_correlativa,
         "entidades": entidades,
+        "conflictos_identificador": int(conflictos_identificador),
         "segundos_linkage": round(segundos_link, 2),
         "segundos_total": round(cronometro.total, 2),
         "segundos_por_fase": {k: round(v, 2) for k, v in cronometro.fases.items()},

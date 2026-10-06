@@ -410,3 +410,27 @@ class CruceSinFuenteError(ErrorPipeline):
                 ),
             )
         )
+
+
+class ContratoSalidaError(ErrorPipeline):
+    """El resultado no cumple el contrato de salida (``contrato.VERSION_CONTRATO``).
+
+    Attributes:
+        fallos: cada incumplimiento, uno por línea, tal como lo produjo
+            ``ResultadoLinkage.validar()``.
+    """
+
+    def __init__(self, fallos: Sequence[str]) -> None:
+        self.fallos: list[str] = list(fallos)
+        detalle = "\n".join(f"  - {f}" for f in self.fallos)
+        super().__init__(
+            mensaje_accionable(
+                f"el resultado incumple el contrato de salida en {len(self.fallos)} punto(s):\n"
+                f"{detalle}\n",
+                "lo que se entrega aguas abajo (parquet, Excel, crosswalk) dejaría de ser "
+                "comparable entre corridas y entre flujos.",
+                "si el resultado viene de linkage()/dedupe()/link() es un defecto del motor o "
+                "de salida.completar: repórtelo con el manifiesto; si lo construyó a mano, "
+                "corrija las columnas que se listan.",
+            )
+        )

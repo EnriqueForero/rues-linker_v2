@@ -39,7 +39,16 @@ def _dataset_mixto() -> pd.DataFrame:
 
 
 def test_paridad_fachada_vs_ruta_directa(tmp_path: Path) -> None:
-    """dedupe() == deduplicate_auto() bit a bit sobre el mismo insumo."""
+    """dedupe() no cambia ninguna decisión de deduplicate_auto() sobre el mismo insumo.
+
+    Desde F1.9 la fachada COMPLETA la correlativa al contrato 1.0 (añade
+    ID_REGISTRO/ID_ENTIDAD/METODO_UNION…, retira las técnicas y recodifica
+    ID_GRUPO de texto a entero), así que ya no es bit a bit idéntica. La
+    paridad que importa es la del motor: misma partición, misma identidad
+    adoptada y mismas métricas por fila.
+    """
+    from record_linkage.contrato import COLUMNAS_TECNICAS
+
     df = _dataset_mixto()
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -52,7 +61,13 @@ def test_paridad_fachada_vs_ruta_directa(tmp_path: Path) -> None:
         )
     a = res.correlativa.sort_values("ORIGINAL_INDEX").reset_index(drop=True)
     b = corr_directa.sort_values("ORIGINAL_INDEX").reset_index(drop=True)
-    pd.testing.assert_frame_equal(a, b)
+    comunes = [c for c in b.columns if c not in COLUMNAS_TECNICAS and c != "ID_GRUPO"]
+    assert set(comunes) <= set(a.columns)
+    pd.testing.assert_frame_equal(a[comunes], b[comunes])
+    # Misma partición: el ID_GRUPO entero es una biyección de las etiquetas del motor.
+    pares = pd.DataFrame({"a": a["ID_GRUPO"], "b": b["ID_GRUPO"]}).drop_duplicates()
+    assert pares["a"].is_unique and pares["b"].is_unique
+    assert pd.api.types.is_integer_dtype(a["ID_GRUPO"])
 
 
 def test_resultado_tipado_metricas_y_manifiesto(tmp_path: Path) -> None:

@@ -15,13 +15,23 @@ Aquí viven las dos reglas como funciones puras de módulo:
 * :func:`metricas_de_grupo` — lo que el generador calcula por lote; la
   consolidación la llama sobre el subconjunto de la correlativa del grupo
   fusionado.
+* :func:`confianza_de_grupo` — ALTA · MEDIA · BAJA desde ``NIT_VARIATIONS``,
+  ``SOURCES_COUNT`` y ``RECORD_COUNT``; es la regla que :func:`metricas_de_grupo`
+  aplica y la que ``contrato.py`` documenta como definición de ``CONFIANZA``
+  (F1.9: una sola copia, aquí).
 * :func:`metricas_de_calidad` — la MISMA fórmula que el ``UPDATE`` SQL de
   ``_add_quality_metrics``, incluido el redondeo de SQLite
   (``tests/test_golden_consolidacion_nit.py`` prueba la paridad valor a valor
-  sobre una malla de entradas).
+  sobre una malla de entradas). ``REQUIRES_REVIEW`` sale como 0/1 (``int64``)
+  igual que del SQL; el tipo ``bool`` del contrato lo pone ``golden.tipos``
+  (F1.14) o ``salida.completar`` (F1.9), no esta función.
 
 y la red final :func:`verificar_golden`, que el orquestador llama tras la
 consolidación: ninguna métrica nula, ninguna columna de la correlativa.
+``salida.completar`` (F1.9) usa :func:`metricas_de_grupo` y
+:func:`metricas_de_calidad` como red para reparar —y declarar en el
+manifiesto— cualquier fila del golden que llegue sin métricas; con F1.1 en
+el motor esa reparación es un no-op.
 """
 
 from __future__ import annotations
@@ -158,11 +168,35 @@ def metricas_de_grupo(
     )
     metricas["PRIMARY_SOURCE"] = primary_source
 
-    # Confianza (paso 1.5 del plan maestro), vectorizada con np.select.
+    metricas["CONFIANZA"] = confianza_de_grupo(metricas)
+    return metricas[list(COLUMNAS_METRICAS_GRUPO)]
+
+
+def confianza_de_grupo(metricas: pd.DataFrame) -> np.ndarray:
+    """ALTA · MEDIA · BAJA desde ``NIT_VARIATIONS``, ``SOURCES_COUNT`` y ``RECORD_COUNT``.
+
+    Paso 1.5 del plan maestro, vectorizado con ``np.select``:
+
+    * ALTA: identificador único (``NIT_VARIATIONS == 1``) confirmado por dos o
+      más fuentes (``SOURCES_COUNT >= 2``).
+    * MEDIA: hasta dos identificadores (``NIT_VARIATIONS <= 2``) y grupo
+      pequeño (``RECORD_COUNT <= 5``).
+    * BAJA: el resto.
+
+    No rellena nulos: las métricas de grupo nunca los traen (las produce
+    :func:`metricas_de_grupo`) y un nulo aquí sería un defecto a detectar, no
+    a tapar.
+
+    Args:
+        metricas: DataFrame con las tres columnas (una fila por grupo).
+
+    Returns:
+        Arreglo de cadenas alineado con ``metricas.index``.
+    """
     nit_vars = metricas["NIT_VARIATIONS"]
     fuentes = metricas["SOURCES_COUNT"]
     miembros = metricas["RECORD_COUNT"]
-    metricas["CONFIANZA"] = np.select(
+    return np.select(
         [
             (nit_vars == 1) & (fuentes >= 2),
             (nit_vars <= 2) & (miembros <= 5),
@@ -170,7 +204,6 @@ def metricas_de_grupo(
         ["ALTA", "MEDIA"],
         default="BAJA",
     )
-    return metricas[list(COLUMNAS_METRICAS_GRUPO)]
 
 
 def _redondear_como_sqlite(valores: np.ndarray) -> np.ndarray:

@@ -248,13 +248,48 @@ def test_linkage_propaga_contrato_de_consumo_sin_cambiar_default(monkeypatch, tm
             self.sources = sources
             self.consume_sources = consume_sources
             self.profile = {"skip_reporting": True}
+            # Misma propiedad que Orchestrator.prioridad_fuentes: api.linkage()
+            # la lee para completar el contrato (F1.9).
+            self.prioridad_fuentes = ["RUES"]
             received_flags.append(consume_sources)
 
         def run(self, *, skip_reporting=None):
             del skip_reporting
             if self.consume_sources:
                 self.sources.clear()
-            return {"golden": pd.DataFrame(), "correlative": pd.DataFrame()}
+            # Desde F1.9 linkage() completa y valida el contrato de salida, así
+            # que el motor fingido devuelve la forma mínima que L5 produce.
+            correlative = pd.DataFrame(
+                {
+                    "NIT": ["1"],
+                    "RAZON_SOCIAL": ["ACME"],
+                    "SRC": ["RUES"],
+                    "ORIGINAL_INDEX": [0],
+                    "ID_GRUPO": [0],
+                    "NIT_FINAL": ["1"],
+                    "RAZON_SOCIAL_FINAL": ["ACME"],
+                    "NAME_SIMILARITY_SCORE": [1.0],
+                    "NIT_DISTANCE": [0],
+                }
+            )
+            golden = pd.DataFrame(
+                {
+                    "ID_GRUPO": [0],
+                    "NIT_FINAL": ["1"],
+                    "RAZON_SOCIAL_FINAL": ["ACME"],
+                    "PRIMARY_SOURCE": ["RUES"],
+                    "SOURCES_LIST": ["RUES"],
+                    "SOURCES_COUNT": [1],
+                    "RECORD_COUNT": [1],
+                    "NAME_VARIATIONS": [1],
+                    "NIT_VARIATIONS": [1],
+                    "CONFIDENCE_SCORE": [1.0],
+                    "CONFIANZA": ["MEDIA"],
+                    "REQUIRES_REVIEW": [0],
+                    "CREATED_AT": ["2026-10-06 00:00:00"],
+                }
+            )
+            return {"golden": golden, "correlative": correlative}
 
     monkeypatch.setattr(orchestrator_module, "Orchestrator", FakeOrchestrator)
     monkeypatch.setattr(

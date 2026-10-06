@@ -28,6 +28,7 @@ from record_linkage.config.profiles import crear_config_orchestrator
 from record_linkage.deduplication.auto import deduplicate_auto
 from record_linkage.pipeline.errores import ColapsoExactoError, CruceSinFuenteError
 from record_linkage.pipeline.orchestrator import PHASES_ORDER, Orchestrator, Phase
+from record_linkage.resultado import ResultadoLinkage
 
 
 @contextlib.contextmanager
@@ -326,10 +327,13 @@ def test_link_sin_src_falla_con_excepcion_especifica(monkeypatch: pytest.MonkeyP
     df_a, df_b = _tablas_ab()
 
     def _linkage_sin_src(*_args, **_kwargs):
-        return {
-            "correlative": pd.DataFrame({"ID_GRUPO": [1, 1, 2], "ORIGINAL_INDEX": [0, 1, 2]}),
-            "golden": pd.DataFrame({"ID_GRUPO": [1, 2]}),
-        }
+        # F1.9: linkage() devuelve ResultadoLinkage; el doble también, con una
+        # correlativa que no respeta el contrato (sin SRC), como documenta
+        # CruceSinFuenteError («si parcheó linkage() en una prueba…»).
+        return ResultadoLinkage(
+            correlativa=pd.DataFrame({"ID_GRUPO": [1, 1, 2], "ORIGINAL_INDEX": [0, 1, 2]}),
+            golden=pd.DataFrame({"ID_GRUPO": [1, 2]}),
+        )
 
     monkeypatch.setattr("record_linkage.api.linkage", _linkage_sin_src)
     with pytest.raises(CruceSinFuenteError) as exc:
@@ -348,12 +352,12 @@ def test_link_con_src_sin_alguna_fuente_falla(monkeypatch: pytest.MonkeyPatch) -
     df_a, df_b = _tablas_ab()
 
     def _linkage_una_fuente(*_args, **_kwargs):
-        return {
-            "correlative": pd.DataFrame(
+        return ResultadoLinkage(
+            correlativa=pd.DataFrame(
                 {"ID_GRUPO": [1, 1], "ORIGINAL_INDEX": [0, 1], "SRC": ["RUES", "RUES"]}
             ),
-            "golden": pd.DataFrame({"ID_GRUPO": [1]}),
-        }
+            golden=pd.DataFrame({"ID_GRUPO": [1]}),
+        )
 
     monkeypatch.setattr("record_linkage.api.linkage", _linkage_una_fuente)
     with pytest.raises(CruceSinFuenteError, match="ADUANAS") as exc:
