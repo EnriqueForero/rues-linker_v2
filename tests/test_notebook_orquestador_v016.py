@@ -57,7 +57,14 @@ def test_notebook_es_delgado_y_declarativo() -> None:
     assert len(cells) <= 6
     # El bootstrap reproducible y los dos contratos SourceSpec ocupan la mayor
     # parte; el gate impide que vuelva a crecer hasta ser una segunda librería.
-    assert len(code.splitlines()) <= 410
+    # 410 → 412 en F1.15, declarado: +1 el import de ConfigCruce/ejecutar_cruce/
+    # ResultadoCruceDisco, que faltaba (el notebook no podía ejecutarse: NameError en
+    # la §3); +1 la guarda de find_spec("google.colab") fuera de Colab; +1 excluir
+    # rutas["dir_trabajo"] (F1 lo añadió a `rutas`; es un directorio de trabajo, no
+    # un artefacto publicado) de la verificación y del snapshot. Son correcciones
+    # para que el notebook corra entero (tests/test_notebooks_contrato.py), no
+    # lógica nueva.
+    assert len(code.splitlines()) <= 412
     helpers = [
         node.name
         for node in ast.walk(tree)
