@@ -46,3 +46,29 @@ python scripts/deuda.py --sin-mypy                                 # vistazo rá
 
 Qué mide cada métrica y por qué `print` se cuenta con `ast` y no con ruff T201
 está en el docstring de `scripts/deuda.py`.
+
+## Líneas base de F0 (plan v2 → producción)
+
+Todo lo que F1…F5 compara "antes/después" nace aquí, medido sobre el árbol de
+0.22.4 sin tocar el motor. Cada línea base tiene una prueba que la lee, así que
+moverla sin declararlo rompe la suite.
+
+| archivo | qué fija | quién lo lee |
+|---|---|---|
+| `corrida_base_f0.json` | el banco (30.486 registros): huella `1e365ba8…`, F1 0,878, macro-F1 0,892, 287 FP que tocan negativos, recursos por fase | `tests/lineas_base.py` (`BANCO_F0`) y `tests/test_banco_linea_base.py` (la prueba `slow` reproduce la huella) |
+| `conformidad_{dedup,linkage}_{base,corroborado}.json` | los 43 casos sin y con `--corroborar` (C09 y C21 solo pasan con él) | `tests/test_conformidad_evidencia.py` |
+| `escala_base_f0.json` | tiempo por fase y pico de RSS a 139k y 463k filas sintéticas; `scripts/escala.py --comparar` falla con una regresión > 10 % | `tests/test_escala.py` |
+| `deuda_f0.json` | el techo de deuda técnica (sección anterior) | job `deuda` del CI |
+| `../../tests/contratos/esquema_salida_v0.json` | columnas, tipos y archivos que `linkage()` produce hoy (contrato de salida v0) | `tests/test_contrato_salida_v0.py` |
+
+El determinismo entre procesos (dos `PYTHONHASHSEED` distintos → misma huella)
+no deja JSON: lo verifica `tests/test_determinismo_linkage_procesos.py` en cada
+corrida.
+
+```bash
+python scripts/banco.py --etiqueta base_f0                       # ≈ 55 s
+python scripts/conformidad.py --etiqueta base                     # y --corroborar --etiqueta corroborado
+python scripts/escala.py --etiqueta base_f0                       # 139k + 463k, decenas de minutos
+python scripts/escala.py --comparar base_f0 <nueva>               # la compuerta de escala
+ACTUALIZAR_ESQUEMA_V0=1 pytest tests/test_contrato_salida_v0.py   # solo con un cambio de contrato declarado
+```

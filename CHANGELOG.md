@@ -1,5 +1,28 @@
 # Changelog
 
+## [Sin publicar] — F0 · Fundaciones del plan «v2 → producción»
+
+Sin cambios de comportamiento en el motor. Entra lo que hace medible todo lo
+que sigue:
+
+- **CI en verde**: versión del smoke leída de `pyproject`, `setuptools>=83`
+  para `pip-audit`, `sys.platform == "win32"` en `ingestion/duckdb.py`,
+  `tomllib` con respaldo `tomli` en la prueba de marcadores (Python 3.10).
+- **Líneas base con prueba**: banco (`docs/evidencia/corrida_base_f0.json`,
+  `tests/lineas_base.py`), conformidad sin y con `--corroborar`
+  (`scripts/conformidad.py --corroborar`, `Informe.corroborar`/`camino`),
+  contrato de salida v0 (`tests/contratos/esquema_salida_v0.json`), escala a
+  139k y 463k (`scripts/escala.py`, `--comparar` con tolerancia del 10 %),
+  determinismo entre procesos (`tests/test_determinismo_linkage_procesos.py`).
+- **Trinquete de deuda técnica**: `scripts/deuda.py` mide cinco conteos sobre
+  `src/record_linkage` y el job `deuda` del CI falla si alguno supera
+  `docs/evidencia/deuda_f0.json`; el paso «Reglas estrictas en código tocado»
+  aplica `PTH`, `BLE001`, `E722`, `T201` y complejidad ≤ 15 a los `.py` que
+  un PR toca. `mypy==1.20.2` y `pandas-stubs==3.0.5.260914` fijados en `dev`.
+- **Consumidores de la salida** (`docs/CONSUMIDORES.md`, borrador): quién lee
+  qué archivo y columna, base para los alias de v1 de F1.
+- `tests/cargar_script.py`: único cargador de `scripts/*.py` para las pruebas.
+
 ## [0.22.4] — 2026-09-11 — Lo que la base nueva trajo: 18 países que faltaban y un `OTROS`
 
 **Enrique corrió el 07 sobre `snowflake_v2` y la celda 6 se detuvo, como debía,

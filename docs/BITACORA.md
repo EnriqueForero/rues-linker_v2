@@ -1361,3 +1361,67 @@ dos nombres eran más de la mitad.
 | suite completa (desarrollo) | **1.630 pasan, 2 saltos de Windows, 1 falla preexistente** (`test_sin_nit_recalibrado.py::test_sin_nit_perfil_recalibrado_no_regresa`, precisión 0,864 < 0,87 en el perfil SIN_NIT con NIT del pipeline clásico; falla igual, número por número, con su árbol 0.22.0 sin tocar, con 0.22.3 y con este; no la toca ningún cambio de 0.22.4) |
 | banco (compuerta A.1 del 08, 30.486 registros) | **PASA · huella idéntica** · P 0,9385 · R 0,8249 · F1 0,878, iguales a la base · 66,5 s · 505 MiB |
 | corrida real | 355.681 filas → 209.038 importadores en 17 min de pared (12 min 54 s de emparejamiento, 52,8 M de candidatos) con **pico de 4,81 GiB**, 10/10 invariantes · XLSX + 12 Parquet + metadata escritos |
+
+---
+
+## IT-27 · F0, fundaciones: medir todo antes de tocar nada (sin publicar)
+
+Primera fase del plan «v2 → producción». No cambia una línea del motor
+(L1…L5): fija las líneas base contra las que F1…F5 tendrán que demostrar que no
+rompieron nada, y pone en el CI las compuertas que lo exigen.
+
+### Lo que encontró el CI antes de empezar
+
+El `main` de 0.22.4 estaba en rojo por cuatro causas que ninguna prueba local
+veía: el smoke del wheel leía la versión de un lugar distinto a `pyproject`,
+`pip-audit` fallaba por el `setuptools` de la imagen (se exige ≥ 83),
+`ingestion/duckdb.py` comparaba `sys.platform` con una cadena que no existe en
+Linux, y un bare `import tomllib` en una prueba rompía la matriz de 3.10.
+Corregidas las cuatro; la rama se abre con el CI en verde como condición de
+mezcla.
+
+### Las líneas base (todas con prueba que las lee)
+
+| línea base | valor fijado | dónde |
+|---|---|---|
+| banco (30.486 registros) | huella `1e365ba8…` · F1 0,878 · macro-F1 0,892 · B³ F1 0,9534 · 287 FP que tocan negativos · L2 40,8 s de 54 s · pico 543 MiB | `docs/evidencia/corrida_base_f0.json`, `tests/lineas_base.py` |
+| conformidad (43 casos) | 34/34 firmes sin y con `--corroborar`; C09 y C21 (`TP_DIFICIL`) solo pasan con él | `docs/evidencia/conformidad_*_{base,corroborado}.json` |
+| contrato de salida v0 | 18 columnas en la correlativa, 13 en el golden, 30 archivos, claves del manifiesto, sobre el P2 de 28 filas | `tests/contratos/esquema_salida_v0.json` |
+| escala | tiempo por fase y RSS a 139.028 y 463.473 filas sintéticas; `--comparar` falla con > 10 % | `docs/evidencia/escala_base_f0.json` |
+| determinismo | dos procesos con `PYTHONHASHSEED` distinto → misma huella | `tests/test_determinismo_linkage_procesos.py` |
+| deuda técnica | techo: 11 funciones con complejidad ≥ 20 · 121 `except` sin relanzar · 180 `print` · 125 usos de `os.path` · 108 errores de mypy | `docs/evidencia/deuda_f0.json`, job `deuda` |
+
+### Dos decisiones que no eran obvias
+
+1. **El comparador de la línea base no deja pasar un NaN.** `abs(a - b) > tol`
+   es falso cuando `a` es NaN, así que una métrica que dejara de calcularse
+   pasaría la compuerta en silencio. Se escribe `not (abs(a - b) <= tol)` y
+   hay una prueba que lo exige. Lo mismo en `scripts/escala.py --comparar`:
+   un JSON sin tamaños medidos no es PASA, es error.
+2. **El trinquete ignora los `noqa`, el CI no.** `scripts/deuda.py` cuenta la
+   complejidad con `--ignore-noqa` para que la deuda heredada no se esconda con
+   una anotación; el paso «Reglas estrictas en código tocado» sí la respeta,
+   porque su trabajo es impedir deuda *nueva* en lo que un PR toca, no
+   bloquear cada PR que roce `DuckDBSourceCompactor.compact` (complejidad 22,
+   heredada del notebook, documentada en el sitio). `mypy` y `pandas-stubs`
+   quedan fijados en `dev`: el conteo de mypy se mueve con sus versiones.
+
+### Lo que la escala dijo del generador
+
+`generar_ground_truth_grande.py` ya no produce las 12.427 filas que documenta
+`BENCHMARK.md` con sus valores por defecto (hoy, 2.939): el conjunto de 139k
+exige `--empresas-extra 48000 --importadores-extra 9600`, y
+`--importadores-extra` por encima de 6.000 solo cambia el flujo del RNG. Queda
+anotado para F4, donde el generador tiene que llegar a 1 M.
+
+### Estado al cierre
+
+| | |
+|---|---|
+| pruebas nuevas (funciones) | banco línea base (8), contrato v0 (15), escala (30), determinismo (2), deuda (18), conformidad evidencia (6) |
+| suite rápida (`-m "not slow"`) | **1.702 pasan, 2 saltos de Windows, 19 deseleccionadas** (16 min 03 s) |
+| banco | huella idéntica a la línea base (prueba `slow`, 62 s) |
+| conformidad | 0 fallos firmes sin y con `--corroborar` |
+| trinquete | PASA, cinco conteos iguales a la referencia |
+| anillo de mypy | 31 archivos sin errores |
+| CI | en curso en el PR de la rama; el resultado se anota al cierre de la fase |
