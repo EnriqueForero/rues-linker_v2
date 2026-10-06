@@ -82,15 +82,27 @@ COLUMNAS_DICCIONARIO: tuple[str, ...] = (
     "alias_es",
 )
 
-#: Una sola definición de CONFIANZA, repetida en el diccionario de cada tabla.
-#: La regla vigente del golden (golden/metricas.py::confianza_de_grupo, la
-#: misma de GoldenRecordGeneratorV7), con sus tres umbrales exactos.
+#: Vocabulario de CONFIANZA. Es el único sitio donde se nombran los niveles:
+#: ``golden.metricas.confianza_de_grupo`` los toma de aquí y ``resultado.validar``
+#: rechaza cualquier otro valor.
+NIVELES_CONFIANZA: tuple[str, ...] = ("ALTA", "MEDIA", "BAJA")
+
+#: Una sola definición de CONFIANZA, repetida en el diccionario de cada tabla
+#: que la lleva (correlativa, golden, enlaces). Cita por su nombre la función
+#: que produce los datos —golden/metricas.py::confianza_de_grupo, la única
+#: copia de la regla desde F2.12— con sus tres umbrales exactos; los umbrales
+#: de la función y este texto se comprueban juntos en
+#: ``tests/test_contrato_salida.py``.
 _DEFINICION_CONFIANZA = (
-    "ALTA · MEDIA · BAJA, una sola definición (la regla que produce los datos): "
-    "ALTA si el grupo tiene un solo identificador (NIT_VARIATIONS = 1) confirmado por dos "
-    "o más fuentes (SOURCES_COUNT >= 2); si no, MEDIA si tiene a lo sumo dos "
-    "identificadores (NIT_VARIATIONS <= 2) y es pequeño (RECORD_COUNT <= 5); BAJA en el "
-    "resto. Un registro solo sin identificador queda en MEDIA. F2.12 unifica la regla "
+    "ALTA · MEDIA · BAJA (contrato.NIVELES_CONFIANZA), una sola definición: la regla "
+    "record_linkage.golden.metricas.confianza_de_grupo, que produce los datos en los "
+    "cinco caminos (linkage, link, dedupe, cruce e importadores; los enlaces de "
+    "vinculación la citan igual). ALTA si el grupo tiene un solo identificador "
+    "(NIT_VARIATIONS = 1) confirmado por dos o más fuentes (SOURCES_COUNT >= 2); si no, "
+    "MEDIA si tiene a lo sumo dos identificadores (NIT_VARIATIONS <= 2) y es pequeño "
+    "(RECORD_COUNT <= 5); BAJA en el resto. Un registro solo sin identificador queda en "
+    "MEDIA; una base sin identificador y de una sola fuente (importadores) solo distingue "
+    "por tamaño del grupo (MEDIA hasta 5 filas, BAJA después). F2.12 unifica la regla "
     "entre caminos."
 )
 
@@ -411,8 +423,6 @@ METODOS_UNION: tuple[str, ...] = (
     "sin_pareja",
 )
 METODOS_UNION_F1: tuple[str, ...] = ("identificador", "nombre", "sin_pareja")
-
-NIVELES_CONFIANZA: tuple[str, ...] = ("ALTA", "MEDIA", "BAJA")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

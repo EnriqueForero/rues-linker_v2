@@ -178,9 +178,10 @@ def test_sin_grafias_sin_clasificar_el_modo_no_cambia_nada():
     pd.testing.assert_frame_equal(a.golden, b.golden)
 
 
-def test_hay_diez_invariantes():
+def test_hay_once_invariantes():
+    """Diez hasta F2.12; la undécima es la CONFIANZA del estándar (regla única)."""
     r = deduplicar_importadores(_base_limpia(), _cfg())
-    assert len(r.invariantes) == 10, r.invariantes.invariante.tolist()
+    assert len(r.invariantes) == 11, r.invariantes.invariante.tolist()
 
 
 # ── El defecto latente que el modo aislar destapó ─────────────────────
