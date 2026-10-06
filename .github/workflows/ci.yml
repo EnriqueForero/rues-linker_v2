@@ -56,12 +56,16 @@ jobs:
           git fetch --no-tags origin "$BASE"
           # ':(glob)' es necesario: sin él, 'scripts/**/*.py' no casa con
           # archivos directamente bajo scripts/ (pathspec de git).
-          mapfile -t TOCADOS < <(git diff --name-only --diff-filter=AM "origin/$BASE...HEAD" \
+          # Asignación y no sustitución de proceso (`< <(...)`): si `git diff`
+          # falla, `set -e` aborta aquí en vez de seguir con una lista vacía y
+          # pasar en vacío.
+          LISTA=$(git diff --name-only --diff-filter=AM "origin/$BASE...HEAD" \
             -- ':(glob)src/**/*.py' ':(glob)scripts/**/*.py')
-          if [ "${#TOCADOS[@]}" -eq 0 ]; then
+          if [ -z "$LISTA" ]; then
             echo "Sin archivos .py tocados en src/ ni scripts/ respecto a origin/$BASE."
             exit 0
           fi
+          mapfile -t TOCADOS <<< "$LISTA"
           printf 'Archivos tocados (%d):\n' "${#TOCADOS[@]}"
           printf '   %s\n' "${TOCADOS[@]}"
           EN_SRC=(); EN_SCRIPTS=()

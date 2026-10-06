@@ -104,8 +104,14 @@ dev = [
     # scripts/verificar_coherencia_version.py, que corre en el CI de 3.10).
     "tomli>=2.0; python_version < '3.11'",
     "ruff==0.15.13",
-    "mypy>=1.8,<2",
-    "pandas-stubs",
+    # mypy y pandas-stubs fijados: el trinquete de deuda (scripts/deuda.py, job
+    # `deuda` del CI) compara el conteo de errores de mypy con docs/evidencia/
+    # deuda_f0.json, y ese conteo cambia con la versión de ambos. Para subirlos,
+    # regenere la referencia en el mismo PR. pandas-stubs 3.x exige Python 3.11;
+    # en 3.10 (matriz de pruebas) no corre mypy y basta cualquier versión.
+    "mypy==1.20.2",
+    "pandas-stubs==3.0.5.260914; python_version >= '3.11'",
+    "pandas-stubs; python_version < '3.11'",
     "types-requests",
     "types-pytz",
     "build>=1,<2",

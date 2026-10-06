@@ -551,6 +551,14 @@ def main(argv: list[str] | None = None) -> int:
             print(veredicto.texto)
             codigo = veredicto.codigo
         if args.escribir is not None:
+            if codigo != 0:
+                print(
+                    f"No se escribe {args.escribir.as_posix()}: la comparación falló "
+                    f"(código {codigo}) y escribir la referencia consolidaría esa deuda. "
+                    f"Corrija primero o escriba sin --referencia si el aumento está aprobado.",
+                    file=sys.stderr,
+                )
+                return codigo
             ruta = _resolver(raiz, args.escribir)
             escribir_referencia(ruta, medicion, raiz, args.objetivo)
             print(f"Referencia escrita en {ruta}")

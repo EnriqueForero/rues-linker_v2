@@ -16,23 +16,15 @@ prueban con ``correr_banco`` sustituido por una ``Corrida`` falsa.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from cargar_script import cargar_script
 
 # escala.py es un script (no parte del paquete): se carga por ruta.
-_RUTA = Path(__file__).resolve().parent.parent / "scripts" / "escala.py"
-_spec = importlib.util.spec_from_file_location("escala", _RUTA)
-assert _spec is not None and _spec.loader is not None
-escala = importlib.util.module_from_spec(_spec)
-# Registrarlo en sys.modules: los @dataclass con `from __future__ import
-# annotations` resuelven anotaciones buscando el módulo por nombre.
-sys.modules["escala"] = escala
-_spec.loader.exec_module(escala)
+escala = cargar_script("escala")
 
 
 # ── Utilidades ────────────────────────────────────────────────────────────

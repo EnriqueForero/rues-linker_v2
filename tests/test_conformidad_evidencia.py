@@ -22,11 +22,11 @@ Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+from cargar_script import cargar_script
 
 from record_linkage.evaluation.conformidad import (
     CAMINO_POR_DEFECTO,
@@ -39,13 +39,8 @@ from record_linkage.evaluation.conformidad import (
 RAIZ_REPO = Path(__file__).resolve().parents[1]
 DIRECTORIO_CONJUNTO = RAIZ_REPO / "data" / "conformidad"
 
-# conformidad.py es un script (no parte del paquete): se carga por ruta, como
-# hace test_kappa.py con medir_kappa.py.
-_RUTA_SCRIPT = RAIZ_REPO / "scripts" / "conformidad.py"
-_spec = importlib.util.spec_from_file_location("script_conformidad", _RUTA_SCRIPT)
-assert _spec is not None and _spec.loader is not None
-script_conformidad = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(script_conformidad)
+# conformidad.py es un script (no parte del paquete): se carga por ruta.
+script_conformidad = cargar_script("conformidad", nombre_modulo="script_conformidad")
 
 #: Los dos casos que el catálogo marca TP_DIFICIL y que solo resuelve F3.
 CASOS_SOLO_CON_CORROBORACION = {"C09", "C21"}

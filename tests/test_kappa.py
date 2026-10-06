@@ -8,18 +8,15 @@ test compara nuestra implementación contra ``sklearn.metrics.cohen_kappa_score`
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
+from cargar_script import cargar_script
 from sklearn.metrics import cohen_kappa_score
 
 # medir_kappa.py es un script (no parte del paquete): se carga por ruta.
-_PATH = Path(__file__).resolve().parent.parent / "scripts" / "medir_kappa.py"
-_spec = importlib.util.spec_from_file_location("medir_kappa", _PATH)
-medir_kappa = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(medir_kappa)
+medir_kappa = cargar_script("medir_kappa")
 cohen_kappa = medir_kappa.cohen_kappa
 parse_label = medir_kappa.parse_label
 

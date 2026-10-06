@@ -8,30 +8,16 @@ referencia versionada; no se incluye a sí misma (vive en ``tests/``).
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+from cargar_script import cargar_script
 
 RAIZ = Path(__file__).resolve().parents[1]
-RUTA_SCRIPT = RAIZ / "scripts" / "deuda.py"
 
-
-def _cargar_modulo():
-    spec = importlib.util.spec_from_file_location("deuda", RUTA_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    modulo = importlib.util.module_from_spec(spec)
-    # Los dataclasses con `from __future__ import annotations` resuelven el
-    # módulo por sys.modules: hay que registrarlo antes de ejecutarlo.
-    sys.modules[spec.name] = modulo
-    spec.loader.exec_module(modulo)
-    return modulo
-
-
-deuda = _cargar_modulo()
+deuda = cargar_script("deuda")
 
 
 def _medicion(conteos: dict[str, int], ubicaciones: dict[str, list[str]]) -> dict:
@@ -303,6 +289,24 @@ def test_cli_escribir_y_referencia(tmp_path: Path, capsys: pytest.CaptureFixture
     salida = capsys.readouterr().out
     assert "SUBE  print: 1 → 2 (+1)" in salida
     assert "src/paquetito/modulo.py:16" in salida
+
+
+def test_cli_no_escribe_la_referencia_si_la_comparacion_fallo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--referencia X --escribir X` con la deuda arriba no debe consolidarla."""
+    objetivo = _crear_paquete(tmp_path)
+    base = ["--raiz", str(tmp_path), "--objetivo", str(objetivo), "--sin-mypy"]
+    assert deuda.main([*base, "--escribir", "ref.json"]) == 0
+    antes = (tmp_path / "ref.json").read_bytes()
+    modulo = tmp_path / objetivo / "modulo.py"
+    modulo.write_text(
+        modulo.read_text(encoding="utf-8") + '\n\ndef otro() -> None:\n    print("más")\n',
+        encoding="utf-8",
+    )
+    assert deuda.main([*base, "--referencia", "ref.json", "--escribir", "ref.json"]) == 1
+    assert (tmp_path / "ref.json").read_bytes() == antes
+    assert "No se escribe ref.json" in capsys.readouterr().err
 
 
 def test_cli_referencia_inexistente_es_error_2(
