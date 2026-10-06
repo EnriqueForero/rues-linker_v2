@@ -41,6 +41,7 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
+from ..pipeline.errores import ColumnasArrastreError
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
 from .insumos import (
@@ -1528,6 +1529,47 @@ def _separar_columnas_extra(
     return rutas, union, longitudes
 
 
+@dataclass(frozen=True)
+class ReporteColumnasArrastre:
+    """Lo que REALMENTE pasó con las columnas de arrastre (F1.8).
+
+    Va al manifiesto como ``parametros.columnas_arrastre``. Hasta F1.8 el
+    manifiesto declaraba ``columnas_re_adjuntadas = unión planificada``,
+    que era verdad solo si el re-adjunte había ocurrido; ahora se persiste
+    la lista observada.
+
+    Attributes:
+        adjuntadas: columnas que están en la correlativa entregada.
+        omitidas: columnas pedidas que NO están, cada una con su ``motivo``.
+            Solo puede tener elementos si el usuario pidió (en
+            ``optional_column_mapping``) una columna que ninguna fuente trae,
+            o si el nombre choca con una columna que produce el motor.
+    """
+
+    adjuntadas: list[str] = field(default_factory=list)
+    omitidas: list[dict[str, str]] = field(default_factory=list)
+
+    def como_manifiesto(self) -> dict[str, Any]:
+        """Forma serializable para ``metadatos_corrida.json``."""
+        return {"adjuntadas": list(self.adjuntadas), "omitidas": list(self.omitidas)}
+
+
+def _columnas_arrastre_solicitadas(config: ConfigCruce) -> dict[str, list[str]]:
+    """Columnas opcionales pedidas por el usuario que el motor NO usa, por fuente.
+
+    Son las que el usuario espera ver en la correlativa aunque no decidan.
+    Si ninguna fuente la trae, ``_adjuntar_columnas_extra`` la declara en
+    ``omitidas`` con las fuentes donde se pidió.
+    """
+    motor = _columnas_de_motor(config)
+    solicitadas: dict[str, list[str]] = {}
+    for spec in config.fuentes:
+        for canonica in spec.optional_column_mapping:
+            if canonica not in motor:
+                solicitadas.setdefault(canonica, []).append(spec.name)
+    return solicitadas
+
+
 def _adjuntar_columnas_extra(
     correlativa: pd.DataFrame,
     rutas: dict[str, Path],
@@ -1535,48 +1577,107 @@ def _adjuntar_columnas_extra(
     longitudes: dict[str, int],
     orden_fuentes: list[str],
     log: Any,
-) -> pd.DataFrame:
+    *,
+    solicitadas: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[pd.DataFrame, ReporteColumnasArrastre]:
     """Re-adjunta a la correlativa las columnas derramadas, por posición.
 
     El contrato (verificado con datos reales, colapso incluido) es que en la
     correlativa expandida ``ORIGINAL_INDEX = offset_de_la_fuente + fila
     original``. Eso permite un ``take`` posicional exacto, sin merges.
+
+    F1.8: nunca devuelve la correlativa intacta en silencio. Si una parte
+    derramada no tiene las filas de su fuente, si la unión no tiene las de la
+    correlativa o si falta ``ORIGINAL_INDEX``, levanta
+    :class:`~record_linkage.pipeline.errores.ColumnasArrastreError`. Un
+    choque de nombre con una columna que ya produjo el motor no se pisa:
+    queda en ``omitidas`` con su motivo (la de la fuente viajará renombrada
+    ``<col>_FUENTE`` cuando entre el contrato de salida de F1).
+
+    Args:
+        solicitadas: columnas opcionales pedidas por el usuario y las fuentes
+            donde se pidieron (``_columnas_arrastre_solicitadas``); las que no
+            lleguen a la correlativa se declaran en ``omitidas``.
+
+    Returns:
+        ``(correlativa, reporte)`` con la lista REAL de adjuntadas/omitidas.
     """
-    if not rutas or "ORIGINAL_INDEX" not in correlativa.columns:
-        return correlativa
-    partes: list[pd.DataFrame] = []
-    for nombre in orden_fuentes:
-        n = longitudes.get(nombre, 0)
-        if nombre in rutas:
-            parte = _normalizar_dtypes_texto(pd.read_parquet(rutas[nombre]))
-            if len(parte) != n:
-                log.warning(
-                    f"   ⚠️ Columnas de arrastre de {nombre}: {len(parte):,} filas "
-                    f"≠ {n:,} esperadas; no se re-adjuntan (resultado intacto)."
-                )
-                return correlativa
-        else:
-            parte = pd.DataFrame(index=pd.RangeIndex(n))
-        partes.append(parte)
-    extras = pd.concat(partes, ignore_index=True)
-    if len(extras) != len(correlativa):
-        log.warning(
-            f"   ⚠️ Columnas de arrastre: {len(extras):,} filas ≠ correlativa "
-            f"{len(correlativa):,}; no se re-adjuntan (resultado intacto)."
+    reporte = ReporteColumnasArrastre()
+    if rutas:
+        if "ORIGINAL_INDEX" not in correlativa.columns:
+            raise ColumnasArrastreError(
+                "la correlativa no trae ORIGINAL_INDEX y hay columnas de arrastre "
+                f"derramadas para {sorted(rutas)}; sin esa columna no hay forma de "
+                "alinearlas por posición"
+            )
+        partes: list[pd.DataFrame] = []
+        for nombre in orden_fuentes:
+            n = longitudes.get(nombre, 0)
+            if nombre in rutas:
+                parte = _normalizar_dtypes_texto(pd.read_parquet(rutas[nombre]))
+                if len(parte) != n:
+                    raise ColumnasArrastreError(
+                        f"las columnas de arrastre de {nombre} ({rutas[nombre]}) traen "
+                        f"{len(parte):,} filas y la fuente entró con {n:,}; la "
+                        "alineación posicional no cuadra",
+                        fuente=nombre,
+                        esperadas=n,
+                        observadas=len(parte),
+                    )
+            else:
+                parte = pd.DataFrame(index=pd.RangeIndex(n))
+            partes.append(parte)
+        extras = pd.concat(partes, ignore_index=True)
+        if len(extras) != len(correlativa):
+            raise ColumnasArrastreError(
+                f"la unión de columnas de arrastre trae {len(extras):,} filas y la "
+                f"correlativa {len(correlativa):,}; la alineación posicional no cuadra",
+                esperadas=len(correlativa),
+                observadas=len(extras),
+            )
+        posiciones = pd.to_numeric(correlativa["ORIGINAL_INDEX"], errors="raise").to_numpy(
+            dtype="int64"
         )
-        return correlativa
-    posiciones = pd.to_numeric(correlativa["ORIGINAL_INDEX"], errors="raise").to_numpy(
-        dtype="int64"
-    )
-    adjuntadas = []
-    for columna in columnas:
-        if columna in correlativa.columns or columna not in extras.columns:
+        for columna in columnas:
+            if columna not in extras.columns:
+                # La unión se construyó desde los mismos parquets: no debería pasar.
+                reporte.omitidas.append(
+                    {"columna": columna, "motivo": "no está en ningún parquet derramado"}
+                )
+                continue
+            if columna in correlativa.columns:
+                reporte.omitidas.append(
+                    {
+                        "columna": columna,
+                        "motivo": (
+                            "choca con una columna que produce el motor; la de la fuente "
+                            "no se pisa y no se adjunta"
+                        ),
+                    }
+                )
+                continue
+            correlativa[columna] = extras[columna].array.take(posiciones)
+            reporte.adjuntadas.append(columna)
+    for columna, fuentes in (solicitadas or {}).items():
+        if columna in reporte.adjuntadas or columna in correlativa.columns:
             continue
-        correlativa[columna] = extras[columna].array.take(posiciones)
-        adjuntadas.append(columna)
-    if adjuntadas:
-        log.info(f"   📎 Re-adjuntadas a la correlativa: {adjuntadas}")
-    return correlativa
+        if any(o["columna"] == columna for o in reporte.omitidas):
+            continue
+        reporte.omitidas.append(
+            {
+                "columna": columna,
+                "motivo": (
+                    "ninguna fuente la trae (pedida en optional_column_mapping de: "
+                    + ", ".join(fuentes)
+                    + ")"
+                ),
+            }
+        )
+    if reporte.adjuntadas:
+        log.info(f"   📎 Re-adjuntadas a la correlativa: {reporte.adjuntadas}")
+    for omitida in reporte.omitidas:
+        log.warning(f"   ⚠️ Columna de arrastre omitida {omitida['columna']!r}: {omitida['motivo']}")
+    return correlativa, reporte
 
 
 def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, esperadas: int) -> None:
@@ -1746,6 +1847,8 @@ def ejecutar_cruce(config: ConfigCruce) -> ResultadoCruce | ResultadoCruceDisco:
         FileNotFoundError: si alguna fuente no existe (preflight).
         PermissionError: si el workspace no es escribible (preflight).
         RuntimeError: si el resultado viola una invariante estructural.
+        ColumnasArrastreError: si las columnas de arrastre no se pudieron
+            re-adjuntar a la correlativa (F1.8: nunca se omiten en silencio).
     """
     log = CustomLogger("flujo.cruce")
     cronometro = _Cronometro()
@@ -1803,6 +1906,9 @@ def _ejecutar_cruce_medido(
     # ocurre en el staging y ``preservar_payload`` hace el re-adjunte.
     rutas_extra: dict[str, Path] = {}
     columnas_extra: list[str] = []
+    # F1.8 — lo que REALMENTE se adjuntó; en el camino DuckDB el re-adjunte lo
+    # hace ``preservar_payload`` dentro de la base y aquí no hay nada que declarar.
+    reporte_arrastre = ReporteColumnasArrastre()
     longitudes_fuente: dict[str, int] = {n: len(df) for n, df in marcos.items()}
     if not compactaciones:
         with cronometro.fase("separar columnas"):
@@ -1910,15 +2016,16 @@ def _ejecutar_cruce_medido(
         assert isinstance(correlativa, pd.DataFrame)
         with cronometro.fase("invariantes"):
             _verificar_invariantes(correlativa, golden, filas_entrada)
-        if rutas_extra:
+        if config.separar_columnas_extra:
             with cronometro.fase("re-adjuntar columnas"):
-                correlativa = _adjuntar_columnas_extra(
+                correlativa, reporte_arrastre = _adjuntar_columnas_extra(
                     correlativa,
                     rutas_extra,
                     columnas_extra,
                     longitudes_fuente,
                     source_order,
                     log,
+                    solicitadas=_columnas_arrastre_solicitadas(config),
                 )
         with cronometro.fase("exportes"):
             rutas = _exportar(config, {"golden": golden, "correlativa": correlativa}, log)
@@ -1955,7 +2062,7 @@ def _ejecutar_cruce_medido(
             "dir_trabajo": str(config.ruta_trabajo),
             "colapsar_duplicados_exactos": config.colapsar_duplicados_exactos,
             "limite_filas": config.limite_filas,
-            "columnas_re_adjuntadas": columnas_extra,
+            "columnas_arrastre": reporte_arrastre.como_manifiesto(),
             "ajustes_perfil": config.ajustes_perfil,
             "perfil_multicampo": _serializar_perfil_multicampo(config.perfil_multicampo),
             "motor_ingesta": config.motor_ingesta,

@@ -820,11 +820,10 @@ def test_columnas_de_arrastre_no_entran_al_motor_pero_vuelven(
     # Cruzada: TELEFONO de la fila de CLIENTES es NA (no existe en esa fuente).
     assert pd.isna(fila_delta["TELEFONO"])
     metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
-    assert set(metadatos["parametros"]["columnas_re_adjuntadas"]) == {
-        "TELEFONO",
-        "EMAIL",
-        "DEPARTAMENTO",
-    }
+    # F1.8: el manifiesto declara lo que REALMENTE se adjuntó, no la unión planificada.
+    arrastre = metadatos["parametros"]["columnas_arrastre"]
+    assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
+    assert arrastre["omitidas"] == []
 
 
 def test_variable_extra_activa_se_queda_en_el_motor(fuentes_con_arrastre, tmp_path: Path) -> None:
