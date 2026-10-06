@@ -1518,6 +1518,13 @@ nombres sin lector; dos scripts asumían técnicas en la correlativa; el
 benchmark E2E habría dado 0 pares en silencio. Revisado contra v1 0.11.0
 (`c40dae5`).
 
+### Lo que la corrida con reporting dejó ver
+
+`DataVisualizer._weighted_sample` sigue con un `except Exception` que avisa
+(«Error en muestreo ponderado: Fewer non-zero entries in p than size») y cae a
+una muestra uniforme: es la muestra de unas gráficas, no un entregable, pero es
+el mismo patrón que F1 retiró de la suite y los reportes. Queda para el pulido de F2.
+
 ### Estado al cierre
 
 | | |
@@ -1530,4 +1537,5 @@ benchmark E2E habría dado 0 pares en silencio. Revisado contra v1 0.11.0
 | escala | 139k 414,9 s (L2 244,5 · L3 143,1) · RSS 1.148 MiB · 463k 1.741,2 s (L2 822,4 · L3 831,9) · RSS 2.527 MiB; mismos candidatos (12,74 M / 38,65 M), huella idéntica en ambos tamaños; `--comparar base_f0 f1` PASA (tolerancia 10 %; todas las fases por debajo de la base) → `docs/evidencia/escala_f1.json` |
 | determinismo | `tests/test_determinismo_linkage_procesos.py` en verde (dos procesos, `PYTHONHASHSEED` distinto, misma huella) |
 | trinquete | PASA; el techo baja: `except` sin relanzar 121 → 103, mypy 108 → 102 (complejidad ≥ 20: 11, tras sacar `_resolver_matching_profile` de `linkage()`, que había subido a 23) |
-| CI | __CI__ |
+| 139k con reporting (`linkage(carpeta_salida=…)`) | carpeta del estándar publicada y leída (`validar()` ok): 139.028 filas, 54.450 grupos, 18 archivos del estándar (Excel completo de 139k filas, 10 figuras), 19 artefactos de L6, `omitidos: []`, L6 48,6 s |
+| CI | en curso en el PR de la rama; el resultado se anota al cierre |
