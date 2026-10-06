@@ -1404,7 +1404,7 @@ desmiente.
 | banco (30.486 registros) | huella `1e365ba8…` · F1 0,878 · macro-F1 0,892 · B³ F1 0,9534 · 287 FP que tocan negativos · L2 40,8 s de 54 s · pico 543 MiB | `docs/evidencia/corrida_base_f0.json`, `tests/lineas_base.py` |
 | conformidad (43 casos) | 34/34 firmes sin y con `--corroborar`; C09 y C21 (`TP_DIFICIL`) solo pasan con él | `docs/evidencia/conformidad_*_{base,corroborado}.json` |
 | contrato de salida v0 | 18 columnas en la correlativa, 13 en el golden, 30 archivos, claves del manifiesto, sobre el P2 de 28 filas | `tests/contratos/esquema_salida_v0.json` |
-| escala | tiempo por fase y RSS a 139.028 y 463.473 filas sintéticas; `--comparar` falla con > 10 % | `docs/evidencia/escala_base_f0.json` |
+| escala (4 vCPU, corrida sola) | **139k**: 437,9 s (L2 263,4 · L3 149,8 · L5 18,0) · RSS 1.192 MiB · 12,74 M candidatos · 195.368 pares · **463k**: 1.897,7 s (L2 868,0 · L3 945,5 · L5 61,6) · RSS 2.578 MiB · 38,65 M candidatos · 650.992 pares; `--comparar` falla con > 10 % | `docs/evidencia/escala_base_f0.json` |
 | determinismo | dos procesos con `PYTHONHASHSEED` distinto → misma huella | `tests/test_determinismo_linkage_procesos.py` |
 | deuda técnica | techo: 11 funciones con complejidad ≥ 20 · 121 `except` sin relanzar · 180 `print` · 127 usos de `os.path` y afines (reglas PTH) · 108 errores de mypy | `docs/evidencia/deuda_f0.json`, job `deuda` |
 
@@ -1431,6 +1431,19 @@ exige `--empresas-extra 48000 --importadores-extra 9600`, y
 `--importadores-extra` por encima de 6.000 solo cambia el flujo del RNG. Queda
 anotado para F4, donde el generador tiene que llegar a 1 M.
 
+### Lo que la escala midió (y lo que no mide)
+
+De 139k a 463k (3,3× filas, 3,0× candidatos) L2 crece 3,3× y **L3 crece 6,3×**
+(149,8 → 945,5 s): el puntuador pagina `scored.db` con `WHERE idx_0 > ? OR
+(idx_0 = ? AND idx_1 > ?)` sobre un SCAN y recorre tuplas fila a fila; a 1 M
+será la fase dominante. Es exactamente el objetivo de F4.1. El RSS pico sube
+de 1,19 a 2,58 GiB, lineal. La calidad por pares (F1 0,50 a 139k, 0,79 a 463k)
+**no es una compuerta** y no describe al motor: el generador solo produce 6.000
+nombres de importador distintos, así que a esa escala grupos verdaderos
+distintos comparten nombre exacto y se unen por nombre (B³ F1 0,97 y 0,99, 105
+FP que tocan negativos en ambos tamaños, recall CON_NIT 0,99). La calidad la
+mide el banco; la escala mide tiempo, memoria y candidatos.
+
 ### Estado al cierre
 
 | | |
@@ -1441,4 +1454,4 @@ anotado para F4, donde el generador tiene que llegar a 1 M.
 | conformidad | 0 fallos firmes sin y con `--corroborar` |
 | trinquete | PASA, cinco conteos iguales a la referencia |
 | anillo de mypy | 31 archivos sin errores |
-| CI | en curso en el PR de la rama; el resultado se anota al cierre de la fase |
+| CI | **verde** en `152617a` ([run 37419942815](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/37419942815)): lint con paso estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete, build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 108 errores = techo) |
