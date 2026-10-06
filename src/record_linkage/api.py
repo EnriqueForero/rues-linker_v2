@@ -279,6 +279,8 @@ def linkage(
     collapse_exact_duplicates: bool = False,
     consume_sources: bool = False,
     col_id: str | None = None,
+    carpeta_salida: Path | None = None,
+    nombre: str = "linkage",
 ) -> ResultadoLinkage:
     """Ejecuta deduplicación + record linkage multi-fuente en una sola llamada.
 
@@ -344,6 +346,19 @@ def linkage(
             ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
             None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
             Un nombre que no existe en ninguna fuente falla de inmediato.
+        carpeta_salida: si se da, al terminar se escribe la carpeta del
+            estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
+            (``exporters.escritor.escribir_resultado``: parquet, csv,
+            diccionario, manifest, Excel completo o LEEME, figuras de L6) de
+            forma atómica. Si además ``work_dir`` es None, el trabajo (L1…L5)
+            va a ``_trabajo/`` DENTRO de esa carpeta (mientras se escribe,
+            dentro de ``.<nombre>.pendiente/``), así que el resultado queda
+            en un solo sitio y ``_trabajo/`` es borrable. Sin
+            ``carpeta_salida`` no se escribe nada fuera de ``work_dir`` (los
+            alias de v1 de L6 siguen en ``work_dir/L6_reporting`` hasta
+            ``VERSION_RETIRO_ALIAS_V1``).
+        nombre: cierra el nombre de la carpeta del estándar; un nombre simple
+            (sin separadores). Default ``"linkage"``.
 
     Returns:
         ``ResultadoLinkage`` (contrato 1.0, ``record_linkage.contrato``), ya
@@ -357,8 +372,10 @@ def linkage(
         Si ``return_matcher_audit=True`` y ``matching_profile`` está activo,
         ``metricas`` trae "matcher_stats" y "matcher_decisions"; con
         ``collapse_exact_duplicates``, "preprocessing"; con L6 activo,
-        "report_files". Hasta 0.22.x se devolvía un ``dict``: las claves
-        viejas (``res["correlative"]``, ``res.get("report_files")``…) siguen
+        "report_files". Con ``carpeta_salida``, ``manifiesto['carpeta_salida']``
+        es la carpeta escrita y ``dir_trabajo`` apunta a su ``_trabajo/``.
+        Hasta 0.22.x se devolvía un ``dict``: las claves viejas
+        (``res["correlative"]``, ``res.get("report_files")``…) siguen
         funcionando con ``DeprecationWarning``.
 
     Ejemplo (con matcher):
@@ -390,10 +407,16 @@ def linkage(
     import tempfile
 
     from .config.profiles import crear_config_orchestrator
+    from .exporters.escritor import carpeta_pendiente, escribir_resultado
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
         raise TypeError("consume_sources=True requiere sources como dict mutable")
+    if carpeta_salida is not None:
+        # Falla AHORA si el nombre no sirve, no después de L1…L5.
+        pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
+        if work_dir is None:
+            work_dir = str(pendiente / "_trabajo")
     owned_sources = sources if consume_sources else None
 
     sources, ingestion_reports = _prepare_sources(
@@ -614,9 +637,17 @@ def linkage(
             metricas[clave] = result[clave]
     if "matcher_decisions" in result:
         metricas["matcher_decisions"] = result["matcher_decisions"]
-    return _armar_resultado(
+    res = _armar_resultado(
         correlativa, golden, metricas, manifiesto, reporte, Path(work_dir), source_order
     )
+    if carpeta_salida is not None:
+        # Las PNG de L6 (dashboard, visualizaciones) van a figuras/; los
+        # reportes y alias de v1 se quedan en _trabajo/L6_reporting.
+        figuras = [
+            Path(f) for f in (metricas.get("report_files") or ()) if str(f).lower().endswith(".png")
+        ]
+        escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
+    return res
 
 
 def _armar_resultado(

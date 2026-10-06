@@ -1,0 +1,611 @@
+"""Escritor único de la carpeta del estándar (F1.10): forma exacta, atómico, alias v1.
+
+Qué congela
+-----------
+Sobre el conjunto sintético de ``test_contrato_salida`` (64 filas inventadas,
+dos fuentes) y una corrida de ``linkage()`` sin L6:
+
+* la carpeta ``<AAAA-MM-DD_HHMM>_<nombre>/`` tiene la forma EXACTA del
+  estándar (lista fija de rutas relativas);
+* ``manifest.json`` lista cada artefacto con su SHA-256 y tamaño reales y
+  trae los bloques del estándar (insumos, conteos, invariantes, parámetros,
+  tiempos y RSS por fase, renombres, prioridad de fuentes, omitidos);
+* dos escrituras del mismo resultado con la misma ``marca_tiempo`` producen
+  las mismas huellas en los artefactos deterministas (parquet, csv). Los
+  ``.xlsx`` quedan fuera de la comparación: openpyxl escribe la fecha de
+  creación en ``docProps/core.xml`` y el zip cambia aunque el contenido sea
+  el mismo; por eso el manifiesto los registra pero la prueba no los exige;
+* una escritura que falla a mitad (``to_parquet`` del golden) no deja carpeta
+  definitiva ni pendiente;
+* ``leer_resultado`` devuelve un ``ResultadoLinkage`` que ``validar()``
+  acepta, aplica los alias en español y detecta un artefacto alterado;
+* ``linkage(carpeta_salida=...)`` escribe la carpeta y deja ``_trabajo/``
+  dentro; con L6 activo los alias de v1 se escriben con ``DeprecationWarning``
+  y su ``.xlsx`` lleva una primera hoja ``LEEME``;
+* ningún módulo de ``src/`` fuera de la lista declarada llama a
+  ``to_parquet``/``to_excel``/``to_csv``/``write_table``/``ExcelWriter``.
+
+Las empresas son inventadas. Ningún dato licenciado entra aquí.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import warnings
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pytest
+from openpyxl import load_workbook
+from test_contrato_salida import _correr_linkage, _silencio, conjunto_sintetico
+
+import record_linkage as rl
+from record_linkage import contrato
+from record_linkage.exporters import escritor
+from record_linkage.exporters.escritor import (
+    LIMITE_FILAS_EXCEL,
+    VERSION_RETIRO_ALIAS_V1,
+    Manifiesto,
+    escribir_resultado,
+    leer_resultado,
+)
+from record_linkage.pipeline.errores import ContratoSalidaError, ErrorRuesLinker
+from record_linkage.resultado import ResultadoLinkage
+
+RAIZ = Path(__file__).resolve().parent.parent
+SRC = RAIZ / "src" / "record_linkage"
+MARCA = datetime(2026, 10, 6, 14, 30, 59)
+CARPETA_ESPERADA = "2026-10-06_1430_prueba"
+
+#: La forma exacta del estándar para una corrida de linkage() con golden,
+#: sin enlaces (F3), con Excel y una figura. ``_trabajo/`` no está aquí
+#: porque el resultado de la fixture tiene su work_dir fuera de la carpeta.
+RUTAS_ESPERADAS = (
+    "correlativa.parquet",
+    "diccionario.csv",
+    "entidades_ids.parquet",
+    "excel/correlativa.xlsx",
+    "excel/golden.xlsx",
+    "figuras/dashboard.png",
+    "golden.parquet",
+    "manifest.json",
+    "revision.csv",
+)
+
+
+@pytest.fixture(scope="module")
+def res(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    return _correr_linkage(tmp_path_factory.mktemp("trabajo"))
+
+
+@pytest.fixture
+def figura(tmp_path: Path) -> Path:
+    ruta = tmp_path / "dashboard.png"
+    ruta.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    return ruta
+
+
+def _rutas_relativas(carpeta: Path) -> list[str]:
+    return sorted(
+        p.relative_to(carpeta).as_posix()
+        for p in carpeta.rglob("*")
+        if p.is_file() and "_trabajo" not in p.relative_to(carpeta).parts
+    )
+
+
+def _sha256(ruta: Path) -> str:
+    return hashlib.sha256(ruta.read_bytes()).hexdigest()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Forma de la carpeta y manifiesto
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_carpeta_tiene_la_forma_exacta(res: ResultadoLinkage, tmp_path: Path, figura: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, figuras=[figura])
+    carpeta = tmp_path / CARPETA_ESPERADA
+    assert man.carpeta == carpeta
+    assert carpeta.is_dir()
+    assert tuple(_rutas_relativas(carpeta)) == RUTAS_ESPERADAS
+    assert not (tmp_path / ".prueba.pendiente").exists()
+
+
+def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
+    res: ResultadoLinkage, tmp_path: Path, figura: Path
+) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, figuras=[figura])
+    carpeta = man.carpeta
+    texto = json.loads((carpeta / "manifest.json").read_text(encoding="utf-8"))
+    assert texto["contrato"] == contrato.VERSION_CONTRATO
+    assert texto["version"] == rl.__version__
+    assert texto["nombre"] == "prueba"
+    assert texto["carpeta"] == CARPETA_ESPERADA  # el nombre definitivo, no la pendiente
+    assert texto["marca_tiempo"] == MARCA.isoformat(timespec="seconds")
+    listados = {a["ruta"]: a for a in texto["artefactos"]}
+    # Todo lo que hay en la carpeta, salvo el propio manifest (no puede
+    # contener su propia huella), está listado con su huella y tamaño reales.
+    assert set(listados) == set(RUTAS_ESPERADAS) - {"manifest.json"}
+    for ruta, art in listados.items():
+        archivo = carpeta / ruta
+        assert art["bytes"] == archivo.stat().st_size, ruta
+        assert art["sha256"] == _sha256(archivo), ruta
+    # Bloques del estándar.
+    assert texto["insumos"] == res.manifiesto["entradas"]
+    assert texto["parametros"] == res.manifiesto["parametros"]
+    assert texto["conteos"]["filas"] == len(res.correlativa)
+    assert texto["conteos"]["grupos"] == res.correlativa["ID_GRUPO"].nunique()
+    assert (
+        texto["conteos"]["entidades_con_nit"] + texto["conteos"]["entidades_sin_nit"]
+        == texto["conteos"]["entidades"]
+    )
+    assert texto["invariantes"]["ok"] is True and texto["invariantes"]["fallos"] == []
+    # Tiempos y RSS vienen del manifest de _trabajo/ (L1…L5 corrieron).
+    assert set(texto["tiempos_por_fase"]) >= {"L1_prep", "L5_golden"}
+    assert set(texto["rss_por_fase"]) >= {"L1_prep", "L5_golden"}
+    assert texto["renombres"] == {"ID_REGISTRO": "ID_REGISTRO_FUENTE"}
+    assert texto["prioridad_fuentes"] == res.manifiesto["completar"]["prioridad_fuentes"]
+    assert texto["omitidos"] == []
+    assert texto["corrida"]["funcion"] == "linkage"
+    assert isinstance(Manifiesto.desde_dict(texto), Manifiesto)
+
+
+def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_path: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    ids = pd.read_parquet(man.carpeta / "entidades_ids.parquet")
+    assert list(ids.columns) == ["ID_ENTIDAD", "ID_GRUPO", "N_REGISTROS", "RETIRADO_EN"]
+    assert len(ids) == res.correlativa["ID_GRUPO"].nunique()
+    assert ids["ID_ENTIDAD"].is_unique and ids["ID_GRUPO"].is_unique
+    assert ids["RETIRADO_EN"].isna().all()
+    assert int(ids["N_REGISTROS"].sum()) == len(res.correlativa)
+    esperado = res.correlativa.groupby("ID_GRUPO").size()
+    assert ids.set_index("ID_GRUPO")["N_REGISTROS"].sort_index().tolist() == esperado.tolist()
+
+
+def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert not (man.carpeta / "excel").exists()
+    assert [o["artefacto"] for o in man.omitidos] == [
+        "excel/correlativa.xlsx",
+        "excel/golden.xlsx",
+    ]
+    assert all("excel=False" in o["motivo"] for o in man.omitidos)
+
+
+def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
+    res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert LIMITE_FILAS_EXCEL == 1_048_575  # 1.048.576 filas de hoja menos el encabezado
+    monkeypatch.setattr(escritor, "LIMITE_FILAS_EXCEL", 10)
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    excel = man.carpeta / "excel"
+    assert not (excel / "correlativa.xlsx").exists()
+    assert not (excel / "golden.xlsx").exists()
+    assert sorted(p.name for p in excel.iterdir()) == [
+        "correlativa_LEEME.xlsx",
+        "golden_LEEME.xlsx",
+    ]
+    libro = load_workbook(excel / "correlativa_LEEME.xlsx", read_only=True)
+    try:
+        assert libro.sheetnames == ["LEEME"]
+        celdas = [str(c.value) for fila in libro["LEEME"].iter_rows() for c in fila if c.value]
+    finally:
+        libro.close()
+    texto = "\n".join(celdas)
+    assert f"{len(res.correlativa):,}".replace(",", ".") in texto
+    assert "read_parquet" in texto and "duckdb" in texto.lower() and "Power Query" in texto
+    assert {o["artefacto"] for o in man.omitidos} == {
+        "excel/correlativa.xlsx",
+        "excel/golden.xlsx",
+    }
+    assert [a["ruta"] for a in man.artefactos if a["ruta"].startswith("excel/")] == [
+        "excel/correlativa_LEEME.xlsx",
+        "excel/golden_LEEME.xlsx",
+    ]
+
+
+def test_dos_escrituras_producen_las_mismas_huellas(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """Los parquet y csv son deterministas; el xlsx no (fecha en el zip)."""
+    m1 = escribir_resultado(res, tmp_path / "a", "prueba", marca_tiempo=MARCA)
+    m2 = escribir_resultado(res, tmp_path / "b", "prueba", marca_tiempo=MARCA)
+    h1 = {a["ruta"]: a["sha256"] for a in m1.artefactos if not a["ruta"].endswith(".xlsx")}
+    h2 = {a["ruta"]: a["sha256"] for a in m2.artefactos if not a["ruta"].endswith(".xlsx")}
+    assert h1 == h2
+    assert set(h1) == {
+        "correlativa.parquet",
+        "golden.parquet",
+        "entidades_ids.parquet",
+        "revision.csv",
+        "diccionario.csv",
+    }
+    assert {a["ruta"] for a in m1.artefactos} == {a["ruta"] for a in m2.artefactos}
+
+
+def test_parquet_lleva_el_esquema_del_contrato(res: ResultadoLinkage, tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    esquema = pq.read_schema(man.carpeta / "correlativa.parquet")
+    assert esquema.names[: len(contrato.COLUMNAS_CORRELATIVA)] == list(
+        contrato.COLUMNAS_CORRELATIVA
+    )
+    for col in contrato.CORRELATIVA:
+        assert esquema.field(col.nombre).type == col.tipo, col.nombre
+    assert esquema.metadata[b"contrato"] == contrato.VERSION_CONTRATO.encode()
+    assert b"pandas" not in esquema.metadata  # sin metadatos variables
+    golden = pq.read_schema(man.carpeta / "golden.parquet")
+    assert golden.names == list(contrato.COLUMNAS_GOLDEN)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Atomicidad y fallos
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_fallo_a_mitad_no_deja_carpeta_definitiva_ni_pendiente(
+    res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El escritor no usa ``DataFrame.to_parquet`` (escribe con pyarrow para
+    fijar el esquema), así que el «to_parquet del golden» que la especificación
+    pide reventar es ``_escribir_parquet`` cuando le toca ``golden.parquet``."""
+    original = escritor._escribir_parquet
+
+    def revienta(df: pd.DataFrame, ruta: Path, *args: Any, **kwargs: Any) -> None:
+        if ruta.name == "golden.parquet":
+            raise OSError("disco lleno (simulado)")
+        original(df, ruta, *args, **kwargs)
+
+    monkeypatch.setattr(escritor, "_escribir_parquet", revienta)
+    with pytest.raises(OSError, match="disco lleno"):
+        escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    assert not (tmp_path / CARPETA_ESPERADA).exists()
+    assert not (tmp_path / ".prueba.pendiente").exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fallo_conserva_trabajo_dentro_de_la_pendiente(
+    res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si ``_trabajo/`` vive dentro de la pendiente (linkage(carpeta_salida=...)),
+    un fallo al escribir NO borra los checkpoints: la siguiente corrida los
+    reutiliza. Solo se borra lo que el escritor escribió."""
+    pendiente = tmp_path / ".prueba.pendiente"
+    trabajo = pendiente / "_trabajo"
+    trabajo.mkdir(parents=True)
+    (trabajo / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        escritor, "_escribir_parquet", lambda *a, **k: (_ for _ in ()).throw(OSError("x"))
+    )
+    with pytest.raises(OSError):
+        escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    assert not (tmp_path / CARPETA_ESPERADA).exists()
+    assert sorted(p.name for p in pendiente.iterdir()) == ["_trabajo"]
+    assert (trabajo / "manifest.json").is_file()
+
+
+def test_carpeta_definitiva_existente_falla_rapido(res: ResultadoLinkage, tmp_path: Path) -> None:
+    escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    with pytest.raises(ErrorRuesLinker, match="ya existe"):
+        escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert not (tmp_path / ".prueba.pendiente").exists()
+
+
+def test_nombre_con_separadores_falla_rapido(res: ResultadoLinkage, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="nombre"):
+        escribir_resultado(res, tmp_path, "../fuga", marca_tiempo=MARCA)
+
+
+def test_resultado_que_incumple_el_contrato_no_se_escribe(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    roto = ResultadoLinkage(
+        correlativa=res.correlativa.drop(columns=["ID_ENTIDAD"]),
+        golden=res.golden,
+        manifiesto=dict(res.manifiesto),
+        metricas=dict(res.metricas),
+        diccionario=res.diccionario,
+        dir_trabajo=res.dir_trabajo,
+    )
+    with pytest.raises(ContratoSalidaError):
+        escribir_resultado(roto, tmp_path, "prueba", marca_tiempo=MARCA)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_golden_none_se_omite_y_se_declara(res: ResultadoLinkage, tmp_path: Path) -> None:
+    sin_golden = ResultadoLinkage(
+        correlativa=res.correlativa,
+        golden=None,
+        manifiesto=dict(res.manifiesto),
+        metricas=dict(res.metricas),
+        diccionario=res.diccionario,
+        dir_trabajo=res.dir_trabajo,
+    )
+    man = escribir_resultado(sin_golden, tmp_path, "prueba", marca_tiempo=MARCA)
+    assert not (man.carpeta / "golden.parquet").exists()
+    assert not (man.carpeta / "excel" / "golden.xlsx").exists()
+    assert (man.carpeta / "excel" / "correlativa.xlsx").is_file()
+    assert {o["artefacto"] for o in man.omitidos} == {"golden.parquet", "excel/golden.xlsx"}
+    leido = leer_resultado(man.carpeta)
+    assert leido.golden is None and leido.validar().ok
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# leer_resultado
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_leer_resultado_devuelve_un_resultado_valido(res: ResultadoLinkage, tmp_path: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    leido = leer_resultado(man.carpeta)
+    assert isinstance(leido, ResultadoLinkage)
+    reporte = leido.validar()
+    assert reporte.ok, reporte.resumen()
+    assert list(leido.correlativa.columns) == list(res.correlativa.columns)
+    assert list(leido.golden.columns) == list(res.golden.columns)
+    pd.testing.assert_frame_equal(
+        leido.correlativa[["ID_REGISTRO", "ID_GRUPO", "ID_ENTIDAD", "SCORE_PAR"]],
+        res.correlativa[["ID_REGISTRO", "ID_GRUPO", "ID_ENTIDAD", "SCORE_PAR"]],
+        check_dtype=False,
+    )
+    assert leido.enlaces is None
+    assert list(leido.revision.columns) == list(contrato.COLUMNAS_REVISION) and leido.revision.empty
+    assert list(leido.diccionario.columns) == list(contrato.COLUMNAS_DICCIONARIO)
+    assert leido.manifiesto["entradas"] == res.manifiesto["entradas"]
+    assert leido.metricas["n_registros"] == len(res.correlativa)
+    assert leido.manifiesto["manifest"]["nombre"] == "prueba"
+    assert leido.dir_trabajo is None  # _trabajo/ no está dentro de esta carpeta
+
+
+def test_leer_resultado_con_alias_en_espanol(res: ResultadoLinkage, tmp_path: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    leido = leer_resultado(man.carpeta, alias="es")
+    assert list(leido.correlativa.columns[:3]) == ["ID_REGISTRO", "FUENTE", "FILA_ORIGEN"]
+    assert "SIMILITUD_NOMBRE" in leido.correlativa.columns
+    assert "FUENTE_PRINCIPAL" in leido.golden.columns and "N_REGISTROS" in leido.golden.columns
+    # Las columnas de la fuente conservan su nombre (alias_es = columna).
+    assert "SECTOR" in leido.correlativa.columns
+    with pytest.raises(ValueError, match="alias"):
+        leer_resultado(man.carpeta, alias="en")
+
+
+def test_leer_resultado_detecta_artefacto_alterado(res: ResultadoLinkage, tmp_path: Path) -> None:
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    ruta = man.carpeta / "revision.csv"
+    with ruta.open("a", encoding="utf-8") as f:
+        f.write("cruce,X,a,A,b,B,distinta,alguien,porque\n")
+    with pytest.raises(ErrorRuesLinker, match=r"revision\.csv") as exc:
+        leer_resultado(man.carpeta)
+    assert "Qué hacer" in str(exc.value)
+    ruta.unlink()
+    with pytest.raises(ErrorRuesLinker, match=r"revision\.csv"):
+        leer_resultado(man.carpeta)
+
+
+def test_leer_resultado_sin_manifest_falla_con_mensaje(tmp_path: Path) -> None:
+    with pytest.raises(ErrorRuesLinker, match=r"manifest\.json"):
+        leer_resultado(tmp_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# linkage(carpeta_salida=...) y alias v1 en L6
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_linkage_con_carpeta_salida_escribe_el_estandar(tmp_path: Path) -> None:
+    fuentes = conjunto_sintetico()
+    with _silencio():
+        res = rl.linkage(
+            fuentes,
+            carpeta_salida=tmp_path / "salidas",
+            nombre="cruce",
+            skip_reporting=True,
+            col_ciudad="CIUDAD",
+            col_id="CODIGO",
+        )
+    carpetas = [p for p in (tmp_path / "salidas").iterdir()]
+    assert len(carpetas) == 1 and carpetas[0].name.endswith("_cruce")
+    carpeta = carpetas[0]
+    assert not (tmp_path / "salidas" / ".cruce.pendiente").exists()
+    assert (carpeta / "_trabajo" / "manifest.json").is_file()
+    assert (carpeta / "_trabajo" / "L3_scoring" / "scored.db").is_file()
+    assert res.dir_trabajo == carpeta / "_trabajo"
+    assert res.manifiesto["dir_trabajo"] == str(carpeta / "_trabajo")
+    assert res.manifiesto["carpeta_salida"] == str(carpeta)
+    assert set(_rutas_relativas(carpeta)) == set(RUTAS_ESPERADAS) - {"figuras/dashboard.png"}
+    man = json.loads((carpeta / "manifest.json").read_text(encoding="utf-8"))
+    assert man["corrida"]["dir_trabajo"] == "_trabajo"
+    assert set(man["tiempos_por_fase"]) == {
+        "L1_prep",
+        "L2_lsh_candidates",
+        "L3_scoring",
+        "L4_clustering",
+        "L5_golden",
+    }
+    leido = leer_resultado(carpeta)
+    assert leido.validar().ok
+    assert leido.dir_trabajo == carpeta / "_trabajo"
+
+
+def _exigir_l6() -> None:
+    import importlib.util
+
+    faltan = [m for m in ("matplotlib", "seaborn") if importlib.util.find_spec(m) is None]
+    if faltan:
+        pytest.fail(f"Faltan {faltan}: L6 omitiría sus PNG en silencio.", pytrace=False)
+
+
+@pytest.fixture(scope="module")
+def corrida_con_l6(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    _exigir_l6()
+    raiz = tmp_path_factory.mktemp("l6")
+    fuentes = conjunto_sintetico()
+    from record_linkage.reporting import strategies
+
+    strategies._ALIAS_V1_AVISADO = False
+    with _silencio(), warnings.catch_warnings(record=True) as avisos:
+        warnings.simplefilter("always")
+        res = rl.linkage(
+            fuentes,
+            carpeta_salida=raiz,
+            nombre="conl6",
+            skip_reporting=False,
+            col_ciudad="CIUDAD",
+            col_id="CODIGO",
+        )
+    carpeta = next(p for p in raiz.iterdir() if p.name.endswith("_conl6"))
+    return {"res": res, "carpeta": carpeta, "avisos": list(avisos)}
+
+
+def test_alias_v1_se_escriben_con_deprecation_una_vez(corrida_con_l6: dict[str, Any]) -> None:
+    carpeta: Path = corrida_con_l6["carpeta"]
+    l6 = carpeta / "_trabajo" / "L6_reporting"
+    for nombre in ("tabla_correlativa", "golden_records"):
+        for ext in (".parquet", ".csv.gz", ".xlsx"):
+            assert (l6 / f"{nombre}{ext}").is_file(), f"{nombre}{ext}"
+    de_alias = [
+        a
+        for a in corrida_con_l6["avisos"]
+        if issubclass(a.category, DeprecationWarning) and "excel/correlativa.xlsx" in str(a.message)
+    ]
+    assert len(de_alias) == 1, [str(a.message) for a in de_alias]
+    assert VERSION_RETIRO_ALIAS_V1 in str(de_alias[0].message)
+
+
+def test_alias_xlsx_lleva_hoja_leeme_primero(corrida_con_l6: dict[str, Any]) -> None:
+    carpeta: Path = corrida_con_l6["carpeta"]
+    ruta = carpeta / "_trabajo" / "L6_reporting" / "tabla_correlativa.xlsx"
+    libro = load_workbook(ruta, read_only=True)
+    try:
+        assert libro.sheetnames[0] == "LEEME"
+        assert len(libro.sheetnames) == 2
+        texto = "\n".join(
+            str(c.value) for fila in libro["LEEME"].iter_rows() for c in fila if c.value
+        )
+        datos = libro[libro.sheetnames[1]]
+        encabezado = [c.value for c in next(datos.iter_rows(max_row=1))]
+    finally:
+        libro.close()
+    assert "excel/correlativa.xlsx" in texto
+    assert VERSION_RETIRO_ALIAS_V1 in texto
+    assert "ID_GRUPO" in encabezado
+
+
+def test_con_l6_las_figuras_van_a_figuras(corrida_con_l6: dict[str, Any]) -> None:
+    carpeta: Path = corrida_con_l6["carpeta"]
+    figuras = sorted(p.name for p in (carpeta / "figuras").iterdir())
+    assert figuras and all(f.endswith(".png") for f in figuras)
+    assert "dashboard_ejecutivo.png" in figuras
+    man = json.loads((carpeta / "manifest.json").read_text(encoding="utf-8"))
+    rutas = {a["ruta"] for a in man["artefactos"]}
+    assert {f"figuras/{f}" for f in figuras} <= rutas
+    res: ResultadoLinkage = corrida_con_l6["res"]
+    assert res.metricas["report_files"]
+    assert leer_resultado(carpeta).validar().ok
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Un solo punto de escritura fuera de _trabajo/
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ESCRITORES = {"to_parquet", "to_excel", "to_csv", "write_table", "ExcelWriter"}
+
+#: Módulos de ``src/record_linkage`` que pueden llamar a un escritor, y por
+#: qué. El objetivo (F1.10) es que la carpeta del estándar la escriba SOLO
+#: ``exporters/escritor.py``; lo demás es ``_trabajo/`` (checkpoints), caminos
+#: que F2 lleva al estándar, o herramientas que no producen el entregable.
+#: Lo que se encontró de más respecto a la lista de la especificación
+#: (``golden/generator.py`` y ``engine/`` NO escriben; ``reporting/suite.py``,
+#: ``flujo/``, ``deduplication/colab.py``, ``exporters/smart.py``,
+#: ``evaluation/``, ``optimization/`` y ``classifier/`` sí) se lista con su
+#: motivo. Quitar una entrada exige quitar primero la llamada.
+ESCRITORES_PERMITIDOS: dict[str, str] = {
+    "exporters/escritor.py": "el escritor único del estándar (F1.10).",
+    "pipeline/orchestrator.py": "checkpoints L1…L5 en _trabajo/.",
+    "pipeline/linkage_pipeline.py": "checkpoints del pipeline heredado en _trabajo/.",
+    "pipeline/result.py": "PipelineResult.to_excel/to_csv heredados (lo pide el usuario).",
+    "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); F1.11 los unifica en "
+    "informe_cruce.xlsx a través del escritor.",
+    "exporters/smart.py": "SmartExporter: utilidad genérica de exportación, no el estándar.",
+    "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",
+    "flujo/insumos.py": "camino cruce: caché de insumos en parquet.",
+    "flujo/resultados_disco.py": "camino cruce: resultados en disco; F2 lo lleva al estándar.",
+    "deduplication/colab.py": "camino dedupe por lotes en Colab; F2 lo lleva al estándar.",
+    "evaluation/banco.py": "el banco (medición), no el entregable.",
+    "evaluation/ground_truth.py": "ground truth (medición), no el entregable.",
+    "optimization/engine.py": "reportes de Optuna, no el entregable.",
+    "classifier/data_loader.py": "datos de entrenamiento del clasificador.",
+}
+
+
+def _llamadas_a_escritores(ruta: Path) -> list[str]:
+    """Nombres de escritor llamados en el módulo (AST: ni docstrings ni comentarios)."""
+    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+    encontrados: list[str] = []
+    for nodo in ast.walk(arbol):
+        if not isinstance(nodo, ast.Call):
+            continue
+        f = nodo.func
+        nombre = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+        if nombre in _ESCRITORES:
+            encontrados.append(nombre)
+    return encontrados
+
+
+def test_solo_el_escritor_escribe_fuera_de_trabajo() -> None:
+    con_llamadas = {
+        p.relative_to(SRC).as_posix(): _llamadas_a_escritores(p) for p in sorted(SRC.rglob("*.py"))
+    }
+    con_llamadas = {k: v for k, v in con_llamadas.items() if v}
+    de_mas = sorted(set(con_llamadas) - set(ESCRITORES_PERMITIDOS))
+    assert not de_mas, (
+        f"Módulos que escriben parquet/excel/csv sin estar en la lista: "
+        f"{ {k: con_llamadas[k] for k in de_mas} }. La carpeta del estándar la escribe "
+        f"SOLO exporters/escritor.py; si es _trabajo/ o una herramienta, añádalo a "
+        f"ESCRITORES_PERMITIDOS con su motivo."
+    )
+    sin_llamadas = sorted(k for k in ESCRITORES_PERMITIDOS if k not in con_llamadas)
+    assert not sin_llamadas, f"Ya no escriben; quítelos de la lista: {sin_llamadas}"
+    # L6 escribe a través del escritor: strategies.py no llama a ningún escritor.
+    assert "reporting/strategies.py" not in con_llamadas
+
+
+def test_la_prueba_no_se_inspecciona_a_si_misma() -> None:
+    assert not Path(__file__).resolve().is_relative_to(SRC)
+
+
+def test_escribir_xlsx_neutraliza_formulas(tmp_path: Path) -> None:
+    """La ruta de L6 (alias) pasa por aquí: conserva la neutralización de 0.22.4."""
+    df = pd.DataFrame({"=HEADER": ["=2+2", "safe"], "number": [-7, 1]})
+    ruta = tmp_path / "x.xlsx"
+    escritor.escribir_xlsx(df, ruta, leeme=escritor.leeme_alias_v1("excel/correlativa.xlsx"))
+    libro = load_workbook(ruta, read_only=True, data_only=False)
+    try:
+        assert libro.sheetnames == ["LEEME", "datos"]
+        hoja = libro["datos"]
+        assert hoja["A1"].value == "'=HEADER"
+        assert hoja["A2"].value == "'=2+2"
+        assert hoja["B2"].value == -7
+    finally:
+        libro.close()
+    pd.testing.assert_frame_equal(
+        df, pd.DataFrame({"=HEADER": ["=2+2", "safe"], "number": [-7, 1]})
+    )
+
+
+def test_escribir_csv_gz_por_lotes_neutraliza(tmp_path: Path) -> None:
+    import gzip
+
+    import pyarrow.parquet as pq
+
+    origen = tmp_path / "o.parquet"
+    pd.DataFrame({"=H": ["=2+2", "b"], "n": [1, 2]}).to_parquet(origen, index=False)
+    destino = tmp_path / "o.csv.gz"
+    filas = escritor.escribir_csv_gz_por_lotes(pq.ParquetFile(origen), destino, filas_por_lote=1)
+    assert filas == 2
+    with gzip.open(destino, "rt", encoding="utf-8") as f:
+        texto = f.read()
+    assert texto.count("'=H") == 1 and "'=2+2" in texto

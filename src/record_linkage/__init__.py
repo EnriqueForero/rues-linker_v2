@@ -43,6 +43,7 @@ from .deduplication.auto import deduplicate_auto
 from .deduplication.unified import deduplicate_unified
 from .engine.cobertura import ResultadoCobertura, cobertura_estrella
 from .evaluation.pairwise import evaluar_pares
+from .exporters.escritor import Manifiesto, escribir_resultado, leer_resultado
 from .flujo.importadores import (
     ConfigImportadores,
     ResultadoImportadores,
@@ -118,6 +119,7 @@ __all__ = [
     "InputFormat",
     "InvalidValuePolicy",
     "LoadedSource",
+    "Manifiesto",
     "MatcherPostProcessor",
     "MatchingProfile",
     "NumericFormat",
@@ -149,12 +151,14 @@ __all__ = [
     "deduplicate_unified",
     "default_colombia_profile",
     "default_international_profile",
+    "escribir_resultado",
     "esquema_multicampo_completo",
     "esquema_rues",
     "evaluar_esquema",
     "evaluar_pares",
     "get_profile",
     "iter_source_chunks",
+    "leer_resultado",
     "link",
     "linkage",
     "load_source",

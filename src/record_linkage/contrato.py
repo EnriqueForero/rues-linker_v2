@@ -24,6 +24,9 @@ Decisiones (plan F1, no se discuten aquí)
   (validar)``).
 * ``golden/columnas_finales.py`` importa sus cuatro columnas DESDE aquí (una
   regla escrita una vez); nunca al revés, para no crear ciclos.
+* ``entidades_ids`` (F1.10) es el crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la
+  corrida que ``exporters/escritor.py`` deja en la carpeta; ``RETIRADO_EN``
+  queda vacío hasta que F2.4 añada la herencia entre corridas.
 
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.23.0
 """
@@ -42,6 +45,7 @@ __all__ = [
     "COLUMNAS_DIAGNOSTICO",
     "COLUMNAS_DICCIONARIO",
     "COLUMNAS_ENLACES",
+    "COLUMNAS_ENTIDADES_IDS",
     "COLUMNAS_FINALES",
     "COLUMNAS_GOLDEN",
     "COLUMNAS_IDENTIDAD",
@@ -57,6 +61,7 @@ __all__ = [
     "diccionario",
     "esquema_correlativa",
     "esquema_enlaces",
+    "esquema_entidades_ids",
     "esquema_golden",
     "esquema_revision",
     "familia_tipo",
@@ -326,17 +331,42 @@ REVISION: tuple[ColumnaContrato, ...] = (
     _c("RAZON", pa.string(), "Por qué, en una frase.", "RAZON", "revision"),
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Entidades_ids: crosswalk ID_ENTIDAD ↔ ID_GRUPO de la corrida (F1.10). La
+# herencia entre corridas (RETIRADO_EN → sobreviviente) la añade F2.4.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ENTIDADES_IDS: tuple[ColumnaContrato, ...] = (
+    _c(
+        "ID_ENTIDAD",
+        pa.string(),
+        "Entidad estable (misma regla que en la correlativa).",
+        "ID_ENTIDAD",
+    ),
+    _c("ID_GRUPO", pa.int64(), "Grupo de esta corrida al que corresponde la entidad.", "ID_GRUPO"),
+    _c("N_REGISTROS", pa.int64(), "Registros de la correlativa en el grupo.", "N_REGISTROS"),
+    _c(
+        "RETIRADO_EN",
+        pa.string(),
+        "ID_ENTIDAD sobreviviente si esta entidad se fusionó con otra en una corrida "
+        "posterior; vacío en la corrida que la crea (F2.4 lo llena).",
+        "RETIRADO_EN",
+    ),
+)
+
 TABLAS: dict[str, tuple[ColumnaContrato, ...]] = {
     "correlativa": CORRELATIVA,
     "golden": GOLDEN,
     "enlaces": ENLACES,
     "revision": REVISION,
+    "entidades_ids": ENTIDADES_IDS,
 }
 
 COLUMNAS_CORRELATIVA: tuple[str, ...] = tuple(c.nombre for c in CORRELATIVA)
 COLUMNAS_GOLDEN: tuple[str, ...] = tuple(c.nombre for c in GOLDEN)
 COLUMNAS_ENLACES: tuple[str, ...] = tuple(c.nombre for c in ENLACES)
 COLUMNAS_REVISION: tuple[str, ...] = tuple(c.nombre for c in REVISION)
+COLUMNAS_ENTIDADES_IDS: tuple[str, ...] = tuple(c.nombre for c in ENTIDADES_IDS)
 
 #: Métricas del golden que nunca pueden quedar vacías.
 COLUMNAS_METRICAS_GOLDEN: tuple[str, ...] = (
@@ -434,6 +464,10 @@ def esquema_enlaces() -> pa.Schema:
 
 def esquema_revision() -> pa.Schema:
     return _esquema(REVISION)
+
+
+def esquema_entidades_ids() -> pa.Schema:
+    return _esquema(ENTIDADES_IDS)
 
 
 def revision_vacia() -> pd.DataFrame:

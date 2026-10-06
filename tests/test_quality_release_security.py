@@ -150,7 +150,9 @@ def test_l6_streaming_exports_escape_spreadsheet_formulas(tmp_path: Path) -> Non
     xlsx_path = next(path for path in files if path.suffix == ".xlsx")
     workbook = load_workbook(xlsx_path, read_only=True, data_only=False)
     try:
-        sheet = workbook.active
+        # F1.10: el alias de v1 lleva una primera hoja LEEME; los datos van después.
+        assert workbook.sheetnames[0] == "LEEME"
+        sheet = workbook[workbook.sheetnames[1]]
         assert sheet["A1"].value == "'=HEADER"
         assert sheet["A2"].value == "'=2+2"
         assert sheet["A2"].data_type != "f"
