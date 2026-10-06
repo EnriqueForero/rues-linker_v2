@@ -333,9 +333,11 @@ def test_columna_esperada_que_no_llega_a_la_correlativa_falla_en_vez_de_callarse
             omitidas_ingesta=(),
         )
     # Revisión r3 (baja): el remedio es el de la ENTREGA (DuckDB o sin
-    # separación), no el de la alineación de parquets derramados.
+    # separación), no el de la alineación de parquets derramados. Los dos
+    # remedios viven juntos en la excepción.
     texto = str(info.value)
-    assert "Qué hacer: " + modulo.QUE_HACER_ENTREGA_INCOMPLETA in texto
+    assert "Qué hacer: " + ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA in texto
+    assert not hasattr(modulo, "QUE_HACER_ENTREGA_INCOMPLETA"), "un remedio, un sitio"
     assert "fase L5" in texto and "payload_columns" in texto
     assert "columnas_extra" not in texto and "separar_columnas_extra" not in texto
 

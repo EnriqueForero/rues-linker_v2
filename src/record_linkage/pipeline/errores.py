@@ -277,7 +277,9 @@ class ColumnasArrastreError(ErrorPipeline):
         que_hacer: remedio con el que se construyó el mensaje. Por defecto es
             el de la alineación de parquets derramados
             (:attr:`QUE_HACER_POR_DEFECTO`); los caminos donde ese remedio no
-            aplica (DuckDB, ``separar_columnas_extra=False``) pasan el suyo.
+            aplica (DuckDB, ``separar_columnas_extra=False``) pasan
+            :attr:`QUE_HACER_ENTREGA_INCOMPLETA`. Los dos remedios viven aquí,
+            juntos: quien añada un tercer camino los encuentra en un sitio.
     """
 
     #: Remedio para el camino pandas con separación: la alineación posicional
@@ -288,6 +290,16 @@ class ColumnasArrastreError(ErrorPipeline):
         "reporte el caso con el manifiesto y el registro de la corrida, o "
         "desactive la separación con `ConfigCruce(separar_columnas_extra=False)` "
         "para que las columnas viajen por el motor"
+    )
+
+    #: Remedio cuando la ENTREGA no trae una columna que la fuente aportó
+    #: (DuckDB o ``separar_columnas_extra=False``): ahí no hay parquets
+    #: derramados que realinear ni separación que desactivar.
+    QUE_HACER_ENTREGA_INCOMPLETA = (
+        "no use este resultado; revise el registro de la fase L5 y de la publicación "
+        "para ver dónde se perdió la columna; si usa DuckDB, verifique "
+        "`payload_columns` en el manifiesto de ingesta (`ingesta_duckdb/`) y, si "
+        "se repite, reporte el caso con el manifiesto y el registro de la corrida"
     )
 
     def __init__(

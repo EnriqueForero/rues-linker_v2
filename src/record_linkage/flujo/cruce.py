@@ -1590,8 +1590,13 @@ def _separar_columnas_extra(
     return rutas, union, longitudes
 
 
+#: Motivo (global) de una columna pedida cuyo nombre lo produce el motor. Es
+#: neutral respecto del camino: con separación la de la fuente queda fuera y
+#: no se adjunta; sin separación viajó por el motor y este la pisó. En ambos
+#: prevalece la del motor y la de la fuente no se entrega.
 MOTIVO_CHOQUE_CON_MOTOR = (
-    "choca con una columna que produce el motor; la de la fuente no se pisa y no se adjunta"
+    "choca con una columna que produce el motor; prevalece la del motor y la de la "
+    "fuente no se entrega"
 )
 
 #: Motivo (DuckDB) de una columna no-matcher que la fuente sí produjo y no se
@@ -1607,16 +1612,6 @@ def motivo_fuente_sin_columna(origen: str) -> str:
     """Motivo documentado 1: la fuente no trae la columna de origen pedida."""
     return f"{PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA} {origen!r} pedida en optional_column_mapping"
 
-
-#: Remedio de :class:`ColumnasArrastreError` cuando la ENTREGA no trae una
-#: columna que la fuente aportó (DuckDB o ``separar_columnas_extra=False``):
-#: ahí no hay parquets derramados que realinear ni separación que desactivar.
-QUE_HACER_ENTREGA_INCOMPLETA = (
-    "no use este resultado; revise el registro de la fase L5 y de la publicación "
-    "para ver dónde se perdió la columna; si usa DuckDB, verifique "
-    "`payload_columns` en el manifiesto de ingesta (`ingesta_duckdb/`) y, si "
-    "se repite, reporte el caso con el manifiesto y el registro de la corrida"
-)
 
 #: Columnas que el motor ESCRIBE en la correlativa, además de sus entradas
 #: (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False`` las
@@ -1675,11 +1670,12 @@ class ReporteColumnasArrastre:
                columna en ``adjuntadas`` si otra fuente sí la trae: para la
                fuente que no la tiene, la petición no se cumplió y se dice;
             2. global, :data:`MOTIVO_CHOQUE_CON_MOTOR`: la fuente SÍ la trae,
-               pero el motor produce una columna con ese nombre y la del motor
-               no se pisa (F1 la renombrará ``<col>_FUENTE`` cuando entre el
-               contrato de salida; hasta entonces queda declarada aquí). Con
-               ``separar_columnas_extra=False`` el motor sí la pisó: también
-               se declara choque, nunca «adjuntada»;
+               pero el motor produce una columna con ese nombre y prevalece
+               la del motor (F1 la renombrará ``<col>_FUENTE`` cuando entre
+               el contrato de salida; hasta entonces queda declarada aquí).
+               Con separación la de la fuente queda fuera; con
+               ``separar_columnas_extra=False`` viajó por el motor y este la
+               pisó: en ambos casos se declara choque, nunca «adjuntada»;
             3. por fuente, :data:`MOTIVO_SIN_PAYLOAD` (solo DuckDB): la fuente
                la produjo y ``preservar_payload=False`` la dejó fuera.
 
@@ -1744,7 +1740,7 @@ def _reporte_arrastre_observado(
     columnas_motor: Iterable[str],
     omitidas_ingesta: Sequence[ColumnaOmitida],
     *,
-    que_hacer: str = QUE_HACER_ENTREGA_INCOMPLETA,
+    que_hacer: str = ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA,
 ) -> ReporteColumnasArrastre:
     """Deriva el reporte de la correlativa ENTREGADA; es la misma regla en los
     tres caminos.
@@ -1759,8 +1755,9 @@ def _reporte_arrastre_observado(
         omitidas_ingesta: lo que el lector (o el compactador) declaró ausente
             por fuente.
         que_hacer: remedio del error; por defecto el de la entrega
-            (:data:`QUE_HACER_ENTREGA_INCOMPLETA`). El camino con parquets
-            derramados pasa el de la alineación.
+            (:attr:`ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA`). El
+            camino con parquets derramados pasa el de la alineación
+            (:attr:`ColumnasArrastreError.QUE_HACER_POR_DEFECTO`).
 
     Raises:
         ColumnasArrastreError: si una esperada que no choca con el motor no
@@ -1805,8 +1802,8 @@ def _adjuntar_columnas_extra(
     derramada no tiene las filas de su fuente, si la unión no tiene las de la
     correlativa o si falta ``ORIGINAL_INDEX``, levanta
     :class:`~record_linkage.pipeline.errores.ColumnasArrastreError`. Un
-    choque de nombre con una columna que ya produjo el motor no se pisa:
-    queda en ``omitidas`` con :data:`MOTIVO_CHOQUE_CON_MOTOR`.
+    choque de nombre con una columna que ya produjo el motor no pisa la del
+    motor: queda en ``omitidas`` con :data:`MOTIVO_CHOQUE_CON_MOTOR`.
 
     Args:
         omitidas_ingesta: lo que el lector declaró ausente por fuente
