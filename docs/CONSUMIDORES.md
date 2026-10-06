@@ -45,7 +45,7 @@
 | --- | --- | --- | --- |
 | `Orchestrator` L5 | parquet intermedios | `L5_golden/golden.parquet`, `L5_golden/correlative.parquet` | `pipeline/orchestrator.py:1714-1715` (escribe), `:1809-1810` (escribe), `:756-757` (vuelve a leerlos para reportar) |
 | `Orchestrator` L6 (`DataExportStrategy`) | exportación contractual | `L6_reporting/golden_records.{parquet,csv.gz,xlsx}`, `L6_reporting/tabla_correlativa.{parquet,csv.gz,xlsx}`; si supera `excel_limit` = min(`export_settings.excel_max_rows`, `EXCEL_ROW_LIMIT` = 100.000) filas —nunca más de 100.000—, `<nombre>_MUESTRA_100k.xlsx` (el plan lo prohíbe: F1.11 lo sustituye por Excel completo o `correlativa_LEEME.xlsx`) | `reporting/strategies.py:69` (directorio), `:300-312` (nombres y patrones de checkpoint `golden.parquet` o `golden_records.parquet`, `correlative.parquet` o `correlativa.parquet`), `:415-453` (extensiones y muestra) |
-| `Orchestrator` L6 (reportes) | 24 entregables de v1 | `dashboard_ejecutivo.png`, `dashboard_ejecutivo_mejorado.png`, `reporte_<nombre>.xlsx`, `config_auditoria_<ts>.json/.txt`, `visualizaciones/` | `reporting/{dashboard,visualizer,reports,suite,strategies}.py` (nombres construidos con `output_dir / f"…"`) |
+| `Orchestrator` L6 (reportes) | 24 entregables de v1 | `dashboard_ejecutivo.png`, `dashboard_ejecutivo_mejorado.png`, `reporte_<nombre>.xlsx`, `config_auditoria.json` (alias de v1 desde F1.12: nombre estable con `vease: "manifest.json"`, opcional en `contrato_l6`; el `.txt` se retiró y el contenido vive en `manifest.json → parametros/tiempos_por_fase/metricas`), `visualizaciones/` | `reporting/{dashboard,visualizer,reports,suite,strategies}.py` (nombres construidos con `output_dir / f"…"`) |
 | `api.linkage()` | dict en memoria | claves `"golden"`, `"correlative"` (+ `"matcher_stats"`, `"matcher_decisions"` con auditoría) | `api.py:330-337` |
 | `api.dedupe()` / `api.link()` | `ResultadoLinkage` | atributos `correlativa`, `golden`, `metricas`, `manifiesto`, método `resumen()` | `api.py:549-576` |
 | `flujo.cruce.ejecutar_cruce` | carpeta de corrida | `golden.parquet`, `correlativa.parquet`, `metadatos_corrida.json`, `golden.xlsx`/`correlativa.xlsx` (si `exportar_excel`); modo disco: `resultados.generations/<token>/`, `resultados.manifest.json` | `flujo/cruce.py:992-998`, `:1620`, `:1644`, `:1979-1986`; `flujo/resultados_disco.py:431-440` |
@@ -136,7 +136,7 @@ revisaron y se excluyeron de la tabla.
 | 14 archivos de prueba que **importan o llaman** `deduplicate_unified` | `(correlativa, estadísticas)` | correlativa en memoria | anexo A (lista completa) | verificado en repo |
 | `tests/test_colab_safe_cache.py:104` (monkeypatch del atributo), `tests/test_api_linkage.py:13` (exige que el nombre esté exportado en `record_linkage`) | el **nombre** `deduplicate_unified` | — | líneas citadas | verificado en repo |
 | `tests/test_notebooks_v014.py` | el `source` de los notebooks 01–08 (celda de entorno, versión, sin `pip -e`, sin salidas embebidas en los que publica) | estructura de celdas | `:21-35`, `:188-215` | verificado en repo |
-| Ninguna prueba | archivos `L6_reporting/golden_records*` o `tabla_correlativa*` leídos por nombre; `reporte_*.xlsx`; `config_auditoria_*`; `_MUESTRA_<n>k.xlsx` | — | `grep` → **0** en los cuatro casos (anexo A) | verificado en repo (sin consumidor) |
+| Ninguna prueba | archivos `L6_reporting/golden_records*` o `tabla_correlativa*` leídos por nombre; `reporte_*.xlsx`; `config_auditoria.json` (alias de v1; solo lo leen las pruebas de F1.12 que verifican el alias, no un consumidor); `_MUESTRA_<n>k.xlsx` | — | `grep` → **0** en los cuatro casos (anexo A; F1.12 añadió pruebas del alias `config_auditoria.json`) | verificado en repo (sin consumidor) |
 
 ### 3.5 Documentación (`docs/*.md`, `README.md`)
 
@@ -240,8 +240,10 @@ a alguien (hoy, con la evidencia de arriba):**
 
 - `<nombre>_MUESTRA_<n>k.xlsx` (0 lectores; el plan ya lo prohíbe:
   «Nunca más `_MUESTRA_100k`»).
-- `config_auditoria_<ts>.json/.txt` (0 lectores; F1.12 lo funde en
-  `manifest.json`).
+- `config_auditoria_<ts>.json/.txt` (0 lectores; F1.12 lo fundió en
+  `manifest.json → parametros/tiempos_por_fase/metricas`: queda
+  `config_auditoria.json` como alias de v1 con `vease`, opcional en
+  `contrato_l6`, y el `.txt` se retiró).
 - `reporte_<nombre>.xlsx` sueltos (0 lectores; F1 los unifica en
   `informe_cruce.xlsx` conservando los 24 entregables).
 - `correlative_table.csv` / `golden_records.csv` que escribe

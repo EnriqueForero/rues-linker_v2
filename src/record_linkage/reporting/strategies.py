@@ -815,7 +815,9 @@ class ConfigAuditStrategy(BaseReportingStrategy):
     Lo que queda aquí es el alias: nombre ESTABLE (sin marca de tiempo),
     ``vease: "manifest.json"``, el mismo bloque ``parametros`` que el
     manifiesto (``config.auditoria.parametros_motor``), los tiempos de las
-    fases cerradas (L1…L5) y las métricas de L6 (``Orchestrator._build_metrics``).
+    fases cerradas (L1…L5) y las métricas de L6 (``Orchestrator._build_metrics``,
+    cuyo bloque en español es ``pipeline.metricas.metricas_de_corrida``, el
+    mismo que ``manifest.json → metricas``).
     Es OPCIONAL en el contrato de L6: si falla se omite con motivo. El ``.txt``
     desaparece. Avisa con ``DeprecationWarning`` una vez por proceso y se retira
     en ``VERSION_RETIRO_ALIAS_V1``.

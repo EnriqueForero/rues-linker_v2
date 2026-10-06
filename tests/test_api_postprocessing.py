@@ -212,6 +212,7 @@ def test_l6_no_trunca_exportacion_postprocesada_bajo_presion_de_ram(tmp_path, mo
 
     orchestrator = object.__new__(Orchestrator)
     orchestrator.config = {"reporting_use_checkpoints": False}
+    orchestrator.sources = {}
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}
@@ -240,6 +241,7 @@ def test_l6_intenta_exportar_aun_con_ram_critica_y_omite_solo_analitica(tmp_path
     seen: dict[str, int] = {}
     orchestrator = object.__new__(Orchestrator)
     orchestrator.config = {"reporting_use_checkpoints": False}
+    orchestrator.sources = {}
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}
@@ -272,6 +274,7 @@ def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monk
     monkeypatch.setattr(strategy, "execute", lambda _ctx, _logger: [])
     orchestrator = object.__new__(Orchestrator)
     orchestrator.config = {"reporting_use_checkpoints": False}
+    orchestrator.sources = {}
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}

@@ -241,6 +241,29 @@ def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path)
     assert all("excel=False" in o["motivo"] for o in man.omitidos)
 
 
+def test_sin_configuracion_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """Un resultado sin ``manifiesto["configuracion"]`` (una ruta que no pasa por
+    el Orchestrator) no se repara en silencio: las claves del motor van vacías,
+    la llamada queda intacta y ``omitidos`` dice qué pasó y qué hacer."""
+    sin = _con(res)
+    sin.manifiesto.pop("configuracion")
+    man = escribir_resultado(sin, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert man.parametros["llamada"] == res.manifiesto["parametros"]
+    assert man.parametros["perfil"] is None
+    assert man.parametros["prioridad_fuentes"] == []
+    assert man.parametros["lsh"] == {} and man.parametros["scoring"] == {}
+    assert man.parametros["pesos"] == {}
+    omitidos = [o for o in man.omitidos if not o["artefacto"].startswith("excel/")]
+    assert [o["artefacto"] for o in omitidos] == ["parametros.perfil"]
+    motivo = omitidos[0]["motivo"]
+    assert "no trae la configuración" in motivo
+    assert "linkage(carpeta_salida=" in motivo and "parametros_motor(config).a_dict()" in motivo
+    # Lo mismo que se escribió se vuelve a leer.
+    texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
+    assert texto["parametros"]["perfil"] is None
+    assert {o["artefacto"] for o in texto["omitidos"]} >= {"parametros.perfil"}
+
+
 def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
     res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

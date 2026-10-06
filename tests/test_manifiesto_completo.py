@@ -61,6 +61,13 @@ from record_linkage.evaluation.banco import (
     _rss_por_fase,
 )
 from record_linkage.exporters.escritor import VERSION_RETIRO_ALIAS_V1, Manifiesto, leer_resultado
+from record_linkage.pipeline.metricas import (
+    CLAVES_METRICAS,
+    RUTA_CANDIDATES_DB,
+    RUTA_SCORED_DB,
+    metricas_de_corrida,
+)
+from record_linkage.pipeline.orchestrator import Orchestrator
 from record_linkage.reporting import contrato_l6, strategies
 
 PERFIL = "produccion_estandar"
@@ -238,10 +245,8 @@ def test_metricas_salen_de_la_verdad_en_disco(corrida: dict[str, Any]) -> None:
     man, carpeta = corrida["man"], corrida["carpeta"]
     trabajo = carpeta / "_trabajo"
     metricas = man["metricas"]
-    candidatos = _contar_filas_sqlite(
-        trabajo / "L2_lsh_candidates" / "candidates.db", "candidate_pairs"
-    )
-    pares = _contar_filas_sqlite(trabajo / "L3_scoring" / "scored.db", "scored_pairs")
+    candidatos = _contar_filas_sqlite(trabajo / RUTA_CANDIDATES_DB, "candidate_pairs")
+    pares = _contar_filas_sqlite(trabajo / RUTA_SCORED_DB, "scored_pairs")
     assert candidatos and pares
     assert metricas["candidatos"] == candidatos
     assert metricas["pares_puntuados"] == pares
@@ -252,6 +257,76 @@ def test_metricas_salen_de_la_verdad_en_disco(corrida: dict[str, Any]) -> None:
     assert metricas["n_registros"] == conteos["filas"]
     assert metricas["grupos_multifuente"] >= 1  # CRM y ADUANAS comparten entidades
     assert 0.0 <= metricas["confianza_media"] <= 1.0
+
+
+def test_metricas_del_alias_y_del_manifiesto_son_el_mismo_bloque(corrida: dict[str, Any]) -> None:
+    """Una regla, una vez: ``config_auditoria.json → metricas`` (lo que
+    ``Orchestrator._build_metrics`` entrega a L6) y ``manifest.json → metricas``
+    (el escritor) salen de ``pipeline.metricas.metricas_de_corrida`` y dicen
+    la misma cifra clave a clave. Solo ``segundos_total`` y ``rss_pico_mib``
+    pueden diferir, porque L6 escribe el alias antes de cerrar su propia fase."""
+    man, carpeta = corrida["man"], corrida["carpeta"]
+    alias = json.loads(
+        (carpeta / "_trabajo" / "L6_reporting" / ALIAS_AUDITORIA).read_text(encoding="utf-8")
+    )
+    metricas_alias, metricas_man = alias["metricas"], man["metricas"]
+    assert set(CLAVES_METRICAS) <= set(metricas_alias)
+    assert set(CLAVES_METRICAS) <= set(metricas_man)
+    for clave in CLAVES_METRICAS:
+        if clave in ("segundos_total", "rss_pico_mib"):
+            continue
+        assert metricas_alias[clave] == metricas_man[clave], clave
+    sin_l6 = {f: s for f, s in man["tiempos_por_fase"].items() if f != "L6_reporting"}
+    assert metricas_alias["segundos_total"] == pytest.approx(sum(sin_l6.values()), abs=0.05)
+    assert metricas_alias["rss_pico_mib"] <= metricas_man["rss_pico_mib"] + 0.05
+    # Y los alias en inglés de L6 se DERIVAN del bloque, no se recalculan.
+    assert metricas_alias["reduction_rate"] == metricas_alias["tasa_reduccion"]
+    assert metricas_alias["multi_source_groups"] == metricas_alias["grupos_multifuente"]
+    assert metricas_alias["avg_confidence"] == metricas_alias["confianza_media"]
+    assert metricas_alias["median_confidence"] == metricas_alias["confianza_mediana"]
+    assert metricas_alias["candidates_found"] == metricas_alias["candidatos"]
+    assert metricas_alias["pairs_scored"] == metricas_alias["pares_puntuados"]
+
+
+def test_metricas_de_corrida_es_la_regla_unica_y_build_metrics_deriva_de_ella() -> None:
+    """La función pura acepta las dos grafías del conteo de fuentes
+    (``SOURCES_COUNT`` del contrato y ``SOURCE_COUNT`` heredado), devuelve
+    ``None`` —nunca 0— sin ``_trabajo/``, y ``_build_metrics`` (instancia
+    parcial, como en los fixtures de L6) deriva sus claves en inglés de ella."""
+    golden = pd.DataFrame({"SOURCE_COUNT": [1, 2, 3], "CONFIDENCE_SCORE": [0.5, 1.0, 0.9]})
+    correl = pd.DataFrame({"ID_GRUPO": [1, 1, 2, 3, 3, 3]})
+    tiempos = {"L1_prep": 0.1, "L2_lsh_candidates": 0.25}
+    rss = {"L1_prep": 100.0, "L2_lsh_candidates": 120.5}
+    bloque = metricas_de_corrida(golden, correl, None, tiempos, rss)
+    assert tuple(bloque) == CLAVES_METRICAS
+    assert bloque["candidatos"] is None and bloque["pares_puntuados"] is None
+    assert bloque["tasa_reduccion"] == pytest.approx(0.5)
+    assert bloque["grupos_multifuente"] == 2
+    assert bloque["confianza_media"] == pytest.approx(0.8)
+    assert bloque["confianza_mediana"] == pytest.approx(0.9)
+    assert bloque["segundos_total"] == pytest.approx(0.35)
+    assert bloque["rss_pico_mib"] == 120.5
+    # Sin golden ni filas: nada se inventa.
+    vacio = metricas_de_corrida(None, correl.iloc[0:0], None, {}, {})
+    assert all(v is None for v in vacio.values())
+
+    orq = object.__new__(Orchestrator)
+    orq._start_time = None
+    orq._phase_times = dict(tiempos)
+    orq._phase_peak_rss_mib = dict(rss)
+    metricas = orq._build_metrics(golden, correl)
+    assert {k: metricas[k] for k in CLAVES_METRICAS} == bloque
+    assert metricas["reduction_rate"] == metricas["linkage_rate"] == bloque["tasa_reduccion"]
+    assert metricas["multi_source_groups"] == bloque["grupos_multifuente"]
+    assert metricas["avg_confidence"] == bloque["confianza_media"]
+    assert metricas["median_confidence"] == bloque["confianza_mediana"]
+    assert metricas["candidates_found"] == 0 and metricas["pairs_scored"] == 0
+    assert metricas["max_memory_gb"] == pytest.approx(120.5 / 1024)
+    # Sin la columna de confianza ni la de fuentes, las claves en inglés NO
+    # aparecen (los consumidores de v1 hacen .get(clave, 0)).
+    sin_columnas = orq._build_metrics(pd.DataFrame({"ID_GRUPO": [1]}), correl)
+    assert sin_columnas["grupos_multifuente"] is None and sin_columnas["confianza_media"] is None
+    assert not {"multi_source_groups", "avg_confidence", "median_confidence"} & set(sin_columnas)
 
 
 def test_leer_resultado_reconstruye_llamada_configuracion_y_metricas(

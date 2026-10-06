@@ -443,6 +443,7 @@ def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: 
 
     orquestador = object.__new__(Orchestrator)
     orquestador.config = {"reporting_use_checkpoints": False}
+    orquestador.sources = {}
     orquestador.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orquestador._start_time = 1.0
     orquestador._phase_times = {}

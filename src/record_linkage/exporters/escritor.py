@@ -109,10 +109,10 @@ import pyarrow.parquet as pq
 
 from .. import contrato
 from ..config.auditoria import ParametrosMotor
-from ..evaluation.banco import _contar_filas_sqlite, _fases_desde_manifiesto, _rss_por_fase
+from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
 from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
+from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
-from ..salida.completar import RUTA_SCORED_DB
 from ._spreadsheet import prepare_spreadsheet_data, validate_leaf_name
 
 __all__ = [
@@ -149,8 +149,6 @@ _SUFIJO_PENDIENTE = ".pendiente"
 _FILAS_POR_LOTE_CSV = 50_000
 _ALIAS = {"es": "alias_es"}
 
-#: Candidatos de L2 dentro de ``_trabajo/`` (el mismo archivo que cuenta el banco).
-_RUTA_CANDIDATES_DB = Path("L2_lsh_candidates") / "candidates.db"
 #: Clave de ``parametros`` donde va lo que se pidió a ``linkage()``; el resto
 #: de claves son las de ``config.auditoria.ParametrosMotor``.
 _CLAVE_LLAMADA = "llamada"
@@ -189,12 +187,13 @@ class Manifiesto:
             vacías y ``omitidos`` lo declara.
         conteos: filas, grupos, entidades (con NIT / sin NIT), fuentes…
         invariantes: el ``ReporteValidacion`` (``ok`` y ``fallos``).
-        metricas: lo que antes vivía en ``config_auditoria_*`` → ``metrics``,
-            desde la verdad en disco: ``candidatos`` (``candidates.db``),
-            ``pares_puntuados`` (``scored.db``), ``tasa_reduccion``,
-            ``grupos_multifuente``, ``confianza_media``/``mediana`` (golden),
-            ``segundos_total`` y ``rss_pico_mib`` (de las fases), más los
-            escalares de ``res.metricas`` (``n_registros``, ``n_fuentes``…).
+        metricas: lo que antes vivía en ``config_auditoria_*`` → ``metrics``:
+            el bloque de ``pipeline.metricas.metricas_de_corrida`` (la misma
+            función que usa ``Orchestrator._build_metrics``; desde la verdad
+            en disco: ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
+            ``grupos_multifuente``, ``confianza_media``/``mediana``,
+            ``segundos_total``, ``rss_pico_mib``), más los escalares de
+            ``res.metricas`` (``n_registros``, ``n_fuentes``…).
         tiempos_por_fase: segundos por fase L1…L6 desde ``_trabajo/manifest.json``.
         rss_por_fase: pico de RSS (MiB) por fase, misma fuente.
         omitidos: ``[{"artefacto", "motivo"}]``: lo que no se escribió y por qué.
@@ -650,7 +649,11 @@ def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[s
             {
                 "artefacto": "parametros.perfil",
                 "motivo": "el resultado no trae la configuración efectiva del motor "
-                "(esta ruta no pasa por el Orchestrator); F2 unifica los caminos.",
+                "(res.manifiesto['configuracion']: esta ruta no pasa por el "
+                "Orchestrator). Sin ella la corrida no se reproduce desde el "
+                "manifiesto. Use linkage(carpeta_salida=...) o deje "
+                "res.manifiesto['configuracion'] = parametros_motor(config).a_dict() "
+                "antes de escribir; F2 unifica los caminos.",
             }
         )
     return {_CLAVE_LLAMADA: dict(res.manifiesto.get("parametros") or {})} | {
@@ -663,39 +666,12 @@ def _metricas(
 ) -> dict[str, Any]:
     """Métricas de la corrida desde la verdad en disco (ver ``Manifiesto.metricas``).
 
-    ``candidatos`` y ``pares_puntuados`` se cuentan con
-    ``evaluation.banco._contar_filas_sqlite`` (la regla del banco y de
-    ``Orchestrator._build_metrics``, escrita una vez); ``None`` —nunca 0— si
-    la base no está (``dedupe`` no deja ``scored.db``).
+    El bloque es ``pipeline.metricas.metricas_de_corrida`` tal cual: la misma
+    regla que ``Orchestrator._build_metrics`` entrega a L6 y al alias
+    ``config_auditoria.json`` (escrita una vez; ``None`` —nunca 0— donde no
+    se puede saber).
     """
-    trabajo = Path(res.dir_trabajo) if res.dir_trabajo is not None else None
-    filas = len(res.correlativa)
-    grupos = int(res.correlativa["ID_GRUPO"].nunique())
-    metricas: dict[str, Any] = {
-        "candidatos": (
-            _contar_filas_sqlite(trabajo / _RUTA_CANDIDATES_DB, "candidate_pairs")
-            if trabajo is not None
-            else None
-        ),
-        "pares_puntuados": (
-            _contar_filas_sqlite(trabajo / RUTA_SCORED_DB, "scored_pairs")
-            if trabajo is not None
-            else None
-        ),
-        "tasa_reduccion": round(1 - grupos / filas, 6) if filas else None,
-        "grupos_multifuente": None,
-        "confianza_media": None,
-        "confianza_mediana": None,
-        "segundos_total": round(sum(tiempos.values()), 2) if tiempos else None,
-        "rss_pico_mib": max(rss.values()) if rss else None,
-    }
-    golden = res.golden
-    if golden is not None and "SOURCES_COUNT" in golden.columns:
-        metricas["grupos_multifuente"] = int((golden["SOURCES_COUNT"] > 1).sum())
-    if golden is not None and "CONFIDENCE_SCORE" in golden.columns and len(golden):
-        puntajes = pd.to_numeric(golden["CONFIDENCE_SCORE"], errors="coerce")
-        metricas["confianza_media"] = round(float(puntajes.mean()), 6)
-        metricas["confianza_mediana"] = round(float(puntajes.median()), 6)
+    metricas = metricas_de_corrida(res.golden, res.correlativa, res.dir_trabajo, tiempos, rss)
     # Los escalares de res.metricas (n_registros, n_grupos, n_fuentes…); las
     # listas y tablas (report_files, matcher_decisions…) no son métricas.
     for clave, valor in res.metricas.items():
