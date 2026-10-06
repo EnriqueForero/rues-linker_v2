@@ -184,6 +184,9 @@ class DuckDBCompactionResult:
     payload_path: Path | None = None
     payload_columns: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    #: Columnas canónicas de ``optional_column_mapping`` que la fuente NO tiene
+    #: (F1.8); misma regla que ``SourceLoadReport.missing_optional``.
+    missing_optional: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "resolved_mapping", MappingProxyType(dict(self.resolved_mapping)))
@@ -1278,6 +1281,7 @@ class DuckDBSourceCompactor:
                     payload_path=published_payload,
                     payload_columns=payload_columns if published_payload is not None else (),
                     warnings=warnings,
+                    missing_optional=tuple(plan.missing_optional),
                 )
         finally:
             if connection is not None:

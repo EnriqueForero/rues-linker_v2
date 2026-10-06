@@ -78,6 +78,7 @@ class _ReportState:
     resolved_mapping: dict[str, str] = field(default_factory=dict)
     invalid_values: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    missing_optional: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -543,6 +544,7 @@ def _build_column_plan(headers: Sequence[str], spec: SourceSpec) -> _ColumnPlan:
 def _register_plan(plan: _ColumnPlan, spec: SourceSpec, state: _ReportState) -> None:
     state.resolved_mapping = dict(plan.resolved_mapping)
     state.columns = plan.output_order
+    state.missing_optional = tuple(plan.missing_optional)
     for canonical in plan.missing_optional:
         source = spec.optional_column_mapping[canonical]
         warning = (
@@ -914,6 +916,7 @@ def load_source(spec: SourceSpec) -> LoadedSource:
         resolved_mapping=MappingProxyType(dict(state.resolved_mapping)),
         invalid_values=MappingProxyType(dict(state.invalid_values)),
         warnings=tuple(state.warnings),
+        missing_optional=state.missing_optional,
     )
     return LoadedSource(data=data, report=report)
 

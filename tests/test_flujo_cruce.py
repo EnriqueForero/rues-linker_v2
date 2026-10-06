@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from apoyo_cruce import LogNulo, config_cruce
 
 from record_linkage import ColumnType, SourceSpec
 from record_linkage.flujo import (
@@ -59,19 +60,6 @@ def fuentes_csv(tmp_path: Path) -> list[SourceSpec]:
             column_types={"NIT": ColumnType.IDENTIFIER},
         ),
     ]
-
-
-def _config(fuentes, tmp_path: Path, **extra) -> ConfigCruce:
-    base = {
-        "fuentes": fuentes,
-        "workspace": tmp_path / "salida",
-        "confiables": {"PADRON"},
-        "dir_trabajo": tmp_path / "trabajo",
-        "filas_smoke": 0,
-        "exportar_excel": False,
-    }
-    base.update(extra)
-    return ConfigCruce(**base)
 
 
 # ── Validación de la configuración ────────────────────────────────────
@@ -216,7 +204,7 @@ def test_preflight_falla_antes_de_procesar_si_falta_una_fuente(fuentes_csv, tmp_
 
     rotas = [fuentes_csv[0], replace(fuentes_csv[1], path=tmp_path / "no_existe.csv")]
     with pytest.raises(FileNotFoundError, match="no existe"):
-        ejecutar_cruce(_config(rotas, tmp_path))
+        ejecutar_cruce(config_cruce(rotas, tmp_path))
 
 
 @pytest.mark.parametrize(
@@ -245,7 +233,7 @@ def test_preflight_pandas_rechaza_fuente_que_seria_sobrescrita(
 
     with pytest.raises(ValueError, match="colisiona"):
         ejecutar_cruce(
-            _config(
+            config_cruce(
                 fuentes,
                 tmp_path,
                 exportar_excel=exportar_excel,
@@ -279,7 +267,7 @@ def test_preflight_disco_rechaza_fuentes_en_controles_de_publicacion(
 
     with pytest.raises(ValueError, match=r"colisiona|solapa|nombre reservado"):
         ejecutar_cruce(
-            _config(
+            config_cruce(
                 fuentes,
                 tmp_path,
                 motor_ingesta="duckdb",
@@ -294,7 +282,7 @@ def test_preflight_disco_rechaza_fuentes_en_controles_de_publicacion(
 
 
 def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
     assert resultado.metricas["filas_entrada"] == 5
     assert len(resultado.correlativa) == 5
@@ -305,7 +293,7 @@ def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path:
 
 
 def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
     assert resultado.rutas["golden_parquet"].exists()
     assert resultado.rutas["correlativa_parquet"].exists()
@@ -394,7 +382,7 @@ def test_metadata_pandas_preserva_version_anterior_si_falla_replace(
 
 
 def test_cruce_con_smoke_test_previo(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, filas_smoke=2))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, filas_smoke=2))
     assert len(resultado.correlativa) == 5
 
 
@@ -433,7 +421,7 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
 
     monkeypatch.setattr(modulo, "linkage", linkage_falso)
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             filas_smoke=1,
@@ -452,7 +440,7 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
 
 
 def test_preflight_revalida_rutas_si_config_fue_mutada(fuentes_csv, tmp_path: Path) -> None:
-    config = _config(fuentes_csv, tmp_path, reusar_checkpoints=False)
+    config = config_cruce(fuentes_csv, tmp_path, reusar_checkpoints=False)
     config.workspace = config.ruta_trabajo / "corrida"
 
     with pytest.raises(ValueError, match="Limpieza de checkpoints insegura"):
@@ -462,7 +450,7 @@ def test_preflight_revalida_rutas_si_config_fue_mutada(fuentes_csv, tmp_path: Pa
 def test_error_al_limpiar_checkpoint_no_se_oculta(fuentes_csv, tmp_path: Path, monkeypatch) -> None:
     import record_linkage.flujo.cruce as modulo
 
-    config = _config(fuentes_csv, tmp_path, reusar_checkpoints=False)
+    config = config_cruce(fuentes_csv, tmp_path, reusar_checkpoints=False)
     (config.ruta_trabajo / "_smoke").mkdir(parents=True)
 
     def fallar(_ruta):
@@ -478,7 +466,7 @@ def test_excel_se_omite_por_encima_del_limite(fuentes_csv, tmp_path: Path, monke
     import record_linkage.flujo.cruce as modulo
 
     monkeypatch.setattr(modulo, "_LIMITE_EXCEL", 2)
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, exportar_excel=True))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, exportar_excel=True))
     assert "correlativa_excel" not in resultado.rutas
     assert resultado.rutas["correlativa_parquet"].exists()
 
@@ -568,7 +556,7 @@ def test_cache_reutiliza_la_segunda_corrida(fuentes_csv, tmp_path: Path) -> None
     from record_linkage.flujo.insumos import leer_cache, ruta_en_cache
 
     cache = tmp_path / "procesados"
-    primera = ejecutar_cruce(_config(fuentes_csv, tmp_path, dir_procesados=cache))
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, dir_procesados=cache))
     assert ruta_en_cache(fuentes_csv[0], cache).is_file()
     assert leer_cache(fuentes_csv[0], cache) is not None
 
@@ -656,7 +644,7 @@ def test_cache_no_escribible_no_tumba_la_corrida(fuentes_csv, tmp_path: Path) ->
 
 
 def test_limite_filas_recorta_y_queda_registrado(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, limite_filas={"PADRON": 2}))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, limite_filas={"PADRON": 2}))
     assert resultado.metricas["filas_entrada"] == 4  # 2 de PADRON + 2 de CLIENTES
     assert len(resultado.correlativa) == 4
     metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
@@ -674,13 +662,13 @@ def test_limite_filas_rechaza_valores_invalidos(fuentes_csv, tmp_path: Path) -> 
 
 
 def test_limite_mayor_que_la_fuente_es_no_op(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, limite_filas={"PADRON": 999}))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, limite_filas={"PADRON": 999}))
     assert resultado.metricas["filas_entrada"] == 5
 
 
 def test_duckdb_limita_en_ingesta_y_expande_todas_las_filas(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             motor_ingesta="duckdb",
@@ -716,7 +704,7 @@ def test_duckdb_limita_en_ingesta_y_expande_todas_las_filas(fuentes_csv, tmp_pat
 
 def test_ajustes_de_perfil_llegan_al_motor(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             ajustes_perfil={"lsh_permutations": 64, "score_threshold": 0.5},
@@ -729,11 +717,11 @@ def test_ajustes_de_perfil_llegan_al_motor(fuentes_csv, tmp_path: Path) -> None:
 def test_ajuste_desconocido_falla_con_sugerencia(fuentes_csv, tmp_path: Path) -> None:
     """Un parámetro mal escrito no puede ignorarse en silencio."""
     with pytest.raises(ValueError, match="lsh_permutations"):
-        ejecutar_cruce(_config(fuentes_csv, tmp_path, ajustes_perfil={"lsh_permutation": 64}))
+        ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, ajustes_perfil={"lsh_permutation": 64}))
 
 
 def test_tiempos_por_fase_se_registran(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
     fases = resultado.metricas["segundos_por_fase"]
     assert {"preflight", "carga de fuentes", "cruce", "exportes"} <= set(fases)
     assert sum(fases.values()) <= resultado.metricas["segundos_total"] + 1
@@ -767,49 +755,11 @@ def test_una_sola_fuente_es_deduplicacion(fuentes_csv, tmp_path: Path) -> None:
 # RUES x Exportaciones, los representantes pasaron de 19.407 a 32.745.
 
 
-@pytest.fixture
-def fuentes_con_arrastre(tmp_path: Path) -> list[SourceSpec]:
-    """Fuentes con columnas mapeadas que NO participan en la decisión."""
-    a = tmp_path / "padron.csv"
-    a.write_text(
-        "IDENT,NOMBRE_EMPRESA,TEL,CORREO\n"
-        "900111222,ACME COLOMBIA SAS,3001112233,acme@x.co\n"
-        "800333444,BETA LTDA,3009998877,beta@x.co\n"
-        "900555666,GAMA S.A.,3005554433,gama@x.co\n",
-        encoding="utf-8",
-    )
-    b = tmp_path / "clientes.txt"
-    b.write_text(
-        "nit_cliente\trazon\tdepto\n"
-        "9001112221\tACME COLOMBIA S.A.S.\tANTIOQUIA\n"
-        "700999888\tDELTA EU\tBOGOTA\n",
-        encoding="utf-8",
-    )
-    return [
-        SourceSpec(
-            name="PADRON",
-            path=a,
-            column_mapping={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE_EMPRESA"},
-            optional_column_mapping={"TELEFONO": "TEL", "EMAIL": "CORREO"},
-            delimiter=",",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-        SourceSpec(
-            name="CLIENTES",
-            path=b,
-            column_mapping={"NIT": "nit_cliente", "RAZON_SOCIAL": "razon"},
-            optional_column_mapping={"DEPARTAMENTO": "depto"},
-            delimiter="\t",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-    ]
-
-
 def test_columnas_de_arrastre_no_entran_al_motor_pero_vuelven(
     fuentes_con_arrastre, tmp_path: Path
 ) -> None:
     """TELEFONO/EMAIL/DEPARTAMENTO no viajan por el pipeline; sí a la salida."""
-    resultado = ejecutar_cruce(_config(fuentes_con_arrastre, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_con_arrastre, tmp_path))
     corr = resultado.correlativa
     # Re-adjuntadas y con el valor EXACTO de la fila original.
     fila_acme = corr[(corr["SRC"] == "PADRON") & (corr["NIT"] == "900111222")].iloc[0]
@@ -830,7 +780,7 @@ def test_variable_extra_activa_se_queda_en_el_motor(fuentes_con_arrastre, tmp_pa
     """Una columna declarada en variables_extra NO se separa: el motor la necesita."""
     from record_linkage.flujo.cruce import _columnas_de_motor, _separar_columnas_extra
 
-    cfg = _config(
+    cfg = config_cruce(
         fuentes_con_arrastre,
         tmp_path,
         variables_extra=[{"column": "TELEFONO", "weight": 0.1, "type": "exact_signed"}],
@@ -841,14 +791,14 @@ def test_variable_extra_activa_se_queda_en_el_motor(fuentes_con_arrastre, tmp_pa
             {"NIT": ["1"], "RAZON_SOCIAL": ["A"], "TELEFONO": ["3"], "EMAIL": ["x"]}
         )
     }
-    _rutas, union, _longitudes = _separar_columnas_extra(marcos, cfg, _LogNulo())
+    _rutas, union, _longitudes = _separar_columnas_extra(marcos, cfg, LogNulo())
     assert "TELEFONO" in marcos["PADRON"].columns, "el motor la usa: no puede separarse"
     assert union == ["EMAIL"]
 
 
 def test_separacion_desactivable(fuentes_con_arrastre, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(fuentes_con_arrastre, tmp_path, separar_columnas_extra=False)
+        config_cruce(fuentes_con_arrastre, tmp_path, separar_columnas_extra=False)
     )
     assert "TELEFONO" in resultado.correlativa.columns  # viajó por el pipeline
 
@@ -879,11 +829,3 @@ def test_el_colapso_mejora_sin_columnas_de_arrastre(tmp_path: Path) -> None:
     )
     assert len(resultado.correlativa) == 40  # todas las filas restituidas
     assert resultado.correlativa["CIUDAD"].nunique() == 40  # y su columna intacta
-
-
-class _LogNulo:
-    """Logger inerte para ejercitar helpers sin ruido en la salida."""
-
-    def info(self, *_a, **_k): ...
-
-    def warning(self, *_a, **_k): ...

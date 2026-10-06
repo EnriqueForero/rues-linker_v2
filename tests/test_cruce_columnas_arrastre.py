@@ -7,9 +7,11 @@ correlativa intacta y el manifiesto declaraba la unión PLANIFICADA
 
 * fallo ruidoso (``ColumnasArrastreError``, con qué pasó / por qué importa /
   qué hacer) cuando la alineación posicional no cuadra;
-* manifiesto con la lista REAL: ``columnas_arrastre = {adjuntadas, omitidas}``,
-  donde ``omitidas`` solo trae lo que el usuario pidió y ninguna fuente tiene,
-  con el motivo.
+* manifiesto con la lista REAL en los TRES caminos (pandas con separación,
+  pandas sin separación, DuckDB): ``columnas_arrastre = {adjuntadas,
+  omitidas}``, donde ``omitidas`` dice, POR FUENTE, qué columna opcional pidió
+  el usuario y la fuente no tiene (lo calcula el lector una sola vez:
+  ``missing_optional``), más los choques con columnas que produce el motor.
 
 Empresas inventadas; ningún dato real entra al repositorio.
 """
@@ -17,77 +19,33 @@ Empresas inventadas; ningún dato real entra al repositorio.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from apoyo_cruce import LogNulo, config_cruce
 
-from record_linkage import ColumnType, SourceSpec
-from record_linkage.flujo import ConfigCruce, cruce as modulo, ejecutar_cruce
+from record_linkage import SourceSpec
+from record_linkage.flujo import cruce as modulo, ejecutar_cruce
+from record_linkage.flujo.cruce import ColumnaOmitida, ReporteColumnasArrastre
+from record_linkage.ingestion import DuckDBIngestionSettings
 from record_linkage.pipeline.errores import ColumnasArrastreError
-
-
-@pytest.fixture
-def fuentes_con_arrastre(tmp_path: Path) -> list[SourceSpec]:
-    """Dos fuentes con columnas mapeadas que NO participan en la decisión."""
-    a = tmp_path / "padron.csv"
-    a.write_text(
-        "IDENT,NOMBRE_EMPRESA,TEL,CORREO\n"
-        "900111222,ACME COLOMBIA SAS,3001112233,acme@x.co\n"
-        "800333444,BETA LTDA,3009998877,beta@x.co\n"
-        "900555666,GAMA S.A.,3005554433,gama@x.co\n",
-        encoding="utf-8",
-    )
-    b = tmp_path / "clientes.txt"
-    b.write_text(
-        "nit_cliente\trazon\tdepto\n"
-        "9001112221\tACME COLOMBIA S.A.S.\tANTIOQUIA\n"
-        "700999888\tDELTA EU\tBOGOTA\n",
-        encoding="utf-8",
-    )
-    return [
-        SourceSpec(
-            name="PADRON",
-            path=a,
-            column_mapping={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE_EMPRESA"},
-            optional_column_mapping={"TELEFONO": "TEL", "EMAIL": "CORREO"},
-            delimiter=",",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-        SourceSpec(
-            name="CLIENTES",
-            path=b,
-            column_mapping={"NIT": "nit_cliente", "RAZON_SOCIAL": "razon"},
-            optional_column_mapping={"DEPARTAMENTO": "depto"},
-            delimiter="\t",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-    ]
-
-
-def _config(fuentes: list[SourceSpec], tmp_path: Path, **extra: object) -> ConfigCruce:
-    base: dict[str, object] = {
-        "fuentes": fuentes,
-        "workspace": tmp_path / "salida",
-        "confiables": {"PADRON"},
-        "dir_trabajo": tmp_path / "trabajo",
-        "filas_smoke": 0,
-        "exportar_excel": False,
-    }
-    base.update(extra)
-    return ConfigCruce(**base)  # type: ignore[arg-type]
 
 
 def _manifiesto(resultado) -> dict:
     return json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
 
 
-class _LogNulo:
-    """Logger inerte para ejercitar helpers sin ruido en la salida."""
+def _con_opcionales(spec: SourceSpec, **opcionales: str) -> SourceSpec:
+    """Copia del contrato pidiendo columnas opcionales adicionales."""
+    return replace(spec, optional_column_mapping={**spec.optional_column_mapping, **opcionales})
 
-    def info(self, *_a, **_k): ...
 
-    def warning(self, *_a, **_k): ...
+def _ajustes_duckdb(tmp_path: Path) -> DuckDBIngestionSettings:
+    return DuckDBIngestionSettings(
+        memory_limit="256MB", threads=2, temp_directory=tmp_path / "spill"
+    )
 
 
 # ── Camino feliz: el manifiesto dice lo que REALMENTE se adjuntó ──────
@@ -96,7 +54,7 @@ class _LogNulo:
 def test_manifiesto_declara_las_columnas_realmente_adjuntadas(
     fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
 ) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_con_arrastre, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_con_arrastre, tmp_path))
     corr = resultado.correlativa
     assert {"TELEFONO", "EMAIL", "DEPARTAMENTO"} <= set(corr.columns)
 
@@ -109,28 +67,130 @@ def test_manifiesto_declara_las_columnas_realmente_adjuntadas(
     assert set(arrastre["adjuntadas"]) <= set(corr.columns)
 
 
-def test_columna_pedida_que_ninguna_fuente_tiene_queda_en_omitidas_con_motivo(
+def test_columna_pedida_que_la_fuente_no_tiene_queda_en_omitidas_por_fuente(
     fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
 ) -> None:
     """Pedir una columna opcional inexistente no tumba la corrida, pero se DICE."""
     padron, clientes = fuentes_con_arrastre
-    padron_con_sucursal = SourceSpec(
-        name=padron.name,
-        path=padron.path,
-        column_mapping=dict(padron.column_mapping),
-        optional_column_mapping={**padron.optional_column_mapping, "SUCURSAL": "sucursal"},
-        delimiter=padron.delimiter,
-        column_types=dict(padron.column_types),
+    resultado = ejecutar_cruce(
+        config_cruce([_con_opcionales(padron, SUCURSAL="sucursal"), clientes], tmp_path)
     )
-    resultado = ejecutar_cruce(_config([padron_con_sucursal, clientes], tmp_path))
     assert "SUCURSAL" not in resultado.correlativa.columns
+    # El lector ya lo calculó una vez: el informe de ingesta lo expone tal cual.
+    assert resultado.reportes_carga["PADRON"]["missing_optional"] == ["SUCURSAL"]
+    assert resultado.reportes_carga["CLIENTES"]["missing_optional"] == []
 
     arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
     assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
-    assert len(arrastre["omitidas"]) == 1
-    omitida = arrastre["omitidas"][0]
-    assert omitida["columna"] == "SUCURSAL"
-    assert "PADRON" in omitida["motivo"], "el motivo debe decir en qué fuente faltó"
+    assert arrastre["omitidas"] == [
+        {
+            "columna": "SUCURSAL",
+            "fuente": "PADRON",
+            "motivo": "la fuente no tiene la columna 'sucursal' pedida en optional_column_mapping",
+        }
+    ]
+
+
+def test_columna_pedida_en_una_fuente_y_presente_en_otra_se_declara_en_ambas_listas(
+    fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
+) -> None:
+    """DEPARTAMENTO llega desde CLIENTES (adjuntada) pero PADRON no la tiene:
+    para PADRON la petición no se cumplió y eso también se dice."""
+    padron, clientes = fuentes_con_arrastre
+    resultado = ejecutar_cruce(
+        config_cruce([_con_opcionales(padron, DEPARTAMENTO="depto"), clientes], tmp_path)
+    )
+    corr = resultado.correlativa
+    assert corr.loc[corr["SRC"] == "PADRON", "DEPARTAMENTO"].isna().all()
+    assert corr.loc[corr["SRC"] == "CLIENTES", "DEPARTAMENTO"].notna().all()
+
+    arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
+    assert "DEPARTAMENTO" in arrastre["adjuntadas"]
+    assert [(o["columna"], o["fuente"]) for o in arrastre["omitidas"]] == [
+        ("DEPARTAMENTO", "PADRON")
+    ]
+
+
+def test_columna_pedida_con_nombre_del_motor_e_inexistente_no_se_salta(
+    fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
+) -> None:
+    """Pedir ``SRC`` (que el motor produce) en una fuente que no la trae se
+    saltaba en silencio porque el nombre ya estaba en la correlativa."""
+    padron, clientes = fuentes_con_arrastre
+    resultado = ejecutar_cruce(
+        config_cruce([_con_opcionales(padron, SRC="src"), clientes], tmp_path)
+    )
+    assert "SRC" in resultado.correlativa.columns  # la del motor
+    arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
+    assert "SRC" not in arrastre["adjuntadas"]
+    assert [(o["columna"], o["fuente"]) for o in arrastre["omitidas"]] == [("SRC", "PADRON")]
+
+
+# ── Los otros dos caminos también declaran lo real ────────────────────
+
+
+def test_camino_duckdb_declara_adjuntadas_y_omitidas_reales(
+    fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
+) -> None:
+    """Con DuckDB el re-adjunte lo hace ``preservar_payload``; el manifiesto
+    se deriva de la correlativa ENTREGADA, no queda en ``[]``."""
+    padron, clientes = fuentes_con_arrastre
+    resultado = ejecutar_cruce(
+        config_cruce(
+            [_con_opcionales(padron, SUCURSAL="sucursal"), clientes],
+            tmp_path,
+            motor_ingesta="duckdb",
+            duckdb_settings=_ajustes_duckdb(tmp_path),
+        )
+    )
+    corr = resultado.correlativa
+    assert {"TELEFONO", "EMAIL", "DEPARTAMENTO"} <= set(corr.columns)
+    assert "SUCURSAL" not in corr.columns
+    assert resultado.reportes_carga["PADRON"]["engine"] == "duckdb"
+    assert resultado.reportes_carga["PADRON"]["missing_optional"] == ["SUCURSAL"]
+
+    arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
+    assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
+    assert [(o["columna"], o["fuente"]) for o in arrastre["omitidas"]] == [("SUCURSAL", "PADRON")]
+
+
+def test_sin_separar_columnas_extra_el_manifiesto_sigue_siendo_real(
+    fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
+) -> None:
+    padron, clientes = fuentes_con_arrastre
+    resultado = ejecutar_cruce(
+        config_cruce(
+            [_con_opcionales(padron, SUCURSAL="sucursal"), clientes],
+            tmp_path,
+            separar_columnas_extra=False,
+        )
+    )
+    corr = resultado.correlativa
+    assert "TELEFONO" in corr.columns and "SUCURSAL" not in corr.columns
+    arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
+    assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
+    assert [(o["columna"], o["fuente"]) for o in arrastre["omitidas"]] == [("SUCURSAL", "PADRON")]
+
+
+def test_cache_anterior_a_f1_8_se_relee_en_vez_de_callar_las_omitidas(
+    fuentes_con_arrastre: list[SourceSpec], tmp_path: Path
+) -> None:
+    """Una caché escrita antes de F1.8 no trae ``missing_optional``: se vuelve
+    a leer el original (y se reescribe), en vez de declarar ``omitidas = []``."""
+    padron, clientes = fuentes_con_arrastre
+    fuentes = [_con_opcionales(padron, SUCURSAL="sucursal"), clientes]
+    cache = tmp_path / "cache"
+    ejecutar_cruce(config_cruce(fuentes, tmp_path, dir_procesados=cache))
+    (json_padron,) = [r for r in cache.glob("PADRON__*.json")]
+    viejo = json.loads(json_padron.read_text(encoding="utf-8"))
+    assert viejo.pop("missing_optional") == ["SUCURSAL"]
+    json_padron.write_text(json.dumps(viejo), encoding="utf-8")
+
+    resultado = ejecutar_cruce(config_cruce(fuentes, tmp_path, dir_procesados=cache))
+    assert resultado.reportes_carga["PADRON"]["missing_optional"] == ["SUCURSAL"]
+    arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
+    assert [o["columna"] for o in arrastre["omitidas"]] == ["SUCURSAL"]
+    assert "missing_optional" in json.loads(json_padron.read_text(encoding="utf-8"))
 
 
 # ── Alineación que no cuadra: la corrida FALLA ────────────────────────
@@ -151,7 +211,7 @@ def test_parquet_de_arrastre_con_una_fila_de_menos_tumba_la_corrida(
     monkeypatch.setattr(modulo, "_separar_columnas_extra", separar_y_recortar)
 
     with pytest.raises(ColumnasArrastreError) as info:
-        ejecutar_cruce(_config(fuentes_con_arrastre, tmp_path))
+        ejecutar_cruce(config_cruce(fuentes_con_arrastre, tmp_path))
 
     texto = str(info.value)
     assert "Qué pasó" in texto and "Por qué importa" in texto and "Qué hacer" in texto
@@ -170,7 +230,7 @@ def test_total_de_extras_distinto_de_la_correlativa_falla(tmp_path: Path) -> Non
     correlativa = pd.DataFrame({"ORIGINAL_INDEX": [0, 1], "ID_GRUPO": [1, 2]})
     with pytest.raises(ColumnasArrastreError) as info:
         modulo._adjuntar_columnas_extra(
-            correlativa, {"A": ruta}, ["TELEFONO"], {"A": 3}, ["A"], _LogNulo()
+            correlativa, {"A": ruta}, ["TELEFONO"], {"A": 3}, ["A"], LogNulo()
         )
     assert info.value.fuente is None
     assert (info.value.observadas, info.value.esperadas) == (3, 2)
@@ -183,7 +243,20 @@ def test_sin_original_index_no_se_puede_alinear_y_falla(tmp_path: Path) -> None:
     correlativa = pd.DataFrame({"ID_GRUPO": [1]})
     with pytest.raises(ColumnasArrastreError, match="ORIGINAL_INDEX"):
         modulo._adjuntar_columnas_extra(
-            correlativa, {"A": ruta}, ["TELEFONO"], {"A": 1}, ["A"], _LogNulo()
+            correlativa, {"A": ruta}, ["TELEFONO"], {"A": 1}, ["A"], LogNulo()
+        )
+
+
+def test_columna_esperada_que_no_llega_a_la_correlativa_falla_en_vez_de_callarse() -> None:
+    """La regla observada es la misma para los tres caminos: si una columna
+    que la fuente aportó fuera del motor no está en la entrega, no se declara
+    como «omitida»: es un error."""
+    with pytest.raises(ColumnasArrastreError, match="EMAIL"):
+        modulo._reporte_arrastre_observado(
+            columnas_finales=["ID_GRUPO", "TELEFONO"],
+            esperadas=["TELEFONO", "EMAIL"],
+            columnas_motor=["ID_GRUPO"],
+            omitidas_ingesta=(),
         )
 
 
@@ -195,10 +268,9 @@ def test_adjuntar_devuelve_reporte_con_adjuntadas_reales(tmp_path: Path) -> None
     pd.DataFrame({"TELEFONO": ["1", "2"], "EMAIL": ["a", "b"]}).to_parquet(ruta, index=False)
     correlativa = pd.DataFrame({"ORIGINAL_INDEX": [1, 0], "ID_GRUPO": [1, 2]})
     salida, reporte = modulo._adjuntar_columnas_extra(
-        correlativa, {"A": ruta}, ["TELEFONO", "EMAIL"], {"A": 2}, ["A"], _LogNulo()
+        correlativa, {"A": ruta}, ["TELEFONO", "EMAIL"], {"A": 2}, ["A"], LogNulo()
     )
-    assert reporte.adjuntadas == ["TELEFONO", "EMAIL"]
-    assert reporte.omitidas == []
+    assert reporte == ReporteColumnasArrastre(adjuntadas=("TELEFONO", "EMAIL"))
     assert list(salida["TELEFONO"]) == ["2", "1"], "take posicional por ORIGINAL_INDEX"
     assert reporte.como_manifiesto() == {
         "adjuntadas": ["TELEFONO", "EMAIL"],
@@ -214,41 +286,53 @@ def test_choque_con_columna_del_motor_queda_declarado_no_callado(tmp_path: Path)
     pd.DataFrame({"TELEFONO": ["1"], "CONFIANZA": ["x"]}).to_parquet(ruta, index=False)
     correlativa = pd.DataFrame({"ORIGINAL_INDEX": [0], "ID_GRUPO": [1], "CONFIANZA": [0.9]})
     salida, reporte = modulo._adjuntar_columnas_extra(
-        correlativa, {"A": ruta}, ["TELEFONO", "CONFIANZA"], {"A": 1}, ["A"], _LogNulo()
+        correlativa, {"A": ruta}, ["TELEFONO", "CONFIANZA"], {"A": 1}, ["A"], LogNulo()
     )
-    assert reporte.adjuntadas == ["TELEFONO"]
-    assert [o["columna"] for o in reporte.omitidas] == ["CONFIANZA"]
-    assert "motor" in reporte.omitidas[0]["motivo"]
+    assert reporte.adjuntadas == ("TELEFONO",)
+    assert reporte.omitidas == (
+        ColumnaOmitida(columna="CONFIANZA", motivo=modulo.MOTIVO_CHOQUE_CON_MOTOR),
+    )
+    assert "motor" in reporte.omitidas[0].motivo
     assert salida.loc[0, "CONFIANZA"] == 0.9, "la columna del motor no se pisa"
+    assert reporte.como_manifiesto()["omitidas"] == [
+        {"columna": "CONFIANZA", "fuente": None, "motivo": modulo.MOTIVO_CHOQUE_CON_MOTOR}
+    ]
 
 
-def test_columnas_solicitadas_que_no_llegaron_quedan_en_omitidas(tmp_path: Path) -> None:
+def test_las_omitidas_de_ingesta_viajan_al_reporte_sin_recomputarse(tmp_path: Path) -> None:
     ruta = tmp_path / "A.parquet"
     pd.DataFrame({"TELEFONO": ["1"]}).to_parquet(ruta, index=False)
     correlativa = pd.DataFrame({"ORIGINAL_INDEX": [0], "ID_GRUPO": [1]})
+    de_ingesta = (ColumnaOmitida("SUCURSAL", "la fuente no la tiene", fuente="A"),)
     _salida, reporte = modulo._adjuntar_columnas_extra(
         correlativa,
         {"A": ruta},
         ["TELEFONO"],
         {"A": 1},
         ["A"],
-        _LogNulo(),
-        solicitadas={"SUCURSAL": ["A"]},
+        LogNulo(),
+        omitidas_ingesta=de_ingesta,
     )
-    assert reporte.adjuntadas == ["TELEFONO"]
-    assert reporte.omitidas == [
-        {
-            "columna": "SUCURSAL",
-            "motivo": "ninguna fuente la trae (pedida en optional_column_mapping de: A)",
-        }
-    ]
+    assert reporte == ReporteColumnasArrastre(adjuntadas=("TELEFONO",), omitidas=de_ingesta)
 
 
-def test_sin_parquets_derramados_el_reporte_sigue_siendo_real(tmp_path: Path) -> None:
+def test_sin_parquets_derramados_el_reporte_sigue_siendo_real() -> None:
     correlativa = pd.DataFrame({"ORIGINAL_INDEX": [0], "ID_GRUPO": [1]})
+    de_ingesta = (ColumnaOmitida("SUCURSAL", "la fuente no la tiene", fuente="A"),)
     salida, reporte = modulo._adjuntar_columnas_extra(
-        correlativa, {}, [], {"A": 1}, ["A"], _LogNulo(), solicitadas={"SUCURSAL": ["A"]}
+        correlativa, {}, [], {"A": 1}, ["A"], LogNulo(), omitidas_ingesta=de_ingesta
     )
     assert salida is correlativa
-    assert reporte.adjuntadas == []
-    assert [o["columna"] for o in reporte.omitidas] == ["SUCURSAL"]
+    assert reporte == ReporteColumnasArrastre(omitidas=de_ingesta)
+
+
+def test_el_reporte_es_inmutable_y_sus_motivos_son_los_documentados() -> None:
+    reporte = ReporteColumnasArrastre(adjuntadas=("A",))
+    with pytest.raises(AttributeError):
+        reporte.adjuntadas = ("B",)  # type: ignore[misc]
+    omitida = ColumnaOmitida("X", modulo.MOTIVO_CHOQUE_CON_MOTOR)
+    with pytest.raises(AttributeError):
+        omitida.motivo = "otro"  # type: ignore[misc]
+    doc = ReporteColumnasArrastre.__doc__ or ""
+    assert "EXACTAMENTE dos" in doc and "MOTIVO_CHOQUE_CON_MOTOR" in doc
+    assert "optional_column_mapping" in doc
