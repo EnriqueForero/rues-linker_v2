@@ -165,6 +165,18 @@ class GoldenSinTiparError(ErrorPipeline):
     """
 
 
+class TiemposPorFaseError(ErrorPipeline):
+    """``metrics["phase_times"]`` no tiene la forma que el orquestador produce.
+
+    Lo levanta :func:`record_linkage.reporting._fases.tiempos_por_fase` cuando
+    el mapeo no lo es, una fase no tiene etiqueta (una fase nueva, o un
+    productor que sigue usando ``load_validate``/``scoring_time``) o un valor
+    no es numérico. Es un defecto del productor de métricas, no un dato
+    ausente: los consumidores de L6 lo relanzan en vez de tragarlo con
+    ``except Exception`` y seguir sin tiempos.
+    """
+
+
 class EstrategiaFallo(ErrorPipeline):
     """Una estrategia de L6 lanzó mientras generaba sus artefactos.
 

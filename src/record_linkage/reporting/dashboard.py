@@ -860,11 +860,10 @@ class ExecutiveDashboard:
         # Agregar línea de tiempo total
         ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
         if total > 0:
-            total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
             ax.text(
                 total,
                 len(phase_series) - 0.5,
-                f"Total: {total_str}",
+                f"Total: {formatear_segundos(total)}",
                 ha="right",
                 va="center",
                 fontsize=9,

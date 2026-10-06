@@ -291,6 +291,52 @@ def test_performance_analyzer_extrae_metricas_de_tiempo():
     )  # tolerar variantes
 
 
+def test_performance_analyzer_lee_los_tiempos_por_fase_del_orquestador():
+    """F1.6: las claves son las de ``Phase`` (``metrics["phase_times"]``), leídas
+    con ``reporting._fases.tiempos_por_fase``; las viejas (``scoring_time``…)
+    nadie las producía y el analizador leía ceros."""
+    pa = PerformanceAnalyzer()
+    resultados = {
+        "metrics": {
+            "execution_time": 100.0,
+            "phase_times": {"L2_lsh_candidates": 40.0, "L5_golden": 55.0, "L1_prep": 5.0},
+            "scoring_time": 99.0,  # clave vieja: no se lee
+        }
+    }
+    analisis = pa.analyze_run(resultados, run_name="fases")
+    tiempos = analisis["time_metrics"]
+    assert tiempos["total_time"] == 100.0
+    assert tiempos["L2_lsh_candidates_time"] == 40.0
+    assert tiempos["L5_golden_time_pct"] == pytest.approx(55.0)
+    assert "scoring_time" not in tiempos and "scoring_time_pct" not in tiempos
+
+    cuellos = analisis["bottlenecks"]
+    assert any(c.startswith("L2 · Candidatos (LSH): 40.0%") for c in cuellos), cuellos
+    assert any(c.startswith("L5 · Registro consolidado: 55.0%") for c in cuellos), cuellos
+    assert any("Golden Records toma más del 50%" in c for c in cuellos), cuellos
+    recomendaciones = analisis["recommendations"]
+    assert any("LSH" in r for r in recomendaciones), recomendaciones
+    assert any("golden records" in r for r in recomendaciones), recomendaciones
+
+
+def test_performance_analyzer_sin_execution_time_suma_las_fases_medidas():
+    pa = PerformanceAnalyzer()
+    analisis = pa.analyze_run(
+        {"metrics": {"phase_times": {"L1_prep": 2.0, "L3_scoring": 6.0}}}, run_name="suma"
+    )
+    assert analisis["time_metrics"]["total_time"] == 8.0
+    assert analisis["time_metrics"]["L3_scoring_time_pct"] == pytest.approx(75.0)
+
+
+def test_performance_analyzer_falla_con_claves_de_fase_que_nadie_produce():
+    """Un phase_times con nombres viejos es un defecto del productor, no un cero."""
+    from record_linkage.pipeline.errores import TiemposPorFaseError
+
+    pa = PerformanceAnalyzer()
+    with pytest.raises(TiemposPorFaseError, match="scoring_time"):
+        pa.analyze_run({"metrics": {"phase_times": {"scoring_time": 1.0}}}, run_name="viejo")
+
+
 def test_performance_analyzer_set_baseline_funciona():
     """set_baseline guarda la corrida actual como referencia."""
     pa = PerformanceAnalyzer()

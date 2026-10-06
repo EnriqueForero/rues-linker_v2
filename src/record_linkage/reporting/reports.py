@@ -25,7 +25,7 @@ from typing import Any
 
 import pandas as pd
 
-from ..pipeline.errores import mensaje_accionable
+from ..pipeline.errores import ErrorPipeline, mensaje_accionable
 from ..utils.logger import CustomLogger
 from ._sqlite import (
     open_readonly_sqlite,
@@ -463,6 +463,10 @@ class ReportGenerator:
                     self._omitir(report_name, "el generador no devolvió filas")
                     skipped += 1
 
+            except ErrorPipeline:
+                # Un defecto del pipeline (phase_times malformado, muestreo) no
+                # es «un reporte que no salió»: sube y la estrategia lo declara.
+                raise
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ {report_name}: Error - {e!s}", exc_info=True)

@@ -452,6 +452,11 @@ class DataVisualizer:
                     self.omitidos.append((viz_config["filename"], "la función no devolvió figura"))
                     skipped += 1
 
+            except ErrorPipeline:
+                # Un defecto del pipeline (phase_times malformado) no es «una
+                # figura que no salió»: sube y la estrategia lo declara.
+                plt.close("all")
+                raise
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ Error en {viz_config['filename']}: {e!s}")
@@ -1624,6 +1629,8 @@ Grupos grandes (>20): {(group_sizes > 20).sum():,} ({(group_sizes > 20).sum() / 
             plt.tight_layout()
             return fig
 
+        except ErrorPipeline:
+            raise
         except Exception as e:
             self.logger.error(f"Error en plot_performance_timeline: {e!s}")
             return None

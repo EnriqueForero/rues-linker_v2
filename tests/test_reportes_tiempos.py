@@ -36,6 +36,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from record_linkage.pipeline.errores import ErrorPipeline, TiemposPorFaseError
 from record_linkage.reporting._fases import (
     ETIQUETAS_FASE,
     MENSAJE_SIN_TIEMPOS,
@@ -112,13 +113,20 @@ def test_tiempos_por_fase_sin_tiempos_no_inventa_nada(metrics: dict[str, Any]) -
 
 
 def test_tiempos_por_fase_rechaza_fase_desconocida() -> None:
-    with pytest.raises(ValueError, match="ETIQUETAS_FASE"):
+    with pytest.raises(TiemposPorFaseError, match="ETIQUETAS_FASE") as info:
         tiempos_por_fase(_metricas({"L1_prep": 1.0, "load_validate": 2.0}))
+    assert isinstance(info.value, ErrorPipeline)
+    assert "Qué hacer" in str(info.value)
 
 
 def test_tiempos_por_fase_rechaza_valor_no_numerico() -> None:
-    with pytest.raises(TypeError, match="L2_lsh_candidates"):
+    with pytest.raises(TiemposPorFaseError, match="L2_lsh_candidates"):
         tiempos_por_fase(_metricas({"L2_lsh_candidates": "40.8"}))
+
+
+def test_tiempos_por_fase_rechaza_lo_que_no_es_un_mapeo() -> None:
+    with pytest.raises(TiemposPorFaseError, match="mapeo"):
+        tiempos_por_fase(_metricas([("L1_prep", 1.0)]))  # type: ignore[arg-type]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +218,24 @@ def test_reporte_metricas_performance_se_omite_sin_tiempos() -> None:
     assert "metricas_performance" not in generador.generate_all_reports()
 
 
+def test_generate_all_reports_relanza_tiempos_malformados() -> None:
+    """Un phase_times con claves viejas es un defecto del productor: el
+    `except Exception` de generate_all_reports no lo vuelve «reporte omitido»
+    (ni, como antes de F1.4, un Excel con «Error» dentro): sube."""
+    from record_linkage.reporting.reports import ReportGenerator
+
+    correlativa, golden = _marcos_vacios()
+    generador = ReportGenerator(
+        correlativa, golden, metrics=_metricas({"load_validate": 2.0}), config={}
+    )
+    with pytest.raises(TiemposPorFaseError, match="load_validate"):
+        generador.generate_all_reports()
+    # Las omisiones legítimas (marcos vacíos → «datos insuficientes») sí quedan;
+    # el fallo de tiempos no se registra como una más.
+    assert all("metricas_performance" not in archivo for archivo, _ in generador.omitidos)
+    assert all("TiemposPorFaseError" not in motivo for _, motivo in generador.omitidos)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Visualizador y suite
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +279,21 @@ def test_plot_performance_timeline_sin_tiempos_se_omite(tmp_path: Path, caplog) 
     assert viz.plot_performance_timeline() is None
     archivos = viz.save_all_visualizations(str(tmp_path))
     assert "performance_timeline.png" not in archivos
+    assert not (tmp_path / "performance_timeline.png").exists()
+
+
+def test_save_all_visualizations_relanza_tiempos_malformados(tmp_path: Path) -> None:
+    _exigir_matplotlib()
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    from record_linkage.reporting.visualizer import DataVisualizer
+
+    correlativa, golden = _marcos_vacios()
+    viz = DataVisualizer(correlativa, golden, metrics=_metricas({"load_validate": 2.0}))
+    with pytest.raises(TiemposPorFaseError, match="load_validate"):
+        viz.save_all_visualizations(str(tmp_path))
     assert not (tmp_path / "performance_timeline.png").exists()
 
 

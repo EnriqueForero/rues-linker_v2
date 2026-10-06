@@ -834,7 +834,7 @@ class EnhancedReportingSuite:
             ax.text(
                 total,
                 len(phase_series) - 0.5,
-                f"Total: {total:.1f}s",
+                f"Total: {formatear_segundos(total)}",
                 ha="right",
                 va="center",
                 fontsize=9,
