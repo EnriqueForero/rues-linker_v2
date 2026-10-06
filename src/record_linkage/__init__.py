@@ -11,11 +11,10 @@ Componentes principales:
     - processing:    Limpieza de texto y NIT
     - engine:        Motor de record linkage (LSH + scoring + clustering)
     - golden:        Generación de golden records
-    - evaluation:    Ground truth y métricas de calidad
+    - evaluation:    banco, conformidad, métricas y Optuna (OrchestratorOptimizer)
     - reporting:     Reportes, visualizaciones, dashboards
     - pipeline:      Orchestrator de producción
     - deduplication: Modo deduplicación específico
-    - optimization:  Optuna y optimización de hiperparámetros
     - exporters:     Exportación multi-formato
 
 La versión es única y vive en `pyproject.toml`; aquí se lee dinámicamente
