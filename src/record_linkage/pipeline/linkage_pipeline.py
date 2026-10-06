@@ -766,6 +766,7 @@ class RecordLinkagePipeline:
             correlative_initial,
             strict_mode=False,
             verbose=True,
+            prioridad_fuentes=source_priority,
         )
 
         # Actualizar resultados en memoria

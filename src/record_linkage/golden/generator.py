@@ -29,6 +29,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from .columnas_finales import ReporteColumnasFinales, garantizar_columnas_finales
+from .metricas import metricas_de_grupo
 from .selector import AdvancedValueSelector
 from .utils import MemoryMonitor, SafeSQLiteConnection
 
@@ -859,29 +860,13 @@ class GoldenRecordGeneratorV7:
         golden_names = self.value_selector.select_best_name_batch(batch_df, "ID_GRUPO")
         golden_nits = self.value_selector.select_best_nit_batch(batch_df, "ID_GRUPO")
 
-        # 3. CALCULAR MÉTRICAS (vectorizado)
-        # CORRECCIÓN: Asegurarse de que las métricas también usen la columna original.
-        name_col_original = "RAZON_SOCIAL"
-        nit_col_ok = "NIT_OK" if "NIT_OK" in batch_df.columns else "NIT"
-
-        # PRIMARY_SOURCE vectorizado: la fuente de menor prioridad por grupo.
-        # v2.4.0: antes era un lambda min(key=...) por grupo. Ahora se precomputa
-        # la prioridad como columna y se toma, por grupo, la fila de prioridad
-        # mínima (idxmin). Equivalente exacto.
-        bm = batch_df[["ID_GRUPO", "SRC"]].copy()
-        bm["__prio"] = bm["SRC"].map(self.source_priority_map).fillna(999)
-        bm = bm.sort_values(["ID_GRUPO", "__prio"], kind="stable")
-        primary_source = bm.drop_duplicates("ID_GRUPO", keep="first").set_index("ID_GRUPO")["SRC"]
-
-        group_metrics = batch_df.groupby("ID_GRUPO").agg(
-            SOURCES_LIST=("SRC", lambda s: "|".join(sorted(s.unique()))),
-            SOURCES_COUNT=("SRC", "nunique"),
-            RECORD_COUNT=("SRC", "size"),
-            # Se calcula la variación sobre la columna original.
-            NAME_VARIATIONS=(name_col_original, "nunique"),
-            NIT_VARIATIONS=(nit_col_ok, "nunique"),
-        )
-        group_metrics["PRIMARY_SOURCE"] = primary_source
+        # 3. CALCULAR MÉTRICAS (vectorizado) + paso 1.5 (CONFIANZA).
+        # F1.1: la regla vive UNA vez en golden.metricas.metricas_de_grupo
+        # (SOURCES_LIST, SOURCES_COUNT, RECORD_COUNT, NAME_VARIATIONS sobre
+        # RAZON_SOCIAL original, NIT_VARIATIONS sobre NIT_OK/NIT,
+        # PRIMARY_SOURCE por prioridad, CONFIANZA ALTA/MEDIA/BAJA); la
+        # consolidación por NIT la reutiliza para los grupos fusionados.
+        group_metrics = metricas_de_grupo(batch_df, self.source_priority_map)
 
         # 5. CONSTRUIR GOLDEN RECORDS
         golden_df = pd.DataFrame(
@@ -892,23 +877,6 @@ class GoldenRecordGeneratorV7:
             }
         )
         golden_df = golden_df.merge(group_metrics, on="ID_GRUPO", how="left")
-
-        # ── Paso 1.5: Confianza (VECTORIZADO con np.select — v2.4.0) ──
-        # Reproduce _calcular_confianza sin apply(axis=1):
-        #   ALTA  — NIT único (NIT_VARIATIONS==1) y ≥2 fuentes
-        #   MEDIA — ≤2 NITs y grupo pequeño (≤5 miembros)
-        #   BAJA  — resto
-        nit_vars = golden_df["NIT_VARIATIONS"].fillna(1)
-        fuentes = golden_df["SOURCES_COUNT"].fillna(1)
-        miembros = golden_df["RECORD_COUNT"].fillna(1)
-        golden_df["CONFIANZA"] = np.select(
-            [
-                (nit_vars == 1) & (fuentes >= 2),
-                (nit_vars <= 2) & (miembros <= 5),
-            ],
-            ["ALTA", "MEDIA"],
-            default="BAJA",
-        )
 
         # 6. CONSTRUIR TABLA CORRELATIVA
         # Eliminar columnas finales anteriores si existen
@@ -1165,7 +1133,14 @@ class GoldenRecordGeneratorV7:
             )
 
     def _add_quality_metrics(self, conn):
-        """Añade métricas de calidad a golden records."""
+        """Añade CONFIDENCE_SCORE y REQUIRES_REVIEW a golden_records dentro de SQLite.
+
+        Es la MISMA fórmula que ``golden.metricas.metricas_de_calidad`` (pandas),
+        que usa la consolidación por NIT para los grupos fusionados. Se mantiene
+        en SQL porque aquí el golden aún no está en memoria. Si cambia una,
+        cambia la otra: ``test_paridad_sql_pandas_metricas_de_calidad`` compara
+        ambas valor a valor, incluido el redondeo de ``ROUND(…, 4)``.
+        """
         conn.execute("""
             UPDATE golden_records SET
                 "CONFIDENCE_SCORE" = ROUND(

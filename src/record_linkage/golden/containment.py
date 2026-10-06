@@ -14,6 +14,7 @@ directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -22,8 +23,22 @@ from rapidfuzz import fuzz
 from rapidfuzz.distance import Indel
 from tqdm import tqdm
 
+from ..pipeline.errores import mensaje_accionable
 from ..processing.text import TextProcessor
 from ..utils.output import safe_print as print
+from .metricas import (
+    COLUMNAS_METRICAS_CALIDAD,
+    mapa_prioridad,
+    metricas_de_calidad,
+    metricas_de_grupo,
+)
+
+#: Campos finales del golden que la correlativa lleva re-adjuntados por grupo,
+#: con la columna de la correlativa que los suple si no vienen.
+_CAMPOS_FINALES: tuple[tuple[str, str], ...] = (
+    ("NIT_FINAL", "NIT"),
+    ("RAZON_SOCIAL_FINAL", "RAZON_SOCIAL"),
+)
 
 
 def extract_primary_brand_name(name: str) -> str:
@@ -197,11 +212,30 @@ def consolidate_groups_by_nit_balanced(
     strict_mode: bool = False,
     verbose: bool = True,
     copiar_correlativa: bool = True,
+    prioridad_fuentes: Sequence[str] | Mapping[str, int] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Consolida grupos con el mismo NIT validando similitud de nombres.
 
     VERSIÓN 4 CORREGIDA - Sin mutación de estado, usa TextProcessor internamente.
+
+    F1.1: el golden de salida conserva EXACTAMENTE las columnas y dtypes del
+    golden de entrada. Cada grupo fusionado se reconstruye así:
+
+    * métricas (``SOURCES_LIST``, ``SOURCES_COUNT``, ``RECORD_COUNT``,
+      ``NAME_VARIATIONS``, ``NIT_VARIATIONS``, ``PRIMARY_SOURCE``,
+      ``CONFIANZA``, ``CONFIDENCE_SCORE``, ``REQUIRES_REVIEW``): recalculadas
+      sobre su subconjunto de la correlativa con la MISMA regla del camino
+      normal (``golden.metricas``), por eso hace falta ``prioridad_fuentes``;
+    * ``NIT_FINAL`` y ``RAZON_SOCIAL_FINAL``: regla histórica sin cambios —
+      primer valor no nulo del subconjunto en el orden de la correlativa
+      (``groupby().first()``); unificarla con el selector es decisión de F2;
+    * el resto (``ID_GRUPO``, ``CREATED_AT`` y cualquier columna propia del
+      golden): heredado de la fila del grupo raíz, que es el que sobrevive.
+
+    Antes (hasta 0.22.x) el grupo fusionado era ``groupby().first()`` de la
+    correlativa completa: el golden absorbía sus 27 columnas y las métricas
+    quedaban en NaN (hecho medido en el banco de 30.486).
 
     Args:
         golden_df: DataFrame de golden records
@@ -211,10 +245,31 @@ def consolidate_groups_by_nit_balanced(
         copiar_correlativa: Si True conserva la entrada. El orquestador puede
             pasar False cuando transfiere su propiedad para evitar una copia
             completa de la tabla correlativa.
+        prioridad_fuentes: lista de fuentes en orden de prioridad (la misma
+            que recibe ``GoldenRecordGeneratorV7``) o mapeo ``{fuente: rango}``
+            con menor = gana; decide ``PRIMARY_SOURCE`` del grupo fusionado.
+            Obligatoria: sin ella la métrica no es reproducible.
 
     Returns:
         Tuple[golden_df_actualizado, correlative_df_actualizado]
+
+    Raises:
+        ValueError: si falta ``prioridad_fuentes`` o la invariante de unicidad
+            de ``ID_GRUPO`` está rota.
+        KeyError: si faltan columnas requeridas en golden o correlativa. Toda
+            validación ocurre ANTES de la primera mutación de la correlativa.
     """
+    if prioridad_fuentes is None:
+        raise ValueError(
+            mensaje_accionable(
+                "consolidate_groups_by_nit_balanced se llamó sin prioridad_fuentes.",
+                "PRIMARY_SOURCE de cada grupo fusionado se decide con esa prioridad; "
+                "sin ella la métrica quedaría nula o inventada.",
+                "pase la misma lista de fuentes que recibe GoldenRecordGeneratorV7 "
+                "(p. ej. las claves de source_quality_weights del perfil).",
+            )
+        )
+    rangos_fuentes = mapa_prioridad(prioridad_fuentes)
     required_golden = {"ID_GRUPO", "NIT_FINAL", "RAZON_SOCIAL_FINAL"}
     missing_golden = sorted(required_golden.difference(golden_df.columns))
     if missing_golden:
@@ -398,6 +453,23 @@ def consolidate_groups_by_nit_balanced(
                 print(f"         '{ex['Nombre_1']}'")
                 print(f"         '{ex['Nombre_2']}'")
 
+    # Contrato de la correlativa para recalcular las métricas: se verifica
+    # ANTES de la primera mutación, para que con ``copiar_correlativa=False``
+    # un fallo deje la entrada intacta.
+    faltan_correl = [col for col in ("SRC", "RAZON_SOCIAL") if col not in correlative_df.columns]
+    if "NIT_OK" not in correlative_df.columns and "NIT" not in correlative_df.columns:
+        faltan_correl.append("NIT (o NIT_OK)")
+    if faltan_correl:
+        raise KeyError(
+            mensaje_accionable(
+                f"hay {len(final_merge_map)} fusiones por NIT pero la correlativa no trae "
+                f"{faltan_correl}.",
+                "sin esas columnas no se pueden recalcular las métricas del grupo fusionado "
+                "y el golden saldría con métricas nulas.",
+                "pase la correlativa completa que produce GoldenRecordGeneratorV7.",
+            )
+        )
+
     # El llamador tradicional conserva semántica no mutante. El orquestador
     # puede transferir la propiedad y evitar esta copia del frame completo.
     if copiar_correlativa:
@@ -418,13 +490,8 @@ def consolidate_groups_by_nit_balanced(
     if verbose:
         print(f"\n   🔄 Recalculando golden records para {len(affected_ids)} grupos...")
 
-    new_golden = df_sub.groupby("ID_GRUPO").first().reset_index()
+    new_golden = _reconstruir_golden_fusionado(golden_df, df_sub, rangos_fuentes)
     del df_sub
-
-    if "NIT_FINAL" not in new_golden.columns and "NIT" in new_golden.columns:
-        new_golden["NIT_FINAL"] = new_golden["NIT"]
-    if "RAZON_SOCIAL_FINAL" not in new_golden.columns and "RAZON_SOCIAL" in new_golden.columns:
-        new_golden["RAZON_SOCIAL_FINAL"] = new_golden["RAZON_SOCIAL"]
 
     # Construcción por columnas: acota el pico a una columna en vez de
     # materializar el filtro y después otra copia completa en pd.concat.
@@ -495,38 +562,113 @@ def consolidate_groups_by_nit_balanced(
     return final_golden, final_correlative
 
 
+def _reconstruir_golden_fusionado(
+    golden_df: pd.DataFrame,
+    df_sub: pd.DataFrame,
+    rangos_fuentes: Mapping[str, int],
+) -> pd.DataFrame:
+    """Una fila de golden por grupo fusionado, con las columnas de ``golden_df``.
+
+    ``df_sub`` es el subconjunto de la correlativa de los grupos afectados, ya
+    con ``ID_GRUPO`` remapeado a la raíz de cada fusión. Ver la regla por
+    columna en :func:`consolidate_groups_by_nit_balanced`.
+    """
+    metricas = metricas_de_grupo(df_sub, rangos_fuentes)
+    raices = metricas.index
+
+    finales: dict[str, pd.Series] = {}
+    agrupado = df_sub.groupby("ID_GRUPO")
+    for col, alterna in _CAMPOS_FINALES:
+        origen = col if col in df_sub.columns else alterna
+        if origen not in df_sub.columns:
+            raise KeyError(
+                mensaje_accionable(
+                    f"la correlativa no trae ni {col} ni {alterna}.",
+                    f"el golden necesita {col} para cada grupo fusionado.",
+                    "pase la correlativa completa que produce GoldenRecordGeneratorV7.",
+                )
+            )
+        finales[col] = agrupado[origen].first()
+    del agrupado
+
+    en_golden = golden_df["ID_GRUPO"].isin(raices)
+    heredado = golden_df.loc[en_golden].set_index("ID_GRUPO")
+    if len(heredado) != len(raices):
+        raise ValueError(
+            mensaje_accionable(
+                "una raíz de fusión no tiene fila en el golden de entrada.",
+                "el grupo fusionado no tendría de dónde heredar sus campos no recalculados.",
+                "las raíces del Union-Find deben ser ID_GRUPO del golden; revise final_merge_map.",
+            )
+        )
+    heredado = heredado.reindex(raices)
+    del en_golden
+
+    calidad = metricas_de_calidad(
+        pd.DataFrame({"NIT_FINAL": finales["NIT_FINAL"]}, index=raices).join(metricas)
+    )
+
+    columnas: dict[str, pd.Series] = {}
+    for col in golden_df.columns:
+        if col == "ID_GRUPO":
+            columnas[col] = pd.Series(raices.to_numpy(), index=raices, name=col)
+        elif col in metricas.columns:
+            columnas[col] = metricas[col]
+        elif col in finales:
+            columnas[col] = finales[col]
+        elif col in COLUMNAS_METRICAS_CALIDAD:
+            columnas[col] = calidad[col]
+        else:
+            columnas[col] = heredado[col]
+
+    nuevo = pd.DataFrame(columnas, index=raices).reset_index(drop=True)
+    # Mismo dtype que el golden de entrada: el pd.concat posterior no debe
+    # ascender enteros a float ni texto Arrow a object.
+    for col in golden_df.columns:
+        if nuevo[col].dtype != golden_df[col].dtype:
+            nuevo[col] = nuevo[col].astype(golden_df[col].dtype)
+    return nuevo
+
+
 def _concat_filtrado_por_columnas(
     golden_df: pd.DataFrame,
     new_golden: pd.DataFrame,
     affected_ids: set[Any],
 ) -> pd.DataFrame:
-    """Equivalente acotado en memoria al filtro seguido de ``pd.concat``."""
-    keep_pos = np.flatnonzero(~golden_df["ID_GRUPO"].isin(affected_ids).to_numpy())
-    n_arriba = keep_pos.size
-    n_abajo = len(new_golden)
+    """Equivalente acotado en memoria al filtro seguido de ``pd.concat``.
 
+    Solo conserva las columnas de ``golden_df`` (F1.1): una columna que
+    ``new_golden`` traiga de más se ignora, y una que le falte es error, para
+    que ninguna fila del golden salga con NaN ni con dtype ascendido.
+    """
     columnas = list(golden_df.columns)
-    columnas += [col for col in new_golden.columns if col not in golden_df.columns]
-    indice_total = pd.RangeIndex(n_arriba + n_abajo)
+    faltantes = [col for col in columnas if col not in new_golden.columns]
+    if faltantes:
+        raise ValueError(
+            mensaje_accionable(
+                f"a los grupos fusionados les faltan las columnas {faltantes} del golden.",
+                "concatenarlos rellenaría esas columnas con NaN y ascendería su dtype.",
+                "reconstruya cada grupo fusionado con todas las columnas del golden "
+                "(_reconstruir_golden_fusionado).",
+            )
+        )
+    keep_pos = np.flatnonzero(~golden_df["ID_GRUPO"].isin(affected_ids).to_numpy())
 
     piezas: dict[str, pd.Series] = {}
     for col in columnas:
-        en_golden = col in golden_df.columns
-        en_nuevo = col in new_golden.columns
-        if en_golden and en_nuevo:
-            arriba = pd.Series(golden_df[col].array.take(keep_pos), name=col)
-            abajo = new_golden[col].reset_index(drop=True)
-            piezas[col] = pd.concat([arriba, abajo], ignore_index=True)
-            del arriba, abajo
-        elif en_golden:
-            arriba = pd.Series(golden_df[col].array.take(keep_pos), name=col)
-            piezas[col] = arriba.reindex(indice_total)
-            del arriba
-        else:
-            abajo = new_golden[col].reset_index(drop=True)
-            abajo.index = pd.RangeIndex(n_arriba, n_arriba + n_abajo)
-            piezas[col] = abajo.reindex(indice_total)
-            del abajo
+        arriba = pd.Series(golden_df[col].array.take(keep_pos), name=col)
+        abajo = new_golden[col].reset_index(drop=True)
+        piezas[col] = pd.concat([arriba, abajo], ignore_index=True)
+        del arriba, abajo
+        if piezas[col].dtype != golden_df[col].dtype:
+            raise ValueError(
+                mensaje_accionable(
+                    f"la columna {col} cambió de dtype al consolidar "
+                    f"({golden_df[col].dtype} → {piezas[col].dtype}).",
+                    "el golden consolidado debe leerse igual que el del generador.",
+                    "convierta la columna de los grupos fusionados al dtype del golden de entrada.",
+                )
+            )
 
     resultado = pd.DataFrame(piezas)
     piezas.clear()
