@@ -53,6 +53,10 @@ from .linkage_pipeline import RecordLinkagePipeline
 from .state_manager import StateManager
 from .storage import HybridStorageManager
 
+# Centinela para distinguir «clave ausente» de «clave con valor None» en la
+# configuración al restaurarla tras un L6 postprocesado.
+_AUSENTE: Any = object()
+
 
 class Orchestrator:
     """
@@ -703,16 +707,28 @@ class Orchestrator:
         Returns:
             Los artefactos generados por L6.
         """
-        self.config["reporting_use_checkpoints"] = False
-        self.state.invalidate_from(Phase.L6_REPORTING)
-        prev_hash = self.state.get_prev_hash(Phase.L6_REPORTING)
-        report_files, _ = self._exec_phase(
-            Phase.L6_REPORTING,
-            self._run_L6,
-            prev_hash,
-            results_data,
-            meta_extra={"postprocesado": list(postprocesado)},
-        )
+        # La bandera solo vive mientras corre L6: ``fingerprint_config`` hashea
+        # toda la configuración, así que dejarla en ``self.config`` cambiaría la
+        # huella de L1…L5 y un ``run()``/``estimate()`` posterior en el mismo
+        # Orchestrator daría la caché por inválida y re-ejecutaría todo.
+        clave = "reporting_use_checkpoints"
+        valor_previo = self.config.get(clave, _AUSENTE)
+        self.config[clave] = False
+        try:
+            self.state.invalidate_from(Phase.L6_REPORTING)
+            prev_hash = self.state.get_prev_hash(Phase.L6_REPORTING)
+            report_files, _ = self._exec_phase(
+                Phase.L6_REPORTING,
+                self._run_L6,
+                prev_hash,
+                results_data,
+                meta_extra={"postprocesado": list(postprocesado)},
+            )
+        finally:
+            if valor_previo is _AUSENTE:
+                self.config.pop(clave, None)
+            else:
+                self.config[clave] = valor_previo
         return report_files
 
     def estimate(self, from_phase: Phase = None) -> dict[str, Any]:

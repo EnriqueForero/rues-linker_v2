@@ -27,7 +27,7 @@ from record_linkage.api import _collapse_exact_sources, link
 from record_linkage.config.profiles import crear_config_orchestrator
 from record_linkage.deduplication.auto import deduplicate_auto
 from record_linkage.pipeline.errores import ColapsoExactoError, CruceSinFuenteError
-from record_linkage.pipeline.orchestrator import Orchestrator
+from record_linkage.pipeline.orchestrator import PHASES_ORDER, Orchestrator, Phase
 
 
 @contextlib.contextmanager
@@ -142,6 +142,67 @@ def test_export_reports_queda_registrado_en_manifest(tmp_path: Path) -> None:
     assert registro["meta"]["duration"] > 0
     assert registro["meta"]["postprocesado"] == ["export_reports"]
     assert {Path(a["path"]).name for a in registro["artifacts"]} == {p.name for p in archivos}
+
+
+def test_export_reports_no_deja_rastro_en_config_ni_tira_la_cache(tmp_path: Path) -> None:
+    """``ejecutar_reporting_postprocesado`` desactiva ``reporting_use_checkpoints``
+    mientras corre L6; si la bandera quedara en ``self.config``, la huella de
+    configuración cambiaría y ``estimate()`` marcaría L1…L5 como pendientes:
+    un ``run()`` posterior en el mismo Orchestrator re-ejecutaría todo sin
+    decirlo (regresión de la ronda 3)."""
+    fuente = pd.DataFrame(
+        {
+            "NIT": ["900111111", "900222222"],
+            "RAZON_SOCIAL": ["ALFA SAS", "BETA SAS"],
+        }
+    )
+    work_dir = tmp_path / "cache"
+    config = crear_config_orchestrator(perfil="prueba_rapida", workspace=str(work_dir))
+    orquestador = Orchestrator(config, {"RUES": fuente}, str(work_dir))
+    assert "reporting_use_checkpoints" not in orquestador.config, "premisa del perfil"
+    with _silencio():
+        orquestador.run(skip_reporting=True)
+    sello_l5 = _manifiesto(work_dir)["L5_golden"]["timestamp"]
+    fases_l1_l5 = {f.value for f in PHASES_ORDER if f is not Phase.L6_REPORTING}
+    assert fases_l1_l5 <= set(orquestador.estimate()["saved"]), "premisa: L1…L5 en caché"
+
+    with _silencio():
+        orquestador.export_reports()
+
+    assert "reporting_use_checkpoints" not in orquestador.config
+    assert fases_l1_l5 <= set(orquestador.estimate()["saved"]), (
+        "export_reports() cambió la huella de configuración y tiró la caché de L1…L5"
+    )
+
+    with _silencio():
+        orquestador.run()
+    assert _manifiesto(work_dir)["L5_golden"]["timestamp"] == sello_l5, "L5 se re-ejecutó"
+
+
+def test_reporting_postprocesado_restaura_la_bandera_previa(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si la configuración ya traía ``reporting_use_checkpoints`` (True), el
+    valor previo vuelve tal cual; y vuelve aunque L6 falle."""
+    fuente = pd.DataFrame({"NIT": ["900111111"], "RAZON_SOCIAL": ["ALFA SAS"]})
+    work_dir = tmp_path / "bandera"
+    config = crear_config_orchestrator(perfil="prueba_rapida", workspace=str(work_dir))
+    config["reporting_use_checkpoints"] = True
+    orquestador = Orchestrator(config, {"RUES": fuente}, str(work_dir))
+    with _silencio():
+        orquestador.run(skip_reporting=True)
+        orquestador.export_reports()
+    assert orquestador.config["reporting_use_checkpoints"] is True
+
+    def _l6_que_falla(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("L6 simulado")
+
+    monkeypatch.setattr(orquestador, "_run_L6", _l6_que_falla)
+    with pytest.raises(RuntimeError, match="L6 simulado"), _silencio():
+        orquestador.ejecutar_reporting_postprocesado(
+            {"golden": pd.DataFrame(), "correlative": pd.DataFrame()}, ["x"]
+        )
+    assert orquestador.config["reporting_use_checkpoints"] is True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
