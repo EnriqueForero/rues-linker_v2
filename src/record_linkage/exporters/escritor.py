@@ -703,9 +703,10 @@ def _excel(
             )
         except EscrituraSalidaError as exc:
             # El Excel es opcional: un valor que xlsxwriter rechaza (celda > 32.767
-            # caracteres, fecha con zona horaria) no tumba la carpeta tras la corrida
-            # entera. El parquet completo ya está escrito; nada se repara en silencio:
-            # el manifiesto y el log lo dicen con el motivo.
+            # caracteres, fecha con zona horaria, un objeto que ni como texto se
+            # representa) no tumba la carpeta tras la corrida entera: escribir_excel_o_leeme
+            # nunca deja salir un TypeError. El parquet completo ya está escrito; nada se
+            # repara en silencio: el manifiesto y el log lo dicen con el motivo.
             logger.warning("excel/%s.xlsx omitido: %s", tabla, exc)
             omitidos.append({"artefacto": f"excel/{tabla}.xlsx", "motivo": str(exc)})
             continue

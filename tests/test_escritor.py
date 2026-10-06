@@ -299,6 +299,37 @@ def test_celda_de_mas_de_32767_caracteres_omite_el_excel_y_publica(
     assert leido[columna].str.len().eq(40_000).all()  # el parquet lleva la celda entera
 
 
+def test_columna_de_la_fuente_con_listas_se_publica_con_excel_como_texto(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Revisión F1.11 ronda 3 (medio): la correlativa lleva TODAS las columnas de la
+    fuente y una de ``list``/``struct`` sobrevive al parquet. xlsxwriter la rechazaba
+    con ``TypeError`` y la carpeta entera fallaba tras la corrida. Ahora la celda va
+    como el mismo texto que csv.gz, el parquet conserva la lista y nada se omite."""
+    correl = res.correlativa.copy()
+    columnas_fuente = [
+        c for c in correl.columns if c not in {c.nombre for c in contrato.CORRELATIVA}
+    ]
+    columna = columnas_fuente[0]
+    correl[columna] = pd.Series([["a", "b"]] * len(correl), dtype=object)
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "prueba", marca_tiempo=MARCA)
+    assert man.verificar() == []
+    assert "excel/correlativa.xlsx" in {a["ruta"] for a in man.artefactos}
+    assert [o["artefacto"] for o in man.omitidos] == []
+    from openpyxl import load_workbook
+
+    libro = load_workbook(man.carpeta / "excel" / "correlativa.xlsx", read_only=True)
+    try:
+        hoja = libro["correlativa"]
+        filas = hoja.iter_rows(values_only=True)
+        posicion = list(next(filas)).index(columna)
+        assert next(filas)[posicion] == "['a', 'b']"
+    finally:
+        libro.close()
+    leido = pd.read_parquet(man.carpeta / "correlativa.parquet")
+    assert list(leido[columna].iloc[0]) == ["a", "b"]  # el parquet conserva la lista
+
+
 def test_dos_escrituras_producen_las_mismas_huellas(res: ResultadoLinkage, tmp_path: Path) -> None:
     """Los parquet y csv son deterministas; el xlsx no (fecha en el zip)."""
     m1 = escribir_resultado(res, tmp_path / "a", "prueba", marca_tiempo=MARCA)

@@ -5,9 +5,34 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+#: Tipos que NINGUNA hoja de cálculo admite en una celda (openpyxl: «Cannot
+#: convert … to Excel»; xlsxwriter: «Unsupported type … in write()») y que sí
+#: tienen un texto: el MISMO que ``to_csv`` escribe (``str``), para que csv.gz y
+#: xlsx digan lo mismo y la salida CSV no cambie ni un byte. Llegan en columnas
+#: extra de la fuente (la correlativa lleva TODAS): un ``struct``, ``list`` o
+#: ``binary`` de parquet, un JSON de una API. Medido en F1.11 (revisión, ronda
+#: 3): una de ellas tumbaba la carpeta entera del estándar con un ``TypeError``
+#: en el último artefacto opcional, tras la corrida completa.
+TIPOS_SIN_CELDA: tuple[type, ...] = (
+    dict,
+    list,
+    tuple,
+    set,
+    frozenset,
+    bytes,
+    bytearray,
+    np.ndarray,
+)
+
+#: Resultados de ``pd.api.types.infer_dtype`` con los que una columna ``object``
+#: PUEDE traer uno de esos tipos; en el resto (``string``, ``integer``,
+#: ``date``…) no hay nada que mirar celda a celda.
+_INFERENCIAS_A_REVISAR = frozenset({"mixed", "mixed-integer", "bytes"})
 
 #: Caracteres de control que una hoja de cálculo NO admite: openpyxl lanza
 #: ``IllegalCharacterError`` y el archivo no se escribe. Es el mismo conjunto
@@ -34,6 +59,29 @@ def escape_spreadsheet_value(value: Any) -> Any:
     if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
         return "'" + value
     return value
+
+
+def representar_contenedores(series: pd.Series) -> pd.Series:
+    """Devuelve ``series`` con dict/list/tuple/set/bytes/ndarray como texto; la MISMA si no hay.
+
+    La detección es barata (``infer_dtype`` recorre la columna en C y solo las
+    columnas ``object`` «mixtas» o de ``bytes`` se miran celda a celda); la
+    conversión es ``str``, lo que ``to_csv`` ya escribe. Nunca muta ``series``.
+    """
+
+    if not pd.api.types.is_object_dtype(series.dtype):
+        return series
+    if pd.api.types.infer_dtype(series, skipna=True) not in _INFERENCIAS_A_REVISAR:
+        return series
+    valores = series.to_numpy(dtype=object, copy=False)
+    es_contenedor = np.fromiter(
+        (isinstance(v, TIPOS_SIN_CELDA) for v in valores), dtype=bool, count=len(valores)
+    )
+    if not es_contenedor.any():
+        return series
+    texto = valores.copy()
+    texto[es_contenedor] = [str(v) for v in valores[es_contenedor]]
+    return pd.Series(texto, index=series.index, name=series.name, dtype=object)
 
 
 def validate_leaf_name(value: str, label: str) -> str:
@@ -71,7 +119,10 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
 
     Solo copia las columnas que contienen texto peligroso: prefijos de fórmula
     (``=``, ``+``, …) o caracteres de control que openpyxl rechaza
-    (:data:`CONTROL_CHARACTERS_RE`). Las columnas numéricas (incluidos números
+    (:data:`CONTROL_CHARACTERS_RE`), o valores que ninguna hoja de cálculo admite
+    en una celda (:data:`TIPOS_SIN_CELDA`: dict, list, tuple, set, bytes,
+    ndarray), que se vuelven el mismo texto que ``to_csv`` escribe
+    (:func:`representar_contenedores`). Las columnas numéricas (incluidos números
     negativos legítimos) conservan su dtype y sus buffers siempre que sea
     posible. Si ``include_index`` es True también neutraliza valores y nombres
     del índice exportado a CSV.
@@ -95,6 +146,14 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
     # duplicadas. Categorical necesita object para aceptar el nuevo prefijo.
     for position in range(df.shape[1]):
         series = df.iloc[:, position]
+        # Primero lo que no cabe en una celda (un dict → su texto) y DESPUÉS la
+        # neutralización sobre ese texto, como sobre cualquier otro.
+        representada = representar_contenedores(series)
+        if representada is not series:
+            if out is df:
+                out = df.copy(deep=False)
+            out.isetitem(position, representada.to_numpy(copy=False))
+            series = representada
         try:
             mask = series.str.startswith(FORMULA_PREFIXES, na=False)
             control = series.str.contains(CONTROL_CHARACTERS_RE.pattern, regex=True, na=False)
@@ -153,8 +212,10 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
 __all__ = [
     "CONTROL_CHARACTERS_RE",
     "FORMULA_PREFIXES",
+    "TIPOS_SIN_CELDA",
     "escape_spreadsheet_value",
     "prepare_spreadsheet_data",
+    "representar_contenedores",
     "safe_sheet_name",
     "strip_control_characters",
     "validate_leaf_name",

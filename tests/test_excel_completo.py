@@ -25,6 +25,15 @@ Qué congela
   ``EscrituraSalidaError`` sin pedir otra corrida (el escritor del estándar la
   deja en ``omitidos``, ver ``test_escritor.py``); el LEEME cita la ruta
   relativa real del parquet;
+* revisión F1.11 ronda 3: un dict/list/tuple/bytes/ndarray en una celda (columna
+  extra de la fuente que sobrevive al parquet: ``struct``, ``list``, ``binary``)
+  se escribe como el MISMO texto que ``csv.gz`` (la regla vive en
+  ``prepare_spreadsheet_data``), y un objeto que ni así se representa falla con
+  ``EscrituraSalidaError`` que nombra la columna (nunca un ``TypeError`` que
+  tumbe la carpeta); un ``timedelta`` se escribe como texto (no como la fecha
+  1900-01-01) y una fecha anterior a 1900 como texto ISO (no desplazada un día);
+  la RAM de la escritura se acota en absoluto (64 MiB: openpyxl necesitaba
+  +144 MiB para la misma tabla de 120.000 filas);
 * en ``src/`` no queda ningún ``_MUESTRA_`` ni ``excel_limit``: una sola
   regla (``LIMITE_FILAS_EXCEL`` del escritor).
 
@@ -40,6 +49,7 @@ Los datos son sintéticos (numpy); ninguna empresa real entra aquí.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 import time
@@ -47,8 +57,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+import xlsxwriter
 from openpyxl import load_workbook
 
 from record_linkage.evaluation.banco import MuestreadorRecursos
@@ -131,10 +143,12 @@ def test_1_1_millones_de_filas_no_escribe_xlsx_de_datos_sino_leeme(tmp_path: Pat
     assert "correlativa.parquet" in texto
     assert "read_parquet" in texto and "duckdb" in texto.lower() and "Power Query" in texto
     assert "1.048.576" in texto
-    # Se mide y se reporta: el LEEME no toca la tabla, así que no la duplica.
+    # Se mide y se reporta. La cota es ABSOLUTA: «< mib_tabla» no podía fallar
+    # (este camino solo mira len(df)); 64 MiB sí vigila que nadie vuelva a tocar
+    # la tabla (33 MiB) ni a armar un libro en memoria por este camino.
     crecimiento = muestreador.pico_mib - muestreador.inicial_mib
-    assert crecimiento < mib_tabla, (
-        f"la escritura duplicó la tabla en RAM: +{crecimiento:.0f} MiB (tabla {mib_tabla:.0f} MiB)"
+    assert crecimiento < 64, (
+        f"el LEEME no debe tocar la tabla: +{crecimiento:.0f} MiB (tabla {mib_tabla:.0f} MiB)"
     )
     assert segundos < 60, f"{segundos:.1f} s: márquela slow"
 
@@ -186,6 +200,12 @@ def test_120k_filas_escribe_el_excel_completo(tmp_path: Path) -> None:
     assert ultima.iloc[0, 0] == N_CABE - 1 and str(ultima.iloc[0, 2]).startswith("C-")
     assert segundos < 60, f"{segundos:.1f} s"
     assert muestreador.muestras >= 1
+    # Este camino SÍ recorre la tabla: la RAM crece con el lote (50.000 filas), no
+    # con la tabla. Medido: openpyxl (libro entero en memoria) necesitaba +144 MiB
+    # para esta misma tabla; el flujo, < 10 MiB. La cota es absoluta porque la
+    # tabla pesa 3,6 MiB y «< mib_tabla» sería ruido del asignador, no una guardia.
+    crecimiento = muestreador.pico_mib - muestreador.inicial_mib
+    assert crecimiento < 64, f"la escritura armó la tabla en RAM: +{crecimiento:.0f} MiB"
 
 
 def test_desde_parquet_en_flujo_y_con_leeme_delante(tmp_path: Path) -> None:
@@ -284,6 +304,112 @@ def test_celda_de_mas_de_32767_caracteres_falla_sin_pedir_otra_corrida(tmp_path:
     assert "linkage()" not in str(info.value)  # la carpeta se publica; no se repite la corrida
     assert "parquet" in str(info.value)
     assert not list(tmp_path.iterdir())
+
+
+def test_contenedores_y_bytes_se_escriben_como_el_texto_de_csv(tmp_path: Path) -> None:
+    """Revisión F1.11 ronda 3 (medio): una columna extra de la fuente con dict/list/
+    tuple/bytes/ndarray (struct, list o binary de parquet; JSON de una API) no tumba
+    el Excel: se escribe como el MISMO texto que ``csv.gz`` (``str``), sin mutar la
+    fuente. La regla vive en ``prepare_spreadsheet_data`` (una regla, una vez)."""
+    df = pd.DataFrame(
+        {
+            "ID": [1, 2, 3, 4, 5, 6],
+            "EXTRA": [{"a": 1}, [1, 2], b"abc", (3, 4), np.array([5, 6]), None],
+            "MEZCLA": [7, {"b": "=x"}, "texto", None, 8.5, [b"z"]],
+        }
+    )
+    copia = df.copy(deep=True)
+    filas = _filas(escribir_excel_o_leeme(df, tmp_path / "obj.xlsx"))
+    assert [f[1] for f in filas[1:]] == ["{'a': 1}", "[1, 2]", "b'abc'", "(3, 4)", "[5 6]", None]
+    assert [f[2] for f in filas[1:]] == [7, "{'b': '=x'}", "texto", None, 8.5, "[b'z']"]
+    # El mismo texto que csv.gz escribe (pandas usa str() para los objetos).
+    esperado = df.to_csv(index=False).splitlines()[1:]
+    assert [f"{f[0]},{f[1] or ''},{f[2] if f[2] is not None else ''}" for f in filas[1:]] == [
+        linea.replace('"', "") for linea in esperado
+    ]
+    assert df["EXTRA"][0] == {"a": 1} and df["EXTRA"][2] == b"abc"  # la fuente no se muta
+    pd.testing.assert_frame_equal(df, copia)
+
+
+def test_objeto_que_excel_no_admite_falla_nombrando_la_columna_y_sin_restos(
+    tmp_path: Path,
+) -> None:
+    """Lo que ni como texto se representa (un objeto cualquiera) no sale como
+    ``TypeError`` de xlsxwriter sino como ``EscrituraSalidaError`` que nombra fila,
+    columna y tipo: el escritor del estándar lo deja en ``omitidos`` y publica."""
+    df = pd.DataFrame({"ID": [1, 2], "RARA": [None, object()]})
+    with pytest.raises(EscrituraSalidaError, match=r"fila 2.*columna RARA.*tipo object") as info:
+        escribir_excel_o_leeme(df, tmp_path / "raro.xlsx")
+    assert "parquet" in str(info.value) and "linkage()" not in str(info.value)
+    assert "astype('string')" in str(info.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_fallo_de_xlsxwriter_al_cerrar_tampoco_deja_restos_ni_typeerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """xlsxwriter también puede rechazar una celda al VOLCAR la hoja (``close``);
+    esa vía tampoco sale como ``TypeError``."""
+
+    def _cerrar_roto(self: object) -> None:
+        raise TypeError("Unsupported type <class 'x'> in write()")
+
+    monkeypatch.setattr(xlsxwriter.Workbook, "close", _cerrar_roto)
+    with pytest.raises(EscrituraSalidaError, match=r"volcar.*cierre\.xlsx"):
+        escribir_excel_o_leeme(_sintetico(3), tmp_path / "cierre.xlsx")
+    assert not list(tmp_path.iterdir())
+
+
+def test_timedelta_se_escribe_como_texto_no_como_fecha_de_1900(tmp_path: Path) -> None:
+    """Revisión F1.11 ronda 3 (bajo): xlsxwriter escribía ``1 days`` como la fecha
+    1900-01-01. Ahora va como el texto que ``csv.gz`` lleva (``1 days 00:00:00``);
+    un ausente sigue vacío."""
+    df = pd.DataFrame({"ID": [1, 2, 3], "T": pd.to_timedelta(["1 days", "01:02:03.5", None])})
+    filas = _filas(escribir_excel_o_leeme(df, tmp_path / "td.xlsx"))
+    assert [f[1] for f in filas[1:]] == ["1 days 00:00:00", "0 days 01:02:03.500000", None]
+    assert filas[1][1] == df.to_csv(index=False).splitlines()[1].split(",")[1]
+
+
+def test_fecha_anterior_a_1900_se_escribe_como_texto_iso(tmp_path: Path) -> None:
+    """Revisión F1.11 ronda 3 (bajo): antes de 1900 Excel no tiene serial y xlsxwriter
+    escribía uno negativo que se leía un día antes; el 1900-01-01 lo escribe como
+    serial 0 («solo hora») y enero-febrero de 1900 cargan con el defecto del año
+    bisiesto. Todo lo anterior a 1900-03-01 va como texto ISO; el resto sigue
+    siendo fecha de Excel."""
+    df = pd.DataFrame(
+        {
+            "F": pd.to_datetime(
+                [
+                    "1899-01-01",
+                    "1899-12-31 10:30:00",
+                    "1900-01-01",
+                    "1900-02-28",
+                    "1900-03-01",
+                    None,
+                    "2026-01-02",
+                ],
+                format="ISO8601",
+            )
+        }
+    )
+    filas = _filas(escribir_excel_o_leeme(df, tmp_path / "f.xlsx"))
+    assert [f[0] for f in filas[1:]] == [
+        "1899-01-01 00:00:00",
+        "1899-12-31 10:30:00",
+        "1900-01-01 00:00:00",
+        "1900-02-28 00:00:00",
+        datetime.datetime(1900, 3, 1),
+        None,
+        datetime.datetime(2026, 1, 2),
+    ]
+    # Una columna date32 de parquet llega por lotes como datetime.date: misma regla.
+    parquet = tmp_path / "fechas.parquet"
+    pq.write_table(
+        pa.table({"D": pa.array([datetime.date(1899, 1, 1), None, datetime.date(2026, 1, 2)])}),
+        parquet,
+    )
+    filas = _filas(escribir_excel_o_leeme(pq.ParquetFile(parquet), tmp_path / "d.xlsx"))
+    assert [f[0] for f in filas[1:]] == ["1899-01-01", None, datetime.datetime(2026, 1, 2)]
 
 
 def test_motivo_no_cabe_se_redacta_una_vez_con_puntos_de_millar() -> None:
