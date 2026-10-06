@@ -539,10 +539,12 @@ def test_shim_claves_viejas_con_deprecation(res_linkage: ResultadoLinkage) -> No
     with pytest.warns(DeprecationWarning):
         assert "correlative" in res_linkage and "golden" in res_linkage
         assert "preprocessing" not in res_linkage
-    with pytest.warns(DeprecationWarning, match=r"res\.keys\(\) está obsoleto.*res\.correlativa"):
+    with pytest.warns(
+        DeprecationWarning, match=r"res\.keys\(\)/dict\(res\) está obsoleto.*res\.correlativa"
+    ):
         assert set(res_linkage.keys()) == {"correlative", "golden"}
-    with pytest.warns(DeprecationWarning, match=r"res\.keys\(\) está obsoleto"):
-        assert list(iter(res_linkage)) == res_linkage.keys()
+    with pytest.warns(DeprecationWarning, match=r"iter\(res\) está obsoleto"):
+        assert list(iter(res_linkage)) == ["correlative", "golden"]
     with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
         res_linkage["inexistente"]
     # Los campos nuevos no avisan.
@@ -574,6 +576,105 @@ def test_col_id_no_unico_cae_a_fila_y_lo_dice(tmp_path: Path) -> None:
     for fuente in (FUENTE_A, FUENTE_B):
         nota = res.manifiesto["completar"]["id_registro"][fuente]
         assert nota["regla"] == "fila" and "único" in nota["motivo"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# r3 · la regla de «base válida» es la del motor (NIT_OK/NIT_VALID)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _conjunto_nit_flotante() -> pd.DataFrame:
+    """Caso habitual: pandas lee un CSV con un NIT en blanco y la columna queda
+    float64 (``900111222.0``). El motor lo resuelve (NitProcessor entiende el
+    sufijo ``.0``); el contrato tiene que decir lo mismo que el motor."""
+    df = pd.DataFrame(
+        {
+            "NIT": [900111222.0, 900111222.0, np.nan, 800333444.0],
+            "RAZON_SOCIAL": [
+                "COMERCIAL ANDINA SAS",
+                "COMERCIAL ANDINA S.A.S.",
+                "FERRETERIA EL TORNILLO LTDA",
+                "TEXTILES DEL NORTE SA",
+            ],
+        }
+    )
+    assert pd.api.types.is_float_dtype(df["NIT"])
+    return df
+
+
+def _asegurar_union_por_identificador(res: ResultadoLinkage) -> None:
+    c = res.correlativa
+    mismo_nit = c[c["ID_ENTIDAD"] == "NIT-900111222"]
+    assert len(mismo_nit) == 2 and mismo_nit["ID_GRUPO"].nunique() == 1
+    assert list(mismo_nit["METODO_UNION"]) == ["identificador", "identificador"]
+    assert list(c.loc[~c.index.isin(mismo_nit.index), "METODO_UNION"]) == [
+        "sin_pareja",
+        "sin_pareja",
+    ]
+    identificador = res.manifiesto["completar"]["identificador"]
+    assert identificador["origen"].startswith("NIT_OK/NIT_VALID del motor")
+    assert identificador["grupos_con_bases_distintas"] == 0
+
+
+def test_linkage_nit_flotante_une_por_identificador(tmp_path: Path) -> None:
+    with _silencio():
+        res = rl.linkage(
+            {"A": _conjunto_nit_flotante()}, work_dir=str(tmp_path / "w"), skip_reporting=True
+        )
+    _asegurar_union_por_identificador(res)
+
+
+def test_dedupe_nit_flotante_une_por_identificador(tmp_path: Path) -> None:
+    with _silencio():
+        res = rl.dedupe(_conjunto_nit_flotante(), output_dir=str(tmp_path / "dd"))
+    _asegurar_union_por_identificador(res)
+
+
+def test_completar_sin_tecnicas_recalcula_desde_nit_y_lo_declara(tmp_path: Path) -> None:
+    """Sin ``NIT_OK``/``NIT_VALID`` (correlativa que no viene del motor) la base
+    se recalcula desde la columna de identificador y el reporte lo dice."""
+    correl = pd.DataFrame(
+        {
+            "NIT": ["900123456", "9001234568", ""],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME S.A.S.", "GLOBEX"],
+            "SRC": ["X", "X", "X"],
+            "ORIGINAL_INDEX": [0, 1, 2],
+            "ID_GRUPO": [0, 0, 2],
+            "NIT_FINAL": ["9001234568", "9001234568", ""],
+            "RAZON_SOCIAL_FINAL": ["ACME SAS", "ACME SAS", "GLOBEX"],
+            "NAME_SIMILARITY_SCORE": [1.0, 0.9, 1.0],
+            "NIT_DISTANCE": [0, 0, 0],
+        }
+    )
+    fuentes = {"X": correl[["NIT", "RAZON_SOCIAL"]]}
+    correlativa, _, reporte = completar_correlativa(
+        correl, None, tmp_path, None, fuentes, col_nit="NIT"
+    )
+    assert list(correlativa["METODO_UNION"]) == ["identificador", "identificador", "sin_pareja"]
+    assert reporte.identificador["origen"] == "columna NIT de la fuente (sin NIT_OK/NIT_VALID)"
+    assert "NitProcessor" in reporte.identificador["motivo"]
+    assert reporte.identificador["grupos_con_bases_distintas"] == 0
+
+
+def test_iter_avisa_desde_la_linea_del_usuario(res_linkage: ResultadoLinkage) -> None:
+    """El aviso de ``iter(res)`` se atribuye al archivo del usuario (no a
+    resultado.py) y habla de iter, no de keys()."""
+    with warnings.catch_warnings(record=True) as avisos:
+        warnings.simplefilter("always")
+        claves = list(iter(res_linkage))
+    assert claves == ["correlative", "golden"]
+    assert len(avisos) == 1
+    assert Path(avisos[0].filename) == Path(__file__)
+    assert "iter(res)" in str(avisos[0].message)
+    assert "res.keys()" not in str(avisos[0].message)
+
+    # dict(res) pasa por keys() y luego por __getitem__ de cada clave: todos
+    # los avisos apuntan a esta línea y el primero nombra dict(res).
+    with warnings.catch_warnings(record=True) as avisos:
+        warnings.simplefilter("always")
+        assert set(dict(res_linkage)) == {"correlative", "golden"}
+    assert avisos and all(Path(a.filename) == Path(__file__) for a in avisos)
+    assert "dict(res)" in str(avisos[0].message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

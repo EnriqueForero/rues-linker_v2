@@ -28,7 +28,17 @@ las dos tablas con la forma del estándar (``contrato.py``):
 * ``METODO_UNION`` ∈ {``identificador``, ``nombre``, ``sin_pareja``}:
   ``sin_pareja`` si el grupo tiene un registro; ``identificador`` si el
   registro trae identificador válido cuya base es la de ``NIT_FINAL`` del
-  grupo; ``nombre`` en el resto.
+  grupo; ``nombre`` en el resto. «Identificador válido» es el del MOTOR:
+  ``NIT_OK`` donde ``NIT_VALID`` (NitProcessor, L1), reducido a su base con
+  ``bases_validas`` — la misma reducción que recibe ``NIT_FINAL``, que por
+  construcción es el ``NIT_OK`` de un miembro del grupo
+  (``golden.selector.select_best_nit_batch``). Así un NIT que la fuente trae
+  como flotante (``900111222.0``) o con prefijo se compara como lo vio el
+  motor, y la regla no se escribe dos veces. Solo cuando la correlativa no
+  trae las técnicas (no viene del motor) se recalcula desde la columna de
+  identificador, y el reporte lo dice (``identificador``). El mismo cálculo
+  cuenta los grupos con dos bases válidas distintas
+  (``grupos_con_bases_distintas``), que es el QA de identificador del flujo.
 * ``CONFIANZA`` = la del grupo en el golden. Sin golden (``dedupe``) queda
   nula y el reporte lo dice; F2.12 unifica la regla.
 * Columnas: las 12 fijas primero, después TODAS las de la fuente, después las
@@ -72,6 +82,7 @@ import numpy as np
 import pandas as pd
 
 from .. import contrato
+from ..engine.scorer import _a_booleano
 from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
 from ..matching.identificadores import bases_validas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
@@ -80,7 +91,9 @@ __all__ = [
     "COLUMNAS_QUE_ANADE",
     "ReporteCompletar",
     "anexar_score_par",
+    "bases_del_motor",
     "completar_correlativa",
+    "grupos_con_bases_distintas",
     "score_par_desde_scored_db",
 ]
 
@@ -127,6 +140,10 @@ class ReporteCompletar:
         id_entidad: cuántos grupos recibieron ``NIT-…`` y cuántos ``ENT-…``,
             y los grupos que comparten NIT con otro y por eso se desplazaron
             a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo).
+        identificador: de dónde salió la base de cada registro (``NIT_OK``/
+            ``NIT_VALID`` del motor, o la columna de la fuente si no vienen)
+            y ``grupos_con_bases_distintas``: grupos que mezclan dos bases
+            válidas distintas (el QA de identificador del flujo).
         score_par: origen (ruta de ``scored.db``) y conteos, o el motivo de
             que quede nulo.
         confianza: de dónde salió, o el motivo de que quede nula.
@@ -143,6 +160,7 @@ class ReporteCompletar:
     id_registro: dict[str, dict[str, str]] = field(default_factory=dict)
     id_grupo: dict[str, Any] = field(default_factory=dict)
     id_entidad: dict[str, Any] = field(default_factory=dict)
+    identificador: dict[str, Any] = field(default_factory=dict)
     score_par: dict[str, Any] = field(default_factory=dict)
     confianza: dict[str, Any] = field(default_factory=dict)
     golden: dict[str, Any] = field(default_factory=dict)
@@ -158,6 +176,7 @@ class ReporteCompletar:
             "id_registro": {k: dict(v) for k, v in self.id_registro.items()},
             "id_grupo": dict(self.id_grupo),
             "id_entidad": dict(self.id_entidad),
+            "identificador": dict(self.identificador),
             "score_par": dict(self.score_par),
             "confianza": dict(self.confianza),
             "golden": dict(self.golden),
@@ -389,6 +408,64 @@ def _asignar_id_registro(
 
 def _sha16(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16]
+
+
+def bases_del_motor(nit_ok: np.ndarray, nit_valid: np.ndarray) -> np.ndarray:
+    """Base canónica de cada registro según el MOTOR: ``NIT_OK`` donde ``NIT_VALID``.
+
+    ``NIT_OK`` es el identificador como lo dejó NitProcessor (L1): sin sufijo
+    ``.0`` de un flotante, sin prefijos, con el DV calculado. ``NIT_VALID``
+    viaja como bool, 0/1 o texto según la fase que lo escribió
+    (``engine.scorer._a_booleano`` hace la coerción). La reducción final es
+    ``bases_validas`` —la misma que recibe ``NIT_FINAL``—, así que comparar
+    las dos es comparar lo que el motor comparó.
+
+    Returns:
+        Arreglo ``object`` con la base válida, o ``""`` si el motor no validó
+        el identificador o la base es demasiado corta.
+    """
+    if len(nit_ok) != len(nit_valid):
+        raise ValueError(
+            f"NIT_OK y NIT_VALID con longitudes distintas: {len(nit_ok)} vs {len(nit_valid)}"
+        )
+    validos = _a_booleano(np.asarray(nit_valid))
+    ok = pd.Series(pd.array(np.asarray(nit_ok), dtype="string")).fillna("").to_numpy(dtype=object)
+    return bases_validas(np.where(validos, ok, ""))
+
+
+def grupos_con_bases_distintas(id_grupo: pd.Series, bases: np.ndarray | pd.Series) -> int:
+    """Grupos que mezclan dos bases válidas distintas (``""`` no cuenta).
+
+    Es el «conflicto de identificador» del QA del flujo
+    (``ResultadoCruce.conflictos_identificador``), calculado una sola vez
+    aquí, sobre las bases del motor, y publicado en el manifiesto.
+    """
+    serie = pd.Series(np.asarray(bases, dtype=object), index=id_grupo.index, dtype="string")
+    validas = (serie != "").fillna(False)
+    if not validas.any():
+        return 0
+    return int((serie[validas].groupby(id_grupo[validas]).nunique() > 1).sum())
+
+
+def _bases_de_registro(correl: pd.DataFrame, columna_nit: str) -> tuple[pd.Series, dict[str, Any]]:
+    """Base válida por registro: la del motor si viajan sus técnicas; si no, la
+    de la columna de identificador, y el reporte lo declara."""
+    if {"NIT_OK", "NIT_VALID"} <= set(correl.columns):
+        bases = bases_del_motor(correl["NIT_OK"].to_numpy(), correl["NIT_VALID"].to_numpy())
+        info: dict[str, Any] = {
+            "origen": "NIT_OK/NIT_VALID del motor (NitProcessor, L1), reducidos con bases_validas"
+        }
+    elif columna_nit in correl.columns:
+        bases = bases_validas(correl[columna_nit].to_numpy())
+        info = {
+            "origen": f"columna {columna_nit} de la fuente (sin NIT_OK/NIT_VALID)",
+            "motivo": "la correlativa no trae las técnicas del motor; un identificador "
+            "flotante o con prefijo puede no reducirse como lo hizo NitProcessor.",
+        }
+    else:
+        bases = np.full(len(correl), "", dtype=object)
+        info = {"origen": None, "motivo": f"no hay columna {columna_nit!r} ni técnicas del motor."}
+    return pd.Series(bases, index=correl.index, dtype="string"), info
 
 
 def _grupos_principales_por_nit(
@@ -637,15 +714,13 @@ def completar_correlativa(
         correl, info_score = anexar_score_par(correl, dir_trabajo)
     correl["SCORE_PAR"] = correl["SCORE_PAR"].astype("float64")
 
-    # Identificador del registro y del grupo, reducidos a su base canónica.
-    # La regla de «base válida» (``bases_validas``) es la misma del QA del flujo.
+    # Identificador del registro (el del motor: NIT_OK donde NIT_VALID) y del
+    # grupo (NIT_FINAL), reducidos a su base con la misma función.
     columna_nit = col_nit if col_nit in correl.columns else "NIT"
-    if columna_nit in correl.columns:
-        base_registro = pd.Series(
-            bases_validas(correl[columna_nit].to_numpy()), index=correl.index, dtype="string"
-        )
-    else:
-        base_registro = pd.Series("", index=correl.index, dtype="string")
+    base_registro, info_identificador = _bases_de_registro(correl, columna_nit)
+    info_identificador["grupos_con_bases_distintas"] = grupos_con_bases_distintas(
+        correl["ID_GRUPO"], base_registro.fillna("").to_numpy(dtype=object)
+    )
     base_fila = pd.Series(
         bases_validas(correl["NIT_FINAL"].to_numpy()), index=correl.index, dtype="string"
     )
@@ -695,6 +770,7 @@ def completar_correlativa(
         id_registro=info_id,
         id_grupo=info_grupo,
         id_entidad=info_entidad,
+        identificador=info_identificador,
         score_par=info_score,
         confianza=info_confianza,
         golden=info_golden,

@@ -81,11 +81,16 @@ def _avisar(clave: str) -> None:
     )
 
 
-def _avisar_recorrido() -> None:
-    """Aviso propio de ``keys()``/``iter()``: no hay una clave que mapear."""
+def _avisar_recorrido(operacion: str) -> None:
+    """Aviso propio de ``keys()``/``iter()``: no hay una clave que mapear.
+
+    ``stacklevel=3`` apunta a la línea del usuario cuando lo llama un método
+    del objeto (``keys()`` o ``__iter__``); por eso cada método lo llama
+    directamente, con su propio nombre, en vez de pasar por otro.
+    """
     warnings.warn(
-        "res.keys() está obsoleto desde 0.23.0: use los campos res.correlativa, res.golden "
-        f"y res.metricas (ResultadoLinkage, contrato {contrato.VERSION_CONTRATO}). "
+        f"{operacion} está obsoleto desde 0.23.0: use los campos res.correlativa, "
+        f"res.golden y res.metricas (ResultadoLinkage, contrato {contrato.VERSION_CONTRATO}). "
         "Las claves del dict viejo desaparecen en 1.0.",
         DeprecationWarning,
         stacklevel=3,
@@ -192,12 +197,16 @@ class ResultadoLinkage:
 
     def keys(self) -> list[str]:
         """Las claves que tenía el ``dict`` viejo (``work_dir`` nunca fue una)."""
-        _avisar_recorrido()
-        candidatas = ("correlative", "golden", *_CLAVES_EN_METRICAS)
-        return [c for c in candidatas if self._presente(c)]
+        _avisar_recorrido("res.keys()/dict(res)")
+        return self._claves_viejas()
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self.keys())
+        _avisar_recorrido("iter(res)")
+        return iter(self._claves_viejas())
+
+    def _claves_viejas(self) -> list[str]:
+        candidatas = ("correlative", "golden", *_CLAVES_EN_METRICAS)
+        return [c for c in candidatas if self._presente(c)]
 
     def _presente(self, clave: str) -> bool:
         try:

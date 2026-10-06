@@ -210,9 +210,12 @@ def bases_validas(valores: np.ndarray) -> np.ndarray:
     """``bases_canonicas`` dejando vacía toda base que no sirve para agrupar.
 
     Una base más corta que ``LONGITUD_MINIMA_BASE`` (o vacía) no identifica a
-    nadie: el contrato de salida (``salida/completar.py``: ``ID_ENTIDAD``,
-    ``METODO_UNION``) y el QA del flujo (``flujo/cruce.py``:
-    ``conflictos_identificador``) comparten ESTA regla, escrita una sola vez.
+    nadie. Es la reducción que ``salida/completar.py`` aplica a ``NIT_FINAL``
+    y a ``NIT_OK`` del motor (``ID_ENTIDAD``, ``METODO_UNION`` y el conteo de
+    conflictos que el QA del flujo lee del manifiesto): una sola regla,
+    escrita una sola vez. Sobre un ``NIT`` crudo (flotante ``900111222.0``,
+    prefijos) NO reproduce la limpieza de NitProcessor: por eso el contrato
+    parte de ``NIT_OK`` y no del valor de la fuente.
 
     Returns:
         Arreglo de ``object`` con la base canónica, o ``""`` si no es válida.

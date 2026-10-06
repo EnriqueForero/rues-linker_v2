@@ -19,10 +19,11 @@ from record_linkage.flujo import (
     preparar_insumo_local,
     reportar_composicion,
 )
-from record_linkage.flujo.cruce import _conflictos_identificador
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
 from record_linkage.ingestion import DuckDBIngestionSettings
+from record_linkage.pipeline.errores import ContratoSalidaError
 from record_linkage.resultado import ResultadoLinkage
+from record_linkage.salida.completar import bases_del_motor, grupos_con_bases_distintas
 
 
 @pytest.fixture
@@ -307,7 +308,8 @@ def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path:
 
 
 def test_cruce_en_memoria_responde_el_qa_sin_columnas_tecnicas(fuentes_csv, tmp_path: Path) -> None:
-    """F1.9: el entregable ya no trae NIT_BASE/NIT_VALID; el QA se calcula desde NIT."""
+    """F1.9: el entregable ya no trae NIT_BASE/NIT_VALID; el QA toma el conteo de
+    conflictos del manifiesto del contrato (calculado con las técnicas del motor)."""
     resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
 
     assert not {"NIT_BASE", "NIT_VALID"} & set(resultado.correlativa.columns)
@@ -323,25 +325,105 @@ def test_cruce_en_memoria_responde_el_qa_sin_columnas_tecnicas(fuentes_csv, tmp_
     assert len(resultado.grupos_sospechosos()) == 0
 
 
-def test_conflictos_identificador_detecta_dos_bases_validas_en_un_grupo() -> None:
-    """La regla única del QA: dos NIT válidos distintos en un grupo = 1 conflicto;
-    un NIT con DV y otro sin DV son la misma base; los cortos/vacíos no cuentan."""
+def test_conflictos_identificador_parten_de_las_tecnicas_del_motor() -> None:
+    """La regla única del QA (r3): la base de cada registro es ``NIT_OK`` del
+    motor (NitProcessor) cuando ``NIT_VALID`` lo acepta, reducida con
+    ``bases_validas``; dos bases distintas en un grupo = 1 conflicto; un NIT
+    con DV y otro sin DV son la misma base; lo que el motor no valida no cuenta."""
     id_grupo = pd.Series([0, 0, 1, 1, 2, 2, 3, 3])
-    nit = pd.Series(
+    nit_ok = pd.Series(
         [
-            "900111222",
-            "9001112221",  # misma base (DV correcto): no es conflicto
-            "800333444",
-            "700999888",  # dos bases válidas distintas: conflicto
-            "123",
-            "",  # demasiado corto / vacío: no cuentan
+            "9001112221",  # 900111222 + DV correcto (1)
+            "900111222",  # misma base: no es conflicto
+            "8003334448",
+            "7009998881",  # 700999888 + DV correcto (1): otra base válida → conflicto
+            "123",  # el motor no lo valida (NIT_VALID=0): no cuenta
+            "",
             "900555666",
-            None,
+            "700999888",  # válido solo el primero: no es conflicto
         ]
     )
-    assert _conflictos_identificador(id_grupo, nit) == 1
-    assert _conflictos_identificador(id_grupo.iloc[:2], nit.iloc[:2]) == 0
-    assert _conflictos_identificador(id_grupo.iloc[4:6], nit.iloc[4:6]) == 0
+    nit_valid = pd.Series(["1", 1, True, "true", "0", "", "1", False])
+    bases = bases_del_motor(nit_ok.to_numpy(), nit_valid.to_numpy())
+    assert list(bases) == [
+        "900111222",
+        "900111222",
+        "800333444",
+        "700999888",
+        "",
+        "",
+        "900555666",
+        "",
+    ]
+    assert grupos_con_bases_distintas(id_grupo, bases) == 1
+    assert grupos_con_bases_distintas(id_grupo.iloc[:2], bases[:2]) == 0
+    assert grupos_con_bases_distintas(id_grupo.iloc[4:6], bases[4:6]) == 0
+    assert grupos_con_bases_distintas(id_grupo.iloc[6:], bases[6:]) == 0
+
+
+def _fuentes_nit_flotante(tmp_path: Path) -> list[SourceSpec]:
+    """Una fuente exportada desde pandas/Excel con el NIT como flotante
+    (``900111222.0``, porque otra fila lo trae en blanco) y otra con el mismo
+    NIT en 9 dígitos. El motor las une; el QA y METODO_UNION deben decirlo."""
+    a = tmp_path / "padron_flotante.csv"
+    a.write_text(
+        "IDENT,NOMBRE_EMPRESA\n900111222.0,ACME COLOMBIA SAS\n,SIN IDENTIFICADOR SAS\n",
+        encoding="utf-8",
+    )
+    b = tmp_path / "clientes_flotante.csv"
+    b.write_text("nit_cliente,razon\n900111222,ACME COLOMBIA S.A.S.\n", encoding="utf-8")
+    return [
+        SourceSpec(
+            name="PADRON",
+            path=a,
+            column_mapping={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE_EMPRESA"},
+            column_types={"NIT": ColumnType.IDENTIFIER},
+        ),
+        SourceSpec(
+            name="CLIENTES",
+            path=b,
+            column_mapping={"NIT": "nit_cliente", "RAZON_SOCIAL": "razon"},
+            column_types={"NIT": ColumnType.IDENTIFIER},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"motor_ingesta": "duckdb", "modo_resultado": "disco"},
+    ],
+    ids=["memoria", "disco"],
+)
+def test_cruce_con_nit_flotante_no_inventa_conflictos(tmp_path: Path, extra: dict) -> None:
+    resultado = ejecutar_cruce(_config(_fuentes_nit_flotante(tmp_path), tmp_path, **extra))
+
+    assert resultado.conflictos_identificador() == 0
+    assert resultado.metricas["conflictos_identificador"] == 0
+    correlativa = resultado.correlativa
+    if not isinstance(correlativa, pd.DataFrame):
+        correlativa = correlativa.to_pandas()
+    acme = correlativa[correlativa["RAZON_SOCIAL"].str.startswith("ACME")]
+    assert len(acme) == 2 and acme["ID_GRUPO"].nunique() == 1
+    assert set(acme["METODO_UNION"]) == {"identificador"}
+
+
+def test_cruce_falla_claro_si_linkage_no_trae_golden(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """Sin golden no hay cruce publicable: error accionable, no un AttributeError
+    más abajo (ni un ``assert`` que ``python -O`` borra)."""
+    import record_linkage.flujo.cruce as modulo
+
+    def linkage_falso(sources, **kwargs):
+        correlativa = pd.concat(sources.values(), ignore_index=True).copy()
+        correlativa["ID_GRUPO"] = range(len(correlativa))
+        return ResultadoLinkage(correlativa=correlativa, golden=None)
+
+    monkeypatch.setattr(modulo, "linkage", linkage_falso)
+    with pytest.raises(ContratoSalidaError, match="sin golden"):
+        ejecutar_cruce(_config(fuentes_csv, tmp_path))
 
 
 def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Path) -> None:
@@ -471,7 +553,13 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
         correlativa["NIT_DISTANCE"] = 0
         # F1.9 — y devuelve ResultadoLinkage, no el dict viejo: el flujo lee
         # los campos nuevos (``.golden``/``.correlativa``) sin pasar por el shim.
-        return ResultadoLinkage(correlativa=correlativa, golden=correlativa.copy())
+        return ResultadoLinkage(
+            correlativa=correlativa,
+            golden=correlativa.copy(),
+            # r3 — el flujo toma el conteo de conflictos del manifiesto del
+            # contrato (una regla, la del motor), así que el doble lo trae.
+            manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 0}}},
+        )
 
     monkeypatch.setattr(modulo, "linkage", linkage_falso)
     resultado = ejecutar_cruce(
