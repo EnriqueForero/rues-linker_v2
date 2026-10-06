@@ -242,3 +242,62 @@ class ArtefactoObligatorioError(ErrorPipeline):
                 ),
             )
         )
+
+
+class ColumnasArrastreError(ErrorPipeline):
+    """Las columnas de arrastre no se pudieron re-adjuntar a la correlativa.
+
+    Las columnas que no participan en la decisión (TELEFONO, EMAIL,
+    DEPARTAMENTO…) salen del motor antes del cruce y vuelven al final por
+    posición (``ORIGINAL_INDEX = offset de la fuente + fila original``). Hasta
+    F1.8, si esa alineación no cuadraba, ``flujo.cruce`` escribía un WARNING y
+    entregaba la correlativa SIN las columnas del usuario, mientras el
+    manifiesto declaraba la unión planificada como si hubiera ocurrido. Ahora
+    la corrida falla aquí: un entregable al que le faltan columnas que el
+    usuario pidió no es un entregable.
+
+    Attributes:
+        fuente: fuente cuya alineación falló, o ``None`` si falló el total.
+        esperadas: filas que debía tener la parte (o la unión).
+        observadas: filas que realmente tenía.
+        que_hacer: remedio con el que se construyó el mensaje. Por defecto es
+            el de la alineación de parquets derramados
+            (:attr:`QUE_HACER_POR_DEFECTO`); los caminos donde ese remedio no
+            aplica (DuckDB, ``separar_columnas_extra=False``) pasan el suyo.
+    """
+
+    #: Remedio para el camino pandas con separación: la alineación posicional
+    #: de los parquets derramados en ``dir_trabajo/columnas_extra`` no cuadró.
+    QUE_HACER_POR_DEFECTO = (
+        "no use este resultado; borre el directorio de trabajo "
+        "(`dir_trabajo/columnas_extra`) y vuelva a ejecutar; si se repite, "
+        "reporte el caso con el manifiesto y el registro de la corrida, o "
+        "desactive la separación con `ConfigCruce(separar_columnas_extra=False)` "
+        "para que las columnas viajen por el motor"
+    )
+
+    def __init__(
+        self,
+        que_paso: str,
+        *,
+        fuente: str | None = None,
+        esperadas: int | None = None,
+        observadas: int | None = None,
+        que_hacer: str | None = None,
+    ):
+        self.fuente = fuente
+        self.esperadas = esperadas
+        self.observadas = observadas
+        self.que_hacer = self.QUE_HACER_POR_DEFECTO if que_hacer is None else que_hacer
+        super().__init__(
+            mensaje_accionable(
+                que_paso=que_paso,
+                por_que_importa=(
+                    "la correlativa saldría SIN las columnas de arrastre que usted pidió "
+                    "(teléfono, correo, departamento…) y el manifiesto no podría "
+                    "declarar qué se adjuntó; una entrega incompleta se publicaría como "
+                    "si fuera completa"
+                ),
+                que_hacer=self.que_hacer,
+            )
+        )
