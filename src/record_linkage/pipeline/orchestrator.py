@@ -17,6 +17,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -670,6 +671,46 @@ class Orchestrator:
             self.log.error(traceback.format_exc())
             raise
 
+    def ejecutar_reporting_postprocesado(
+        self, results_data: dict, postprocesado: Sequence[str]
+    ) -> list[Path]:
+        """Ejecuta L6 sobre un resultado postprocesado y lo registra en el manifiesto.
+
+        ``linkage()`` aplica el matcher multi-variable y la expansión del
+        colapso exacto DESPUÉS de ``run()``; los reportes deben describir ese
+        resultado y no el checkpoint de L5. Hasta F1.13 ese camino llamaba a
+        ``_run_L6`` directamente, así que L6 no quedaba en ``manifest.json``
+        (ni su estado, ni sus tiempos, ni sus artefactos): una corrida con
+        reportes era indistinguible de una sin ellos para quien auditaba el
+        manifiesto. Este método pasa por el mismo :meth:`_exec_phase` que el
+        camino normal.
+
+        El registro anterior de L6 se invalida antes de ejecutar: la huella de
+        fase no incorpora el matcher ni el plan de colapso, así que reutilizar
+        un L6 «válido» devolvería reportes de otro resultado.
+
+        Args:
+            results_data: dict con ``golden`` y ``correlative`` ya
+                postprocesados.
+            postprocesado: etiquetas de lo que se aplicó tras L5 (p. ej.
+                ``["matcher", "colapso_exacto"]``); quedan en
+                ``manifest["L6_reporting"]["meta"]["postprocesado"]``.
+
+        Returns:
+            Los artefactos generados por L6.
+        """
+        self.config["reporting_use_checkpoints"] = False
+        self.state.invalidate_from(Phase.L6_REPORTING)
+        prev_hash = self.state.get_prev_hash(Phase.L6_REPORTING)
+        report_files, _ = self._exec_phase(
+            Phase.L6_REPORTING,
+            self._run_L6,
+            prev_hash,
+            results_data,
+            meta_extra={"postprocesado": list(postprocesado)},
+        )
+        return report_files
+
     def estimate(self, from_phase: Phase = None) -> dict[str, Any]:
         """
         Estima tiempo de ejecución y muestra estado de fases.
@@ -787,7 +828,14 @@ class Orchestrator:
     # EJECUCIÓN DE FASES
     # ==========================================================================
 
-    def _exec_phase(self, phase: Phase, func, prev_hash: str, *args) -> tuple[Any, str]:
+    def _exec_phase(
+        self,
+        phase: Phase,
+        func,
+        prev_hash: str,
+        *args,
+        meta_extra: dict[str, Any] | None = None,
+    ) -> tuple[Any, str]:
         """
         Ejecuta una fase con validación de hash y checkpointing.
 
@@ -802,6 +850,9 @@ class Orchestrator:
             func: Función que implementa la fase
             prev_hash: Hash de la fase anterior
             *args: Argumentos adicionales para la función
+            meta_extra: Metadatos adicionales que se registran en el manifiesto
+                junto a ``duration`` y ``peak_rss_mib`` (p. ej. qué
+                postprocesamiento describe un L6 ejecutado fuera de ``run()``).
 
         Returns:
             Tupla (resultado, hash_de_esta_fase)
@@ -867,6 +918,7 @@ class Orchestrator:
             {
                 "duration": duration,
                 "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
+                **(meta_extra or {}),
             },
         )
         self.log.info(
