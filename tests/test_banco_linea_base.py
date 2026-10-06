@@ -186,3 +186,17 @@ def test_el_banco_reproduce_la_linea_base_f0(tmp_path: Path) -> None:
     assert not (RAIZ / "docs" / "evidencia" / prediccion).exists(), (
         "la prueba escribió en docs/evidencia: debe usar solo directorios temporales"
     )
+
+
+def test_la_comparacion_no_deja_pasar_un_nan() -> None:
+    """Una métrica que dejó de calcularse (NaN) es una discrepancia, no un pase silencioso."""
+    discrepancias = discrepancias_con_linea_base(
+        BANCO_F0,
+        huella=BANCO_F0.huella,
+        f1=float("nan"),
+        macro_f1=BANCO_F0.macro_f1,
+        b3_f1=BANCO_F0.b3_f1,
+        fp_que_tocan_negativo=BANCO_F0.fp_que_tocan_negativo,
+        origen="prueba",
+    )
+    assert len(discrepancias) == 1 and "no se calculó" in discrepancias[0]

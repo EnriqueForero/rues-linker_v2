@@ -122,10 +122,15 @@ def discrepancias_con_linea_base(
         ("macro-F1", linea.macro_f1, macro_f1),
         ("B³ F1", linea.b3_f1, b3_f1),
     ):
-        if abs(obtenido - esperado) > linea.tolerancia_metricas:
+        # `not (… <= tol)` y no `… > tol`: un NaN (la métrica dejó de calcularse)
+        # debe contar como discrepancia, y con `>` pasaría en silencio.
+        if not (abs(obtenido - esperado) <= linea.tolerancia_metricas):
+            obtenido_txt = (
+                "nan (la métrica no se calculó)" if obtenido != obtenido else f"{obtenido:.4f}"
+            )
             discrepancias.append(
                 f"{nombre} fuera de tolerancia ({origen}): esperado {esperado:.4f} "
-                f"± {linea.tolerancia_metricas:g}, obtenido {obtenido:.4f}. Una métrica "
+                f"± {linea.tolerancia_metricas:g}, obtenido {obtenido_txt}. Una métrica "
                 f"que se mueve más que el redondeo es un cambio de comportamiento: "
                 f"declárelo con ADR y CHANGELOG antes de mover la línea base."
             )
