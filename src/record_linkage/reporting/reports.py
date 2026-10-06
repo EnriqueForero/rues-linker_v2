@@ -419,6 +419,10 @@ class ReportGenerator:
         muestras = self.metrics.get("muestras")
         if isinstance(muestras, dict):
             muestras.pop("casos_revision", None)
+            if not muestras:
+                # Venía solo con la entrada propia de otra corrida: si queda
+                # vacío, la clave desaparece («ausente» = todo completo).
+                self.metrics.pop("muestras", None)
 
         # Definir todos los reportes disponibles (orden optimizado)
         report_generators = [
@@ -521,10 +525,23 @@ class ReportGenerator:
                 }
 
             # --- MÉTRICAS DE VOLUMEN (sobre la correlativa completa; F1.5) ---
+            # El total es el de la tabla COMPLETA (len), no la suma de los
+            # tamaños de grupo: groupby descarta las filas con ID_GRUPO nulo y
+            # el resumen diría menos que analisis_fuentes sobre la misma tabla.
             tamanos = self._tamanos_grupo
             hay_tabla = not tamanos.empty
+            sin_grupo = len(self.correlativa) - int(tamanos.sum()) if hay_tabla else 0
+            if sin_grupo:
+                self.logger.warning(
+                    mensaje_accionable(
+                        f"{sin_grupo:,} fila(s) de la correlativa no tienen ID_GRUPO.",
+                        "el motor asigna grupo a toda fila; esas filas cuentan en el total "
+                        "pero en ningún grupo.",
+                        "revise la fase L4/L5 de esta corrida antes de usar el resultado.",
+                    )
+                )
             total_records, alc_total = self._cifra_del_resumen(
-                "total_records", int(tamanos.sum()) if hay_tabla else None, "correlativa"
+                "total_records", len(self.correlativa) if hay_tabla else None, "correlativa"
             )
             unique_groups, alc_grupos = self._cifra_del_resumen(
                 "unique_groups", len(tamanos) if hay_tabla else None, "correlativa"
@@ -892,12 +909,23 @@ class ReportGenerator:
             review_cases = golden.loc[requiere].join(factores.loc[requiere])
 
             if review_cases.empty:
-                return pd.DataFrame(
+                # Si el golden es una vista declarada, «ningún caso» solo se
+                # sabe de la vista: se rotula y se registra como los demás.
+                golden_vista = self._muestra_declarada("golden")
+                detalle = (
+                    "Todos los grupos tienen alta confianza"
+                    if golden_vista is None
+                    else "Ningún grupo de la vista del golden requiere revisión"
+                )
+                mensaje = pd.DataFrame(
                     {
                         "Mensaje": ["✅ No hay casos que requieran revisión urgente"],
-                        "Detalle": ["Todos los grupos tienen alta confianza"],
+                        "Detalle": [detalle],
                     }
                 )
+                if golden_vista is not None:
+                    mensaje["ALCANCE"] = self._declarar_casos_revision(0, 0, golden_vista)
+                return mensaje
 
             # Clasificar severidad
             review_cases["SEVERIDAD"] = pd.cut(
@@ -948,19 +976,8 @@ class ReportGenerator:
             # total de casos también lo es: nunca se rotula COMPLETO.
             golden_vista = self._muestra_declarada("golden")
             if n_mostrados < n_total or golden_vista is not None:
-                rotulo = f"MUESTRA ({n_mostrados} de {n_total}"
-                registro: dict[str, Any] = {"n": n_mostrados, "N": n_total}
-                if golden_vista is not None:
-                    rotulo += (
-                        f", sobre una vista de {golden_vista['n']} de {golden_vista['N']} "
-                        "del golden"
-                    )
-                    registro["golden_vista"] = golden_vista
-                final_report["ALCANCE"] = rotulo + ")"
-                self.metrics.setdefault("muestras", {})["casos_revision"] = registro
-                self.logger.info(
-                    f"casos_revision: {n_mostrados:,} de {n_total:,} casos (los de mayor "
-                    f"prioridad); ALCANCE = {final_report['ALCANCE'].iloc[0]}"
+                final_report["ALCANCE"] = self._declarar_casos_revision(
+                    n_mostrados, n_total, golden_vista
                 )
             else:
                 final_report["ALCANCE"] = f"COMPLETO ({n_total} de {n_total})"
@@ -970,6 +987,25 @@ class ReportGenerator:
         except Exception as e:
             self.logger.error(f"Error en casos de revisión: {e!s}")
             raise
+
+    def _declarar_casos_revision(
+        self, n_mostrados: int, n_total: int, golden_vista: dict[str, int] | None
+    ) -> str:
+        """Rótulo ``MUESTRA (n de N[, sobre una vista …])`` de los casos de
+        revisión, registrado en ``metrics["muestras"]["casos_revision"]``. Una
+        sola regla para el reporte con casos y para el mensaje sin casos."""
+        rotulo = f"MUESTRA ({n_mostrados} de {n_total}"
+        registro: dict[str, Any] = {"n": n_mostrados, "N": n_total}
+        if golden_vista is not None:
+            rotulo += f", sobre una vista de {golden_vista['n']} de {golden_vista['N']} del golden"
+            registro["golden_vista"] = golden_vista
+        rotulo += ")"
+        self.metrics.setdefault("muestras", {})["casos_revision"] = registro
+        self.logger.info(
+            f"casos_revision: {n_mostrados:,} de {n_total:,} casos (los de mayor "
+            f"prioridad); ALCANCE = {rotulo}"
+        )
+        return rotulo
 
     @staticmethod
     def _razones_principales(casos: pd.DataFrame) -> pd.Series:
