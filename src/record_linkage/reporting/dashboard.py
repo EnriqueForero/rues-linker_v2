@@ -380,9 +380,13 @@ class ExecutiveDashboard:
             return fig
 
         except Exception as e:
+            # F1.4: nunca un PNG con el texto del error. Se cierra la figura
+            # y la excepción sube; DashboardStrategy la convierte en una
+            # omisión con motivo en el manifiesto.
             self.logger.error(f"Error generando dashboard: {e}")
             self.logger.debug("Stack trace:", exc_info=True)
-            return self._generate_error_dashboard(output_path, format, dpi)
+            plt.close("all")
+            raise
 
     def _insufficient_data(self) -> bool:
         """Verifica si hay datos suficientes para el dashboard."""
@@ -815,65 +819,62 @@ class ExecutiveDashboard:
 
         F1.6: la serie sale de ``_serie_tiempos`` (``metrics["phase_times"]``).
         Si no hay tiempos, el panel lo dice; no se estima ni se reparte.
+        F1.4: sin ``try/except``: un panel que falla relanza y el dashboard se
+        omite con motivo en el manifiesto, nunca se pinta «Error generando».
         """
-        try:
-            phase_series = _serie_tiempos(self.metrics).sort_values(ascending=True)
+        phase_series = _serie_tiempos(self.metrics).sort_values(ascending=True)
 
-            if phase_series.empty:
-                self.logger.warning(
-                    "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
-                )
-                self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
-                return
+        if phase_series.empty:
+            self.logger.warning(
+                "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+            )
+            self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
+            return
 
-            # Crear gráfico de barras horizontales
-            colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
-            bars = ax.barh(phase_series.index, phase_series.values, color=colors)
+        # Crear gráfico de barras horizontales
+        colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
+        bars = ax.barh(phase_series.index, phase_series.values, color=colors)
 
-            # Añadir etiquetas con valores y porcentajes
-            total = phase_series.sum()
-            for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
-                width = bar.get_width()
-                percentage = (time_val / total * 100) if total > 0 else 0
+        # Añadir etiquetas con valores y porcentajes
+        total = phase_series.sum()
+        for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
+            width = bar.get_width()
+            percentage = (time_val / total * 100) if total > 0 else 0
 
-                # Etiqueta con tiempo y porcentaje
-                label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
-                ax.text(
-                    width + 0.01 * phase_series.max(),
-                    bar.get_y() + bar.get_height() / 2,
-                    label,
-                    va="center",
-                    ha="left",
-                    fontsize=9,
-                )
+            # Etiqueta con tiempo y porcentaje
+            label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
+            ax.text(
+                width + 0.01 * phase_series.max(),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
 
-            # Configuración del gráfico
-            ax.set_xlabel("Tiempo", fontsize=11)
-            ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
-            ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
+        # Configuración del gráfico
+        ax.set_xlabel("Tiempo", fontsize=11)
+        ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
+        ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
 
-            # Agregar línea de tiempo total
-            ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
-            if total > 0:
-                total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
-                ax.text(
-                    total,
-                    len(phase_series) - 0.5,
-                    f"Total: {total_str}",
-                    ha="right",
-                    va="center",
-                    fontsize=9,
-                    color="red",
-                )
+        # Agregar línea de tiempo total
+        ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
+        if total > 0:
+            total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
+            ax.text(
+                total,
+                len(phase_series) - 0.5,
+                f"Total: {total_str}",
+                ha="right",
+                va="center",
+                fontsize=9,
+                color="red",
+            )
 
-            # Limpiar bordes
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-
-        except Exception as e:
-            self.logger.error(f"Error en _plot_performance_metrics: {e!s}")
-            self._show_no_data_message(ax, "Error generando métricas")
+        # Limpiar bordes
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
     def _plot_group_distribution(self, ax):
         """Distribución de tamaños de grupo."""
@@ -1486,41 +1487,4 @@ class ExecutiveDashboard:
 
         self._save_figure(fig, output_path, format, dpi)
         self.logger.warning("Dashboard mínimo generado por falta de datos")
-        return fig
-
-    def _generate_error_dashboard(self, output_path: str, format: str, dpi: int):
-        """Genera dashboard de error como fallback."""
-        fig, ax = plt.subplots(figsize=(12, 8), facecolor="white")
-        ax.axis("off")
-
-        error_text = f"""DASHBOARD EJECUTIVO
-Record Linkage Pipeline
-
-Error generando visualizaciones completas.
-Por favor, revise los logs para más detalles.
-
-Información disponible:
-- Registros correlative: {len(self.correlative_table):,}
-- Golden records: {len(self.golden_records):,}
-- Métricas: {len(self.metrics)}
-
-Generado: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
-
-        ax.text(
-            0.5,
-            0.5,
-            error_text,
-            fontsize=12,
-            ha="center",
-            va="center",
-            bbox=dict(
-                boxstyle="round,pad=1",
-                facecolor=self.colors["light"],
-                edgecolor=self.colors["danger"],
-                linewidth=2,
-            ),
-        )
-
-        self._save_figure(fig, output_path, format, dpi)
-        self.logger.error("Dashboard de error generado como fallback")
         return fig

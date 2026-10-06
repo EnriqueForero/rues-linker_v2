@@ -150,6 +150,10 @@ class ReportGenerator:
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
 
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió;
+        # la estrategia que lo usa lo etiqueta con su propia clase.
+        self.omitidos: list[tuple[str, str]] = []
+
         # Cargar las tablas completas (la correlativa, solo en sus columnas útiles)
         self.correlativa = self._cargar_tabla(
             correlative_data, "correlative_table", columnas=COLUMNAS_CORRELATIVA_REPORTES
@@ -391,10 +395,15 @@ class ReportGenerator:
 
     def generate_all_reports(self) -> dict[str, pd.DataFrame]:
         """
-        Genera todos los reportes disponibles con manejo robusto de errores.
-        Versión mejorada con más reportes y mejor gestión de memoria.
+        Genera todos los reportes disponibles.
+
+        Un reporte que falla o no tiene datos NO entra al diccionario: hasta
+        F1.4 se devolvía un DataFrame con una sola celda «Error generando
+        reporte: …» que terminaba escrito como xlsx. Ahora se omite y queda en
+        ``self.omitidos`` como ``(archivo, motivo)``.
         """
         self.logger.info("Iniciando generación de reportes...")
+        self.omitidos = []
 
         # Registro de lo que se recorta: ausente significa que todo es completo.
         # Se conserva lo que declaró quien llamó (p. ej. el orquestador bajo
@@ -425,6 +434,7 @@ class ReportGenerator:
                 # Verificar si debe generarse
                 if not always_generate and self._should_skip_report(report_name):
                     self.logger.info(f"⏭️  {report_name}: Omitido (datos insuficientes)")
+                    self._omitir(report_name, "datos insuficientes")
                     skipped += 1
                     continue
 
@@ -440,15 +450,18 @@ class ReportGenerator:
                     self.logger.info(f"✓ {report_name}: {len(report_df)} filas generadas")
                 else:
                     # El generador ya dijo en el log por qué no hay datos (p. ej.
-                    # «sin tiempos por fase»); no se escribe ningún archivo.
+                    # «sin tiempos por fase»); no se escribe ningún archivo y la
+                    # omisión queda registrada para el manifiesto (F1.4).
                     self.logger.info(f"⏭️  {report_name}: Omitido (sin datos)")
+                    self._omitir(report_name, "el generador no devolvió filas")
                     skipped += 1
 
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ {report_name}: Error - {e!s}", exc_info=True)
-                # Crear reporte de error
-                reports[report_name] = pd.DataFrame({"Error": [f"Error generando reporte: {e!s}"]})
+                # F1.4: nunca un archivo con un error dentro. Se omite y se
+                # deja constancia; el usuario lo ve en manifest.json.
+                self._omitir(report_name, f"{type(e).__name__}: {e!s}")
 
         # Liberar memoria después de generar reportes
         gc.collect()
@@ -458,6 +471,9 @@ class ReportGenerator:
         )
 
         return reports
+
+    def _omitir(self, report_name: str, motivo: str) -> None:
+        self.omitidos.append((f"reporte_{report_name}.xlsx", motivo))
 
     def _should_skip_report(self, report_name: str) -> bool:
         """Determina si un reporte debe omitirse por falta de datos."""
@@ -669,14 +685,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en resumen ejecutivo: {e!s}")
-            return pd.DataFrame(
-                {
-                    "Categoría": ["ERROR"],
-                    "Métrica": ["Error generando resumen"],
-                    "Valor": [str(e)],
-                    "Descripción": ["Revisar logs para más detalles"],
-                }
-            )
+            raise
 
     def _generate_quality_metrics(self) -> pd.DataFrame:
         """
@@ -777,7 +786,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en métricas de calidad: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas: {e!s}"]})
+            raise
 
     def _generate_source_analysis(self) -> pd.DataFrame:
         """
@@ -828,7 +837,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en análisis de fuentes: {e!s}")
-            return pd.DataFrame({"Error": [f"Error analizando fuentes: {e!s}"]})
+            raise
 
     def _generate_review_cases(self) -> pd.DataFrame:
         """
@@ -949,7 +958,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en casos de revisión: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando casos de revisión: {e!s}"]})
+            raise
 
     @staticmethod
     def _razones_principales(casos: pd.DataFrame) -> pd.Series:
@@ -1058,7 +1067,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en estadísticas de grupos: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando estadísticas: {e!s}"]})
+            raise
 
     def _generate_performance_metrics(self) -> pd.DataFrame:
         """Alias histórico de :meth:`reporte_metricas_performance`."""

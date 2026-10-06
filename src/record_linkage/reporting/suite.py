@@ -11,6 +11,7 @@ directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import os
@@ -69,6 +70,8 @@ class EnhancedReportingSuite:
         self.config = config or {}
         self.max_memory_mb = max_memory_mb
         self.logger = CustomLogger("EnhancedReportingSuite")
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Configuración de límites
         self.sample_size = min(50000, max_memory_mb * 100)
@@ -293,42 +296,48 @@ class EnhancedReportingSuite:
         """
         self.logger.info("Iniciando generación de reportes mejorados...")
         generated_files = {}
+        self.omitidos = []
 
-        # 1. Heatmap de intersección
-        try:
-            self.logger.info("Generando Heatmap de Intersección...")
-            heatmap_path = self.generate_intersection_heatmap(output_dir)
-            if heatmap_path:
-                generated_files["intersection_heatmap"] = heatmap_path
-        except Exception as e:
-            self.logger.error(f"Error en heatmap: {e!s}", exc_info=True)
-
-        # 2. Dashboard Ejecutivo Mejorado
-        try:
-            self.logger.info("Generando Dashboard Ejecutivo Mejorado...")
-            dashboard_path = self.generate_enhanced_dashboard(output_dir)
-            if dashboard_path:
-                generated_files["enhanced_dashboard"] = dashboard_path
-        except Exception as e:
-            self.logger.error(f"Error en dashboard: {e!s}", exc_info=True)
-
-        # 3. Tarjeta de Calidad
-        try:
-            self.logger.info("Generando Tarjeta de Calidad...")
-            quality_card_path = self.generate_quality_card(output_dir)
-            if quality_card_path:
-                generated_files["quality_card"] = quality_card_path
-        except Exception as e:
-            self.logger.error(f"Error en tarjeta de calidad: {e!s}", exc_info=True)
-
-        # 4. Reporte de Casos Problemáticos
-        try:
-            self.logger.info("Generando Reporte de Casos Problemáticos...")
-            problematic_path = self.generate_problematic_cases_report(output_dir)
-            if problematic_path:
-                generated_files["problematic_cases"] = problematic_path
-        except Exception as e:
-            self.logger.error(f"Error en casos problemáticos: {e!s}", exc_info=True)
+        # F1.4: cada reporte que no sale queda en `omitidos` con motivo
+        # (excepción, o «sin datos» cuando el generador devuelve None).
+        generadores = [
+            (
+                "intersection_heatmap",
+                "heatmap_interseccion_mejorado.png",
+                "Heatmap de Intersección",
+                self.generate_intersection_heatmap,
+            ),
+            (
+                "enhanced_dashboard",
+                "dashboard_ejecutivo_mejorado.png",
+                "Dashboard Ejecutivo Mejorado",
+                self.generate_enhanced_dashboard,
+            ),
+            (
+                "quality_card",
+                "tarjeta_calidad_datos.png",
+                "Tarjeta de Calidad",
+                self.generate_quality_card,
+            ),
+            (
+                "problematic_cases",
+                "casos_problematicos_detallado.xlsx",
+                "Reporte de Casos Problemáticos",
+                self.generate_problematic_cases_report,
+            ),
+        ]
+        for clave, archivo, titulo, generador in generadores:
+            try:
+                self.logger.info(f"Generando {titulo}...")
+                ruta = generador(output_dir)
+            except Exception as e:
+                self.logger.error(f"Error en {titulo}: {e!s}", exc_info=True)
+                self.omitidos.append((archivo, f"{type(e).__name__}: {e!s}"))
+                continue
+            if ruta:
+                generated_files[clave] = ruta
+            else:
+                self.omitidos.append((archivo, "datos insuficientes para generarlo"))
 
         # Liberar memoria
         gc.collect()
@@ -436,7 +445,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error en generate_intersection_heatmap: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _calculate_intersection_from_db(self) -> pd.DataFrame:
         """Calcula matriz de intersección directamente desde SQLite."""
@@ -511,57 +520,52 @@ class EnhancedReportingSuite:
         """
         Dibuja un gráfico de radar para métricas de calidad - VERSIÓN CORREGIDA.
         """
-        try:
-            # Preparar datos
-            labels = list(metrics.keys())
-            values = list(metrics.values())
+        # Preparar datos
+        labels = list(metrics.keys())
+        values = list(metrics.values())
 
-            # Asegurar que todos los valores estén entre 0 y 1
-            values = [float(max(0, min(1, v))) for v in values]
+        # Asegurar que todos los valores estén entre 0 y 1
+        values = [float(max(0, min(1, v))) for v in values]
 
-            # Número de variables
-            num_vars = len(labels)
+        # Número de variables
+        num_vars = len(labels)
 
-            # Calcular ángulos para cada variable
-            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        # Calcular ángulos para cada variable
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
 
-            # Cerrar el polígono
-            values_plot = values + values[:1]
-            angles_plot = angles + angles[:1]
+        # Cerrar el polígono
+        values_plot = values + values[:1]
+        angles_plot = angles + angles[:1]
 
-            # Configurar el gráfico radar
-            ax.set_theta_offset(np.pi / 2)
-            ax.set_theta_direction(-1)
+        # Configurar el gráfico radar
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
 
-            # Dibujar el polígono
-            ax.plot(angles_plot, values_plot, "o-", linewidth=2, color=self.colors["primary"])
-            ax.fill(angles_plot, values_plot, alpha=0.25, color=self.colors["primary"])
+        # Dibujar el polígono
+        ax.plot(angles_plot, values_plot, "o-", linewidth=2, color=self.colors["primary"])
+        ax.fill(angles_plot, values_plot, alpha=0.25, color=self.colors["primary"])
 
-            # Configurar las etiquetas
-            ax.set_xticks(angles)
-            ax.set_xticklabels(labels, size=10)
+        # Configurar las etiquetas
+        ax.set_xticks(angles)
+        ax.set_xticklabels(labels, size=10)
 
-            # Configurar los límites y grid
-            ax.set_ylim(0, 1)
-            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
-            ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], size=8)
-            ax.grid(True, linestyle="--", alpha=0.7)
+        # Configurar los límites y grid
+        ax.set_ylim(0, 1)
+        ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+        ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], size=8)
+        ax.grid(True, linestyle="--", alpha=0.7)
 
-            # Agregar valores en cada punto
-            for angle, value, _label in zip(angles, values, labels, strict=False):
-                ax.text(
-                    angle,
-                    value + 0.05,
-                    f"{value:.2f}",
-                    ha="center",
-                    va="center",
-                    size=9,
-                    weight="bold",
-                )
-        except Exception as e:
-            self.logger.error(f"Error en _plot_quality_radar: {e!s}")
-            # Si falla, mostrar un mensaje
-            ax.text(0.5, 0.5, "Error generando radar", ha="center", va="center")
+        # Agregar valores en cada punto
+        for angle, value, _label in zip(angles, values, labels, strict=False):
+            ax.text(
+                angle,
+                value + 0.05,
+                f"{value:.2f}",
+                ha="center",
+                va="center",
+                size=9,
+                weight="bold",
+            )
 
     def generate_quality_card(self, output_dir: str) -> str | None:
         """
@@ -766,74 +770,71 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando tarjeta de calidad: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _plot_performance_metrics(self, ax):
         """
         Tiempo por fase, tal como lo cronometró el orquestador (F1.6).
 
         Sin ``metrics["phase_times"]`` el panel dice «Sin tiempos por fase»;
-        antes repartía el tiempo total con porcentajes fijos.
+        antes repartía el tiempo total con porcentajes fijos. F1.4: sin
+        ``try/except``: un panel que falla relanza y el dashboard se omite con
+        motivo en el manifiesto, nunca se pinta «Error generando».
         """
-        try:
-            phase_series = pd.Series(
-                etiquetar(tiempos_por_fase(self.metrics)), dtype="float64"
-            ).sort_values(ascending=True)
+        phase_series = pd.Series(
+            etiquetar(tiempos_por_fase(self.metrics)), dtype="float64"
+        ).sort_values(ascending=True)
 
-            if phase_series.empty:
-                self.logger.warning(
-                    "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
-                )
-                self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
-                return
+        if phase_series.empty:
+            self.logger.warning(
+                "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+            )
+            self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
+            return
 
-            # Crear gráfico de barras horizontales
-            colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
-            bars = ax.barh(phase_series.index, phase_series.values, color=colors)
+        # Crear gráfico de barras horizontales
+        colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
+        bars = ax.barh(phase_series.index, phase_series.values, color=colors)
 
-            # Añadir etiquetas con valores y porcentajes
-            total = phase_series.sum()
-            for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
-                width = bar.get_width()
-                percentage = (time_val / total * 100) if total > 0 else 0
+        # Añadir etiquetas con valores y porcentajes
+        total = phase_series.sum()
+        for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
+            width = bar.get_width()
+            percentage = (time_val / total * 100) if total > 0 else 0
 
-                # Etiqueta con tiempo y porcentaje
-                label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
-                ax.text(
-                    width + 0.01 * phase_series.max(),
-                    bar.get_y() + bar.get_height() / 2,
-                    label,
-                    va="center",
-                    ha="left",
-                    fontsize=9,
-                )
+            # Etiqueta con tiempo y porcentaje
+            label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
+            ax.text(
+                width + 0.01 * phase_series.max(),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
 
-            # Configuración del gráfico
-            ax.set_xlabel("Tiempo", fontsize=11)
-            ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
-            ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
+        # Configuración del gráfico
+        ax.set_xlabel("Tiempo", fontsize=11)
+        ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
+        ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
 
-            # Agregar línea de tiempo total
-            if total > 0:
-                ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
-                ax.text(
-                    total,
-                    len(phase_series) - 0.5,
-                    f"Total: {total:.1f}s",
-                    ha="right",
-                    va="center",
-                    fontsize=9,
-                    color="red",
-                )
+        # Agregar línea de tiempo total
+        if total > 0:
+            ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
+            ax.text(
+                total,
+                len(phase_series) - 0.5,
+                f"Total: {total:.1f}s",
+                ha="right",
+                va="center",
+                fontsize=9,
+                color="red",
+            )
 
-            # Limpiar bordes
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-
-        except Exception as e:
-            self.logger.error(f"Error en _plot_performance_metrics: {e!s}")
-            self._show_no_data_message(ax, "Error generando métricas")
+        # Limpiar bordes
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
     def generate_enhanced_dashboard(self, output_dir: str) -> str | None:
         """
@@ -900,7 +901,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando dashboard: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _add_kpi_cards(self, fig, grid_area):
         """Agrega tarjetas KPI al dashboard."""
@@ -1564,7 +1565,10 @@ class EnhancedReportingSuite:
 
             except Exception as e:
                 self.logger.error(f"Error guardando reporte Excel: {e!s}")
-                return None
+                # F1.4: no dejar un xlsx a medias ni perder el motivo.
+                with contextlib.suppress(OSError):
+                    os.unlink(output_path)
+                raise
         else:
             self.logger.info("No se detectaron casos problemáticos significativos")
             return None

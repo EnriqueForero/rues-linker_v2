@@ -531,8 +531,8 @@ def linkage(
         # Los checkpoints L5 pertenecen al resultado compacto/anterior al
         # matcher. Exportar desde memoria evita reportes obsoletos.
         config["reporting_use_checkpoints"] = False
-        report_files, _ = orchestrator._run_L6(result)
-        result["report_files"] = report_files
+        # export_reports deja en el manifiesto los opcionales omitidos (F1.4).
+        result["report_files"] = orchestrator.export_reports(result)
 
     return result
 

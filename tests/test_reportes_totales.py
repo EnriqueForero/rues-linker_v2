@@ -410,6 +410,8 @@ def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: 
     """Corre ``Orchestrator._run_L6`` con estrategias espía y RAM simulada."""
     from types import SimpleNamespace
 
+    from artefactos_l6 import escribir_obligatorios_l6
+
     from record_linkage.pipeline.orchestrator import Orchestrator
     from record_linkage.reporting.strategies import DataExportStrategy, Phase
 
@@ -419,7 +421,9 @@ def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: 
     class _Exporta(DataExportStrategy):
         def execute(self, ctx, logger):
             visto["export_n"] = len(ctx.correlative_df)
-            return [Path("golden_records.parquet"), Path("tabla_correlativa.parquet")]
+            # F1.4: el contrato de L6 exige los obligatorios en disco por
+            # nombre exacto; la espía los deja escritos como haría la real.
+            return escribir_obligatorios_l6(ctx.output_dir)
 
     class _Analitica:
         name = "analitica"
@@ -442,6 +446,7 @@ def _correr_l6_sintetico(tmp_path, monkeypatch, *, mem_percent: float, n_filas: 
     orquestador.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orquestador._start_time = 1.0
     orquestador._phase_times = {}
+    orquestador._meta_extra = {}
     orquestador._reporting_strategies = [_Exporta(), _Analitica()]
     orquestador.log = _Silencio()
     monkeypatch.setattr(

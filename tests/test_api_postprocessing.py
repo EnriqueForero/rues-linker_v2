@@ -7,10 +7,12 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from artefactos_l6 import escribir_obligatorios_l6
 
 from record_linkage import linkage
 from record_linkage.api import _collapse_exact_sources, _expand_exact_correlative
 from record_linkage.matching import apply_matcher_to_linkage_result
+from record_linkage.pipeline.errores import ArtefactoObligatorioError
 from record_linkage.pipeline.orchestrator import Orchestrator
 from record_linkage.reporting.strategies import DataExportStrategy, Phase
 
@@ -141,13 +143,15 @@ def test_matcher_helper_recalcula_golden_canonico_y_preserva_metadatos():
 
 class _CaptureExport(DataExportStrategy):
     def __init__(self, seen: dict[str, int]) -> None:
+        super().__init__()
         self.seen = seen
 
     def execute(self, ctx, logger):
         self.seen["export_golden"] = len(ctx.golden_df)
         self.seen["export_correlative"] = len(ctx.correlative_df)
         self.seen["metric_total"] = ctx.metrics["total_records"]
-        return []
+        # F1.4: L6 exige los obligatorios por nombre exacto (lista del contrato).
+        return escribir_obligatorios_l6(ctx.output_dir)
 
 
 class _CaptureAnalytics:
@@ -211,6 +215,7 @@ def test_l6_no_trunca_exportacion_postprocesada_bajo_presion_de_ram(tmp_path, mo
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}
+    orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [_CaptureExport(seen), _CaptureAnalytics(seen)]
     orchestrator.log = _SilentLog()
     monkeypatch.setattr(
@@ -238,6 +243,7 @@ def test_l6_intenta_exportar_aun_con_ram_critica_y_omite_solo_analitica(tmp_path
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}
+    orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [_CaptureExport(seen), _CaptureAnalytics(seen)]
     orchestrator.log = _SilentLog()
     monkeypatch.setattr(
@@ -251,6 +257,14 @@ def test_l6_intenta_exportar_aun_con_ram_critica_y_omite_solo_analitica(tmp_path
     assert seen["export_golden"] == 1
     assert seen["export_correlative"] == 1
     assert "analytics_golden" not in seen
+    # F1.4: la analítica saltada por RAM queda registrada, no desaparece.
+    assert orchestrator.l6_omitidos == [
+        {
+            "artefacto": "captura analítica",
+            "estrategia": "_CaptureAnalytics",
+            "motivo": "RAM crítica (96.0 %): se omitió para proteger la corrida",
+        }
+    ]
 
 
 def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monkeypatch):
@@ -261,6 +275,7 @@ def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monk
     orchestrator.dirs = {Phase.L6_REPORTING: tmp_path / "reports"}
     orchestrator._start_time = 1.0
     orchestrator._phase_times = {}
+    orchestrator._meta_extra = {}
     orchestrator._reporting_strategies = [strategy]
     orchestrator.log = _SilentLog()
     monkeypatch.setattr(
@@ -269,5 +284,13 @@ def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monk
     )
     data = pd.DataFrame({"ID_GRUPO": [1], "SRC": ["F"]})
 
-    with pytest.raises(RuntimeError, match="exportación contractual"):
+    # F1.4: la verificación es por nombre exacto y la excepción es tipada.
+    with pytest.raises(ArtefactoObligatorioError, match=r"golden_records\.parquet") as info:
         orchestrator._run_L6({"golden": data[["ID_GRUPO"]], "correlative": data})
+    assert info.value.faltantes == (
+        "tabla_correlativa.parquet",
+        "tabla_correlativa.csv.gz",
+        "golden_records.parquet",
+        "golden_records.csv.gz",
+        "config_auditoria_*.json",
+    )
