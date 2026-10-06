@@ -5,7 +5,8 @@ Verifica:
 2. `min_sources_for_golden` filtra golden records correctamente.
 3. `DEPRECATED_CONFIG_KEYS` se detectan en `validar_config`.
 4. `RESURRECTED_CONFIG_KEYS` existe y contiene los esperados.
-5. `OptunaIntegration` (heredado) emite DeprecationWarning al importar.
+5. Los shims heredados de `optimization/` se retiraron (F2.8); la alternativa
+   es `evaluation.OrchestratorOptimizer`.
 6. Retrocompat: sin min_sources_for_golden, comportamiento idéntico.
 """
 
@@ -180,31 +181,16 @@ class TestDeprecatedDetection:
 
 
 # ─────────────────────────────────────────────────────────────────────
-#  Tests 4: optuna_integration / visualizer — shims DEPRECADOS (presentes)
+#  Tests 4: optimization/ retirado (F2.8); la alternativa es OrchestratorOptimizer
 # ─────────────────────────────────────────────────────────────────────
-class TestOptunaIntegrationDeprecated:
-    """Los módulos heredados optuna_integration y visualizer siguen presentes
-    como shims DEPRECADOS por retrocompatibilidad: requieren optuna y emiten
-    DeprecationWarning al importarse (ver punto 5 del docstring del módulo). La
-    alternativa moderna soportada es evaluation.OrchestratorOptimizer.
-
-    Los tres símbolos son OPT-IN: solo están disponibles con optuna instalado
-    (extra `optimization`/`dev`). Sin optuna, evaluation.__init__ no exporta
-    OrchestratorOptimizer y los shims no importan. Por eso, igual que en
-    test_fase3_optuna.py, estos tests hacen skip cuando optuna no está presente.
+class TestOptimizacionRetirada:
+    """Hasta F2.8 ``optimization/optuna_integration`` y ``optimization/visualizer``
+    seguían presentes como shims DEPRECADOS (desde v3.2.7) que emitían
+    DeprecationWarning al importarse. Se retiraron con evidencia (0 usos fuera
+    del propio paquete); ``tests/test_retiros_f2_8.py`` fija el retiro. Lo que
+    se conserva es la alternativa moderna, ``evaluation.OrchestratorOptimizer``,
+    OPT-IN con optuna instalado (extra `optimization`/`dev`).
     """
-
-    def test_import_optuna_integration_emite_deprecation_warning(self):
-        """El shim heredado importa (con optuna) y emite DeprecationWarning."""
-        pytest.importorskip("optuna")
-        import importlib
-        import sys
-
-        mod_name = "record_linkage.optimization.optuna_integration"
-        sys.modules.pop(mod_name, None)
-
-        with pytest.warns(DeprecationWarning):
-            importlib.import_module(mod_name)
 
     def test_alternativa_orchestrator_optimizer_disponible(self):
         """La alternativa moderna está disponible cuando optuna está instalado."""
@@ -212,19 +198,6 @@ class TestOptunaIntegrationDeprecated:
         from record_linkage.evaluation import OrchestratorOptimizer
 
         assert OrchestratorOptimizer is not None
-
-    def test_visualizer_heredado_importable(self):
-        """El visualizer heredado importa con optuna + plotly (shim deprecado)."""
-        pytest.importorskip("optuna")
-        pytest.importorskip("plotly")
-        import importlib
-        import sys
-
-        mod_name = "record_linkage.optimization.visualizer"
-        sys.modules.pop(mod_name, None)
-
-        modulo = importlib.import_module(mod_name)
-        assert modulo is not None
 
 
 # ─────────────────────────────────────────────────────────────────────

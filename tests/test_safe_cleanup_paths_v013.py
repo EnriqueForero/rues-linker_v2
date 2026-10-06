@@ -5,14 +5,10 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
 
-import pandas as pd
 import pytest
 
-import record_linkage.evaluation.ground_truth as ground_truth_module
 from record_linkage.deduplication.colab import ColabOptimizedManager
-from record_linkage.evaluation.ground_truth import GroundTruthEvaluator
 
 
 def _symlink_or_skip(link: Path, target: Path, *, is_directory: bool = False) -> None:
@@ -130,81 +126,3 @@ def test_colab_cleanup_refuses_replaced_root_directory(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="raíz temporal cambió"):
         manager.cleanup_temp_files()
     assert sentinel.read_text(encoding="utf-8") == "keep"
-
-
-def test_cross_validate_never_reuses_or_deletes_cwd_cv_fold(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    preexisting = tmp_path / "cv_fold_0"
-    preexisting.mkdir()
-    cwd_sentinel = preexisting / "sentinel.txt"
-    cwd_sentinel.write_text("valuable", encoding="utf-8")
-
-    external = tmp_path / "outside-workspace"
-    external.mkdir()
-    external_sentinel = external / "sentinel.txt"
-    external_sentinel.write_text("valuable", encoding="utf-8")
-    output_paths: list[Path] = []
-
-    class FakeOptimizationEngine:
-        def __init__(self, *, output_dir: str, **_kwargs: Any) -> None:
-            self.output_dir = Path(output_dir)
-            output_paths.append(self.output_dir)
-            _symlink_or_skip(self.output_dir / "external-link", external, is_directory=True)
-
-        def evaluate_single_config(self, _params: dict[str, Any]) -> dict[str, float]:
-            return {"f1_score": 0.75}
-
-    monkeypatch.setattr(ground_truth_module, "OptimizationEngine", FakeOptimizationEngine)
-    data = pd.DataFrame({"ID_GRUPO_ESPERADO": ["a", "a", "b", "b"]})
-
-    result = GroundTruthEvaluator().cross_validate(
-        data,
-        parameter_space=object(),  # type: ignore[arg-type]
-        params={},
-        n_folds=2,
-    )
-
-    assert result["cv_scores"] == [0.75, 0.75]
-    assert cwd_sentinel.read_text(encoding="utf-8") == "valuable"
-    assert external_sentinel.read_text(encoding="utf-8") == "valuable"
-    assert all(path.parent != tmp_path for path in output_paths)
-    assert all(not path.exists() for path in output_paths)
-
-
-def test_cross_validate_cleans_owned_fold_when_engine_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    if not shutil.rmtree.avoids_symlink_attacks:
-        pytest.skip("This platform lacks symlink-safe recursive deletion")
-    monkeypatch.chdir(tmp_path)
-    cwd_fold = tmp_path / "cv_fold_0"
-    cwd_fold.mkdir()
-    cwd_sentinel = cwd_fold / "sentinel.txt"
-    cwd_sentinel.write_text("valuable", encoding="utf-8")
-    output_paths: list[Path] = []
-
-    class RaisingOptimizationEngine:
-        def __init__(self, *, output_dir: str, **_kwargs: Any) -> None:
-            self.output_dir = Path(output_dir)
-            output_paths.append(self.output_dir)
-            (self.output_dir / "partial-result.txt").write_text("partial", encoding="utf-8")
-
-        def evaluate_single_config(self, _params: dict[str, Any]) -> dict[str, float]:
-            raise RuntimeError("synthetic engine failure")
-
-    monkeypatch.setattr(ground_truth_module, "OptimizationEngine", RaisingOptimizationEngine)
-    data = pd.DataFrame({"ID_GRUPO_ESPERADO": ["a", "a", "b", "b"]})
-
-    with pytest.raises(RuntimeError, match="synthetic engine failure"):
-        GroundTruthEvaluator().cross_validate(
-            data,
-            parameter_space=object(),  # type: ignore[arg-type]
-            params={},
-            n_folds=2,
-        )
-
-    assert cwd_sentinel.read_text(encoding="utf-8") == "valuable"
-    assert len(output_paths) == 1
-    assert not output_paths[0].exists()

@@ -63,7 +63,7 @@ def test_severidad_equivalente(scores: pd.Series) -> None:
 
 # ════════════════════════════════════════════════════════════════════
 # Caso 2: TRUE_GROUP — strip + UNKNOWN si NaN
-# Original (ground_truth.py:459):
+# Original (evaluador_verdad.py::analyze_errors; antes ground_truth.py:459):
 #     analysis_df[truth_col].apply(
 #         lambda x: str(x).strip() if pd.notna(x) else 'UNKNOWN'
 #     )
