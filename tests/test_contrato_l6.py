@@ -24,6 +24,10 @@ Qué exige
    ``ReportingStrategy`` Protocol y lanza una excepción corriente recibe el
    mismo trato que una ``BaseReportingStrategy``: opcional → omitida con
    motivo; obligatoria → ``ArtefactoObligatorioError``.
+7. (F1.12) ``config_auditoria.json`` es un ALIAS opcional de ``manifest.json``
+   (nombre estable, ``vease``, el mismo bloque de parámetros que el
+   manifiesto); si falla, se omite con motivo y la corrida sigue. El
+   ``.txt`` y el JSON con marca de tiempo ya no existen.
 
 Las corridas usan ``tests/data_sintetica/dataset_sintetico_p2_extra_features.csv``
 (29 filas, empresas inventadas) con ``skip_reporting=False``. Cada corrida
@@ -44,6 +48,8 @@ import pytest
 from artefactos_l6 import NOMBRES_OBLIGATORIOS_L6, escribir_obligatorios_l6
 
 from record_linkage.api import linkage
+from record_linkage.config.auditoria import parametros_motor
+from record_linkage.config.profiles import PERFILES_BASE
 from record_linkage.pipeline.errores import ArtefactoObligatorioError, EstrategiaFallo
 from record_linkage.pipeline.orchestrator import Orchestrator
 from record_linkage.reporting import contrato_l6, strategies
@@ -366,38 +372,66 @@ def test_estrategia_obligatoria_que_lanza_sin_tipar_falla_la_corrida(tmp_path: P
     assert isinstance(info.value.__cause__.__cause__, OSError)
 
 
-def test_txt_de_auditoria_que_falla_se_omite_y_el_json_obligatorio_queda(
+def test_alias_de_auditoria_escribe_vease_y_el_bloque_del_manifiesto(
+    tmp_path: Path,
+) -> None:
+    """``config_auditoria.json`` (F1.12): nombre estable, ``vease: "manifest.json"``
+    y el mismo bloque ``parametros`` que escribe el manifiesto
+    (``config.auditoria.parametros_motor``); nada de ``orchestrator_version``
+    fijo ni de ``.txt``."""
+    perfil = "produccion_calibrada"
+    orq = _orquestador_parcial(tmp_path, [_ExportacionDePrueba(), strategies.ConfigAuditStrategy()])
+    orq.config = {
+        "reporting_use_checkpoints": False,
+        "profile": perfil,
+        "profiles": {perfil: PERFILES_BASE[perfil]},
+    }
+    strategies._AUDITORIA_V1_AVISADA = False
+    with pytest.warns(DeprecationWarning, match="manifest.json"):
+        archivos, _ = orq._run_L6(_datos_minimos())
+
+    salida = orq.dirs[strategies.Phase.L6_REPORTING]
+    assert sorted(p.name for p in salida.glob("config_auditoria*")) == ["config_auditoria.json"]
+    ruta = salida / "config_auditoria.json"
+    assert ruta in archivos
+    alias = json.loads(ruta.read_text(encoding="utf-8"))
+    assert alias["vease"] == "manifest.json"
+    # Una instancia parcial no tiene fuentes: la prioridad es la del perfil.
+    esperado = parametros_motor(orq.config, prioridad_fuentes=orq.prioridad_fuentes).a_dict()
+    assert alias["parametros"] == esperado
+    assert alias["parametros"]["prioridad_fuentes"] == list(
+        PERFILES_BASE[perfil]["source_quality_weights"]
+    )
+    assert "orchestrator_version" not in json.dumps(alias)
+    assert orq.l6_omitidos == []
+
+
+def test_alias_de_auditoria_que_falla_se_omite_y_la_corrida_sigue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``config_auditoria_*.txt`` es OPCIONAL: si falla (un perfil con pesos no
-    numéricos, p. ej.) la corrida NO falla, el JSON obligatorio queda y la
-    omisión va al manifiesto. Antes el TypeError subía como ``EstrategiaFallo``
-    de una estrategia obligatoria y la corrida moría diciendo que faltaba un
-    JSON que sí estaba en disco."""
-    motivo = "peso de fuente no numérico (inventado)"
+    """La auditoría ya no es obligatoria (vive en ``manifest.json``): si el
+    alias falla, la corrida NO falla y la omisión va al manifiesto con motivo.
+    Hasta F1.12 un fallo aquí tumbaba la corrida por un JSON que nadie leía."""
+    motivo = "peso de fuente no serializable (inventado)"
 
-    def _txt_roto(self: Any, path: Path, *args: Any, **kwargs: Any) -> None:
-        path.write_text("a medias", encoding="utf-8")
+    def _alias_roto(ctx: Any) -> dict[str, Any]:
         raise TypeError(motivo)
 
-    monkeypatch.setattr(strategies.ConfigAuditStrategy, "_write_txt_audit", _txt_roto)
+    monkeypatch.setattr(strategies, "contenido_alias_auditoria", _alias_roto)
     orq = _orquestador_parcial(tmp_path, [_ExportacionDePrueba(), strategies.ConfigAuditStrategy()])
 
     archivos, _ = orq._run_L6(_datos_minimos())
 
+    assert {p.name for p in archivos} == set(NOMBRES_OBLIGATORIOS_L6)
     salida = orq.dirs[strategies.Phase.L6_REPORTING]
-    # (la exportación de prueba también deja su config_auditoria_prueba.json)
-    jsons = [
-        p for p in salida.glob("config_auditoria_*.json") if p.name not in NOMBRES_OBLIGATORIOS_L6
+    assert list(salida.glob("config_auditoria*")) == []
+    assert orq.l6_omitidos == [
+        {
+            "artefacto": "config_auditoria.json",
+            "estrategia": "ConfigAuditStrategy",
+            "motivo": f"TypeError: {motivo}",
+        }
     ]
-    assert len(jsons) == 1 and jsons[0].stat().st_size > 0
-    assert jsons[0] in archivos
-    assert list(salida.glob("config_auditoria_*.txt")) == [], "el TXT a medias debe borrarse"
-    assert len(orq.l6_omitidos) == 1
-    omision = orq.l6_omitidos[0]
-    assert omision["estrategia"] == "ConfigAuditStrategy"
-    assert omision["artefacto"] == jsons[0].with_suffix(".txt").name
-    assert omision["motivo"] == f"TypeError: {motivo}"
     assert orq._meta_extra["L6_reporting"] == {"omitidos": orq.l6_omitidos}
 
 
@@ -429,7 +463,8 @@ def test_obligatorios_de_filtra_los_opcionales_de_la_estrategia() -> None:
     assert contrato_l6.obligatorios_de(_ExportacionDePrueba()) == contrato_l6.obligatorios_de(
         strategies.DataExportStrategy
     )
-    assert contrato_l6.obligatorios_de("ConfigAuditStrategy") == ("config_auditoria_*.json",)
+    assert contrato_l6.obligatorios_de("ConfigAuditStrategy") == ()
+    assert contrato_l6.artefactos_de("ConfigAuditStrategy") == ("config_auditoria.json",)
     assert contrato_l6.obligatorios_de(strategies.DashboardStrategy()) == ()
     assert contrato_l6.obligatorios_de(_SoloProtocolQueLanza()) == ()
     # artefactos_de sigue devolviendo todo (es lo que usa _omisiones_de).
@@ -456,7 +491,7 @@ def test_verificar_artefactos_detecta_falta_por_nombre_exacto(tmp_path: Path) ->
         _tocar(tmp_path, "golden_records.csv.gz"),
         _tocar(tmp_path, "tabla_correlativa.parquet"),
         _tocar(tmp_path, "tabla_correlativa.csv.gz"),
-        _tocar(tmp_path, "config_auditoria_20260101_000000.json"),
+        _tocar(tmp_path, "config_auditoria.json"),
     ]
 
     reporte = verificar_artefactos(tmp_path, generados)
@@ -477,7 +512,7 @@ def test_verificar_artefactos_exige_que_el_obligatorio_exista_en_disco(tmp_path:
         _tocar(tmp_path, "golden_records.csv.gz"),
         _tocar(tmp_path, "tabla_correlativa.parquet"),
         _tocar(tmp_path, "tabla_correlativa.csv.gz"),
-        _tocar(tmp_path, "config_auditoria_20260101_000000.json"),
+        _tocar(tmp_path, "config_auditoria.json"),
     ]
     (tmp_path / "tabla_correlativa.parquet").unlink()
     (tmp_path / "golden_records.csv.gz").write_bytes(b"")
@@ -497,7 +532,7 @@ def test_verificar_artefactos_completo_es_ok(tmp_path: Path) -> None:
         _tocar(tmp_path, "golden_records.csv.gz"),
         _tocar(tmp_path, "tabla_correlativa.parquet"),
         _tocar(tmp_path, "tabla_correlativa.csv.gz"),
-        _tocar(tmp_path, "config_auditoria_20260101_000000.json"),
+        _tocar(tmp_path, "config_auditoria.json"),
         _tocar(tmp_path, "dashboard_ejecutivo.png"),
     ]
     reporte = verificar_artefactos(tmp_path, generados)
@@ -514,14 +549,15 @@ def test_contrato_declara_obligatorios_y_opcionales_sin_solaparse() -> None:
         "tabla_correlativa.csv.gz",
         "golden_records.parquet",
         "golden_records.csv.gz",
-        "config_auditoria_*.json",
     } == patrones_obl
     assert not patrones_obl & patrones_opc
     # Toda estrategia incorporada declara al menos un artefacto.
     declaradas = {a.estrategia for a in ARTEFACTOS_OBLIGATORIOS + ARTEFACTOS_OPCIONALES}
     assert declaradas == set(contrato_l6.ESTRATEGIAS_INCORPORADAS)
-    obligatorias = set(contrato_l6.ESTRATEGIAS_OBLIGATORIAS)
-    assert obligatorias == {"DataExportStrategy", "ConfigAuditStrategy"}
+    # F1.12: la auditoría dejó de ser obligatoria (vive en manifest.json).
+    assert set(contrato_l6.ESTRATEGIAS_OBLIGATORIAS) == {"DataExportStrategy"}
+    assert "config_auditoria.json" in patrones_opc
+    assert not any(p.endswith(".txt") for p in patrones_obl | patrones_opc)
 
 
 def test_una_subclase_hereda_el_contrato_de_su_estrategia_base() -> None:

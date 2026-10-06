@@ -292,5 +292,4 @@ def test_l6_no_declara_exito_si_data_export_no_produce_artefactos(tmp_path, monk
         "tabla_correlativa.csv.gz",
         "golden_records.parquet",
         "golden_records.csv.gz",
-        "config_auditoria_*.json",
     )

@@ -397,6 +397,9 @@ def linkage(
         ``collapse_exact_duplicates``, "preprocessing"; con L6 activo,
         "report_files". Con ``carpeta_salida``, ``manifiesto['carpeta_salida']``
         es la carpeta escrita y ``dir_trabajo`` apunta a su ``_trabajo/``.
+        ``manifiesto['configuracion']`` (F1.12) trae los parámetros EFECTIVOS
+        del motor (perfil, LSH, scoring, pesos y la prioridad real de fuentes
+        del golden): es lo que ``manifest.json`` escribe bajo ``parametros``.
         Hasta 0.22.x se devolvía un ``dict``: las claves viejas
         (``res["correlative"]``, ``res.get("report_files")``…) siguen
         funcionando con ``DeprecationWarning``.
@@ -429,6 +432,7 @@ def linkage(
     """
     import tempfile
 
+    from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
     from .exporters.escritor import carpeta_pendiente, escribir_resultado
     from .pipeline.orchestrator import Orchestrator
@@ -661,6 +665,14 @@ def linkage(
         score_par_previo=info_score_par,
         prioridad_fuentes=orchestrator.prioridad_fuentes,
     )
+    # F1.12: los parámetros EFECTIVOS del motor (perfil con sus overrides,
+    # LSH, scoring, pesos y la prioridad real del golden) van al manifiesto;
+    # es lo que manifest.json escribe bajo ``parametros`` y lo que el alias
+    # config_auditoria.json repite. Se leen del config que corrió, no del
+    # que se pidió.
+    manifiesto["configuracion"] = parametros_motor(
+        orchestrator.config, prioridad_fuentes=orchestrator.prioridad_fuentes
+    ).a_dict()
     metricas: dict[str, Any] = {
         "n_registros": len(correlativa),
         "n_grupos": int(correlativa["ID_GRUPO"].nunique()),
@@ -1098,7 +1110,7 @@ def link(
     )
     # El contrato ya se completó y validó en linkage(); aquí solo cambian la
     # función, los parámetros y las métricas de cruce.
-    for clave in ("contrato", "completar", "dir_trabajo", "columnas_tecnicas"):
+    for clave in ("contrato", "completar", "dir_trabajo", "columnas_tecnicas", "configuracion"):
         manifiesto[clave] = res.manifiesto[clave]
     metricas["segundos_manifiesto"] = res.metricas.get("segundos_manifiesto", 0.0)
     res.metricas = metricas

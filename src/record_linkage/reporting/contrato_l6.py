@@ -18,20 +18,28 @@ verificable:
 * **Obligatorios**: sin ellos la corrida no tiene entregable y FALLA con
   :class:`~record_linkage.pipeline.errores.ArtefactoObligatorioError`.
   Son los dos cuerpos del resultado en los dos formatos que la librería
-  promete (parquet para programas, csv.gz para cualquier herramienta) y la
-  auditoría de configuración en JSON, que es lo que permite reproducir la
-  corrida.
+  promete (parquet para programas, csv.gz para cualquier herramienta).
 * **Opcionales**: si fallan, el archivo NO se escribe y la omisión queda en
   ``manifest.json → L6_reporting.meta.omitidos`` como
   ``{artefacto, estrategia, motivo}``. Son los Excel (comodidad: el parquet
   es el entregable), los reportes analíticos, las figuras, el dashboard, los
-  insights y la auditoría en texto.
+  insights y el alias ``config_auditoria.json``.
+
+Hasta F1.12 la auditoría de configuración (``config_auditoria_<ts>.json``)
+era obligatoria porque era lo que permitía reproducir la corrida. Ya no: lo
+que era su contenido vive en el ``manifest.json`` de la carpeta del estándar
+(``exporters.escritor.Manifiesto``: ``parametros`` con perfil, LSH, scoring,
+pesos y prioridad de fuentes real, ``tiempos_por_fase``, ``rss_por_fase``,
+``metricas``, ``version`` real e ``insumos`` con huella), que
+``linkage(carpeta_salida=...)`` escribe siempre. ``config_auditoria.json``
+(nombre estable, sin marca de tiempo) queda como alias opcional que remite al
+manifiesto; el ``.txt`` desapareció.
 
 Los nombres son los de v1 (decisión de Enrique: se conservan los nombres de
 columna y de archivo; el estándar nuevo de ``ESTANDAR_SALIDA.md`` los
 renombra en F1.9–F1.14 y esta lista se actualizará ahí). Los patrones son
-explícitos (``fnmatch``): ``config_auditoria_*.json`` lleva una marca de
-tiempo y los Excel de muestra llevan el límite de filas en el nombre.
+explícitos (``fnmatch``): los Excel de muestra llevan el límite de filas en
+el nombre.
 
 Uso
 ---
@@ -106,11 +114,6 @@ ARTEFACTOS_OBLIGATORIOS: tuple[ArtefactoDeclarado, ...] = (
         "golden_records.csv.gz",
         "DataExportStrategy",
         "el golden en texto comprimido, legible sin pandas",
-    ),
-    ArtefactoDeclarado(
-        "config_auditoria_*.json",
-        "ConfigAuditStrategy",
-        "configuración efectiva, métricas y tiempos: lo que reproduce la corrida",
     ),
 )
 
@@ -191,7 +194,9 @@ ARTEFACTOS_OPCIONALES: tuple[ArtefactoDeclarado, ...] = (
         "casos problemáticos con detalle",
     ),
     ArtefactoDeclarado(
-        "config_auditoria_*.txt", "ConfigAuditStrategy", "auditoría legible para humanos"
+        "config_auditoria.json",
+        "ConfigAuditStrategy",
+        "alias de v1 (F1.12): remite a manifest.json, donde vive la configuración efectiva",
     ),
 )
 

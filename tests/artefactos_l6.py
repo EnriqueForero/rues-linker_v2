@@ -4,8 +4,10 @@ Una estrategia de captura (que sustituye a ``DataExportStrategy`` en una
 prueba) tiene que dejar los obligatorios por nombre exacto para que
 ``Orchestrator._run_L6`` cuente la corrida como válida. La lista NO se
 reescribe aquí: se deriva de ``reporting.contrato_l6.ARTEFACTOS_OBLIGATORIOS``
-(regla 3: una regla se escribe una sola vez); un patrón con comodín
-(``config_auditoria_*.json``) se concreta sustituyendo ``*`` por ``prueba``.
+(regla 3: una regla se escribe una sola vez). Desde F1.12 ningún obligatorio
+lleva comodín (``config_auditoria_*.json`` dejó de ser obligatorio: su
+contenido vive en ``manifest.json``); si alguno volviera a llevarlo, ``*``
+se concreta como ``prueba``.
 
 Este módulo no es una prueba (no empieza por ``test_``): pytest lo importa
 desde ``tests/`` porque el directorio no es un paquete y queda en ``sys.path``.

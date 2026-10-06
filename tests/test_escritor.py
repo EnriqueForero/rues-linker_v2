@@ -8,8 +8,9 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
 * la carpeta ``<AAAA-MM-DD_HHMM>_<nombre>/`` tiene la forma EXACTA del
   estándar (lista fija de rutas relativas);
 * ``manifest.json`` lista cada artefacto con su SHA-256 y tamaño reales y
-  trae los bloques del estándar (insumos, conteos, invariantes, parámetros,
-  tiempos y RSS por fase, renombres, prioridad de fuentes, omitidos);
+  trae los bloques del estándar (insumos, conteos, invariantes, parámetros
+  —llamada y efectivos del motor, con la prioridad de fuentes—, métricas,
+  tiempos y RSS por fase, renombres, omitidos);
 * dos escrituras del mismo resultado con la misma ``marca_tiempo`` producen
   las mismas huellas en los artefactos deterministas (parquet, csv). Los
   ``.xlsx`` quedan fuera de la comparación: openpyxl escribe la fecha de
@@ -188,7 +189,17 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
         assert art["sha256"] == _sha256(archivo), ruta
     # Bloques del estándar.
     assert texto["insumos"] == res.manifiesto["entradas"]
-    assert texto["parametros"] == res.manifiesto["parametros"]
+    # F1.12: la llamada y los parámetros efectivos del motor, en un solo bloque.
+    assert texto["parametros"]["llamada"] == res.manifiesto["parametros"]
+    assert texto["parametros"]["perfil"] == res.manifiesto["parametros"]["profile"]
+    assert set(texto["parametros"]) == {
+        "llamada",
+        "perfil",
+        "lsh",
+        "scoring",
+        "pesos",
+        "prioridad_fuentes",
+    }
     assert texto["conteos"]["filas"] == len(res.correlativa)
     assert texto["conteos"]["grupos"] == res.correlativa["ID_GRUPO"].nunique()
     assert (
@@ -200,7 +211,9 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
     assert set(texto["tiempos_por_fase"]) >= {"L1_prep", "L5_golden"}
     assert set(texto["rss_por_fase"]) >= {"L1_prep", "L5_golden"}
     assert texto["renombres"] == {"ID_REGISTRO": "ID_REGISTRO_FUENTE"}
-    assert texto["prioridad_fuentes"] == res.manifiesto["completar"]["prioridad_fuentes"]
+    prioridad = res.manifiesto["completar"]["prioridad_fuentes"]
+    assert texto["parametros"]["prioridad_fuentes"] == prioridad
+    assert texto["metricas"]["candidatos"] and texto["metricas"]["pares_puntuados"]
     assert texto["omitidos"] == []
     assert texto["corrida"]["funcion"] == "linkage"
     assert isinstance(Manifiesto.desde_dict(texto), Manifiesto)

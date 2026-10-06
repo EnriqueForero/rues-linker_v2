@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 import psutil
 
+from ..config.auditoria import prioridad_del_perfil
 from ..engine.cannot_link import aplicar_cannot_link_identificador
 from ..engine.clusterer import OptimizedClusterer
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
@@ -313,11 +314,14 @@ class Orchestrator:
 
     @property
     def prioridad_fuentes(self) -> list[str]:
-        """Prioridad de fuentes del golden (L5): las claves de
-        ``source_quality_weights`` del perfil o, si no hay, el orden de las
-        fuentes. Una sola regla; ``api.py`` la lee de aquí."""
-        prioridad = list(self.profile.get("source_quality_weights", {}).keys())
-        return prioridad or list(self.sources.keys())
+        """Prioridad de fuentes del golden (L5): la que declara el perfil
+        (``config.auditoria.prioridad_del_perfil``: claves de
+        ``source_quality_weights``) o, si no hay, el orden de las fuentes.
+        Una sola regla; ``api.py``, L6 y el manifiesto la leen de aquí. Una
+        instancia parcial sin ``sources`` (fixtures de L6) solo conoce la
+        del perfil."""
+        prioridad = prioridad_del_perfil(self.profile)
+        return prioridad or list(getattr(self, "sources", {}).keys())
 
     @property
     def output_dir(self) -> Path:
@@ -2009,7 +2013,9 @@ class Orchestrator:
             metrics["reporting_sampled"] = True
             metrics["reporting_sample_size"] = SAMPLE_SIZE
 
-        # 5. CREAR CONTEXTO
+        # 5. CREAR CONTEXTO (F1.12: la prioridad REAL del golden viaja con él,
+        #    para que el alias config_auditoria.json diga lo mismo que el manifiesto)
+        prioridad = tuple(self.prioridad_fuentes)
         ctx = ReportingContext(
             golden_df=golden_df,
             correlative_df=correl_df,
@@ -2018,6 +2024,7 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
         export_ctx = ReportingContext(
             golden_df=full_golden_df,
@@ -2027,6 +2034,7 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
 
         # 6. EJECUTAR ESTRATEGIAS BAJO EL CONTRATO DE L6 (F1.4)
@@ -2052,8 +2060,8 @@ class Orchestrator:
 
             # Los artefactos obligatorios se intentan incluso bajo presión
             # crítica (la exportación usa streaming desde checkpoints y evita
-            # el Excel completo con RAM alta; la auditoría es un JSON). Solo
-            # se omite la analítica, y con constancia.
+            # el Excel completo con RAM alta). Solo se omite la analítica (y
+            # el alias config_auditoria.json, F1.12), y con constancia.
             if current_mem > 95 and not obligatoria:
                 motivo = f"RAM crítica ({current_mem:.1f} %): se omitió para proteger la corrida"
                 self.log.error(f"   🛑 {strategy.name}: {motivo}")
