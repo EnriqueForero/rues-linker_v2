@@ -963,3 +963,24 @@ def test_el_colapso_mejora_sin_columnas_de_arrastre(tmp_path: Path) -> None:
     )
     assert len(resultado.correlativa) == 40  # todas las filas restituidas
     assert resultado.correlativa["CIUDAD"].nunique() == 40  # y su columna intacta
+
+
+def test_golden_de_y_conflictos_identificador_de_exigen_el_contrato() -> None:
+    """Los dos guardas que ``_ejecutar_cruce_medido`` aplica a lo que devuelve
+    ``linkage()``: sin golden no hay entregable, y el QA de identificador sale
+    del manifiesto de ``completar``, no se recalcula. Un fallo es accionable."""
+    from record_linkage.flujo.cruce import _conflictos_identificador_de, _golden_de
+
+    df = pd.DataFrame({"ID_GRUPO": [0]})
+    with pytest.raises(ContratoSalidaError, match="sin golden"):
+        _golden_de(ResultadoLinkage(correlativa=df, golden=None))
+    assert _golden_de(ResultadoLinkage(correlativa=df, golden=df)) is df
+
+    with pytest.raises(ContratoSalidaError, match=r"sin completar\.identificador"):
+        _conflictos_identificador_de(ResultadoLinkage(correlativa=df, golden=df))
+    con_qa = ResultadoLinkage(
+        correlativa=df,
+        golden=df,
+        manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 2}}},
+    )
+    assert _conflictos_identificador_de(con_qa) == 2

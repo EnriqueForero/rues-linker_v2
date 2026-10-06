@@ -114,6 +114,15 @@ def safe_sheet_name(value: str, used: set[str]) -> str:
     return candidate
 
 
+def _copia_en_primera_escritura(out: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+    """La primera columna que cambia copia (superficial) ``df``; las siguientes escriben en esa copia.
+
+    Es lo que garantiza que el DataFrame de entrada nunca se muta y que, sin
+    texto peligroso ni contenedores, se devuelve el MISMO objeto sin copiar.
+    """
+    return df.copy(deep=False) if out is df else out
+
+
 def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -> pd.DataFrame:
     """Devuelve una vista segura para CSV/XLSX sin mutar el DataFrame fuente.
 
@@ -150,8 +159,7 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
         # neutralización sobre ese texto, como sobre cualquier otro.
         representada = representar_contenedores(series)
         if representada is not series:
-            if out is df:
-                out = df.copy(deep=False)
+            out = _copia_en_primera_escritura(out, df)
             out.isetitem(position, representada.to_numpy(copy=False))
             series = representada
         try:
@@ -161,8 +169,7 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
             continue
         if not (bool(mask.any()) or bool(control.any())):
             continue
-        if out is df:
-            out = df.copy(deep=False)
+        out = _copia_en_primera_escritura(out, df)
         escaped = series.astype(object).copy()
         if bool(control.any()):
             # Primero los controles: un "\x1a=SUMA" queda "=SUMA" y ENTONCES
@@ -200,8 +207,7 @@ def prepare_spreadsheet_data(df: pd.DataFrame, *, include_index: bool = False) -
             isinstance(name, str) and name.startswith(FORMULA_PREFIXES) for name in df.index.names
         )
         if index_changed:
-            if out is df:
-                out = df.copy(deep=False)
+            out = _copia_en_primera_escritura(out, df)
             if isinstance(df.index, pd.MultiIndex):
                 out.index = pd.MultiIndex.from_tuples(escaped_index, names=escaped_names)
             else:
