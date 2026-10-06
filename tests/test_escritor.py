@@ -24,7 +24,18 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
   ``leer_resultado`` devuelve, también con nombres que empiezan por
   ``=``, ``+``, ``-`` o ``@``;
 * un ``_trabajo/`` ajeno en la pendiente (``res.dir_trabajo`` fuera) hace
-  fallar la escritura en vez de publicarse como si fuera de esta corrida;
+  fallar la escritura en vez de publicarse como si fuera de esta corrida
+  (también cuando ``res.dir_trabajo`` es None, sin decir «en None»);
+* en ``revision.csv`` una celda vacía y un ausente son lo mismo: el CSV no
+  los distingue, y ``leer_resultado`` devuelve ``pd.NA`` (lo que el contrato
+  llama ausente), nunca ``''``;
+* dos figuras con el mismo nombre no se escriben (``figuras/`` es plano):
+  la escritura falla antes de tocar el disco;
+* tras el ``rename`` de la pendiente ninguna ruta del resultado
+  (``metricas['report_files']``, ``manifiesto['columnas_tecnicas']``, el
+  ``origen`` de SCORE_PAR) ni del ``manifest.json`` publicado apunta a
+  ``.<nombre>.pendiente/``: en memoria quedan bajo la carpeta definitiva y
+  en el JSON relativas a ``_trabajo/``;
 * un ``_trabajo/manifest.json`` ilegible deja ``tiempos_por_fase`` vacío y
   lo declara en ``omitidos``;
 * ``linkage(carpeta_salida=...)`` escribe la carpeta y deja ``_trabajo/``
@@ -126,15 +137,17 @@ def _con(res: ResultadoLinkage, **cambios: Any) -> ResultadoLinkage:
 #: cálculo tomaría por fórmula. Empresas inventadas.
 REVISION_CON_PREFIJOS = pd.DataFrame(
     {
-        "TIPO": ["cruce", "cruce", "duplicado", "cruce"],
-        "FUENTE": ["ORBIS", "ORBIS", "RUES", "ORBIS"],
-        "CLAVE_A": ["RUES-1", "RUES-2", "RUES-3", "RUES-4"],
-        "NOMBRE_A": ["=EMPRESA A SAS", "+EMPRESA C", "-EMPRESA E", "@EMPRESA G"],
-        "CLAVE_B": ["ORBIS-1", "ORBIS-2", "RUES-5", "ORBIS-4"],
-        "NOMBRE_B": ["-EMPRESA B LTDA", "@EMPRESA D", "=EMPRESA F", "+EMPRESA H"],
-        "DECISION": ["distinta", "misma_empresa", "distinta", "mismo_grupo"],
-        "AUTOR": ["asistida", "asistida", "asistida", "asistida"],
-        "RAZON": ["+no es la misma", "=mismo NIT", "-sede distinta", "@matriz y filial"],
+        "TIPO": ["cruce", "cruce", "duplicado", "cruce", "cruce"],
+        "FUENTE": ["ORBIS", "ORBIS", "RUES", "ORBIS", "ORBIS"],
+        "CLAVE_A": ["RUES-1", "RUES-2", "RUES-3", "RUES-4", "RUES-6"],
+        "NOMBRE_A": ["=EMPRESA A SAS", "+EMPRESA C", "-EMPRESA E", "@EMPRESA G", "EMPRESA I"],
+        "CLAVE_B": ["ORBIS-1", "ORBIS-2", "RUES-5", "ORBIS-4", "ORBIS-6"],
+        "NOMBRE_B": ["-EMPRESA B LTDA", "@EMPRESA D", "=EMPRESA F", "+EMPRESA H", "EMPRESA J"],
+        "DECISION": ["distinta", "misma_empresa", "distinta", "mismo_grupo", "distinta"],
+        "AUTOR": ["asistida", "asistida", "asistida", "asistida", "asistida"],
+        # La última fila no tiene RAZON (pd.NA): el CSV la escribe vacía y
+        # leer_resultado la devuelve como NA, no como ''.
+        "RAZON": ["+no es la misma", "=mismo NIT", "-sede distinta", "@matriz y filial", pd.NA],
     },
     dtype="string",
 )
@@ -346,10 +359,20 @@ def test_trabajo_ajeno_en_la_pendiente_falla_rapido(res: ResultadoLinkage, tmp_p
     with pytest.raises(ErrorRuesLinker, match="_trabajo") as exc:
         escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     assert "Qué hacer" in str(exc.value) and "carpeta_salida" in str(exc.value)
+    assert str(res.dir_trabajo) in str(exc.value)
     assert not (tmp_path / CARPETA_ESPERADA).exists()
     # Nada se borra: el _trabajo/ ajeno sigue ahí para reanudar o borrar a mano.
     assert (ajeno / "ajeno.txt").is_file()
     assert sorted(p.name for p in pendiente.iterdir()) == ["_trabajo"]
+    # Sin dir_trabajo el mensaje lo dice así, no «tiene su trabajo en None».
+    with pytest.raises(ErrorRuesLinker, match="_trabajo") as exc:
+        escribir_resultado(
+            _con(res, dir_trabajo=None), tmp_path, "prueba", marca_tiempo=MARCA, excel=False
+        )
+    assert "None" not in str(exc.value), str(exc.value)
+    assert "no tiene dir_trabajo" in str(exc.value)
+    assert (ajeno / "ajeno.txt").is_file()
+    assert not (tmp_path / CARPETA_ESPERADA).exists()
 
 
 @pytest.mark.parametrize("contenido", ["{", "[]"])
@@ -376,6 +399,43 @@ def test_trabajo_manifest_ilegible_se_declara_en_omitidos(
     )
     texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
     assert {o["artefacto"] for o in texto["omitidos"]} >= {"tiempos_por_fase", "rss_por_fase"}
+
+
+def test_figuras_homonimas_fallan_antes_de_escribir(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """``figuras/`` es plano: dos PNG con el mismo nombre se pisarían y el
+    manifiesto listaría dos entradas para un archivo. Se falla con mensaje
+    accionable y no queda ni carpeta definitiva ni pendiente. La misma ruta
+    pasada dos veces NO es un choque: se copia una vez."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+    (a / "fig.png").write_bytes(b"\x89PNG" + b"\x00" * 10)
+    (b / "fig.png").write_bytes(b"\x89PNG" + b"\x00" * 20)
+    salida = tmp_path / "salida"
+    with pytest.raises(ErrorRuesLinker, match=r"fig\.png") as exc:
+        escribir_resultado(
+            res,
+            salida,
+            "prueba",
+            marca_tiempo=MARCA,
+            excel=False,
+            figuras=[a / "fig.png", b / "fig.png"],
+        )
+    assert "Qué hacer" in str(exc.value) and "figuras=" in str(exc.value)
+    assert not (salida / CARPETA_ESPERADA).exists()
+    assert not (salida / ".prueba.pendiente").exists()
+    # La misma figura dos veces se copia una vez y el manifiesto la lista una vez.
+    man = escribir_resultado(
+        res,
+        salida,
+        "prueba",
+        marca_tiempo=MARCA,
+        excel=False,
+        figuras=[a / "fig.png", a / "fig.png"],
+    )
+    assert [x["ruta"] for x in man.artefactos if x["ruta"].startswith("figuras/")] == [
+        "figuras/fig.png"
+    ]
+    assert leer_resultado(man.carpeta).validar().ok
 
 
 def test_carpeta_definitiva_existente_falla_rapido(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -463,10 +523,31 @@ def test_revision_csv_es_fiel_a_los_datos(res: ResultadoLinkage, tmp_path: Path)
     assert "=EMPRESA A SAS" in texto and "+no es la misma" in texto
     leido = leer_resultado(man.carpeta)
     pd.testing.assert_frame_equal(leido.revision, rev)
+    assert leido.revision["RAZON"].isna().tolist() == [False, False, False, False, True]
     assert leido.validar().ok
     # El diccionario también es fiel: ningún apóstrofo añadido.
     dic = (man.carpeta / "diccionario.csv").read_text(encoding="utf-8")
     assert "'=" not in dic and "'-" not in dic and "'+" not in dic and "'@" not in dic
+
+
+def test_revision_csv_celda_vacia_es_ausente(res: ResultadoLinkage, tmp_path: Path) -> None:
+    """Un CSV no distingue ``''`` de ausente: en el estándar la celda vacía
+    ES el ausente, y ``leer_resultado`` devuelve ``pd.NA`` (lo que una persona
+    deja en blanco en el archivo de decisiones no es una cadena vacía). Una
+    ``''`` en memoria vuelve como NA: queda documentado aquí y en el escritor,
+    no se repara en silencio. Los textos ``NA``, ``null`` o ``nan`` siguen
+    siendo texto."""
+    rev = REVISION_CON_PREFIJOS.copy()
+    rev.loc[0, "RAZON"] = ""
+    rev.loc[1, "RAZON"] = "NA"
+    rev.loc[2, "RAZON"] = "null"
+    man = escribir_resultado(_con(res, revision=rev), tmp_path, "prueba", marca_tiempo=MARCA)
+    leido = leer_resultado(man.carpeta).revision
+    assert leido["RAZON"].isna().tolist() == [True, False, False, False, True]
+    assert leido["RAZON"].tolist()[1:4] == ["NA", "null", "@matriz y filial"]
+    esperado = rev.copy()
+    esperado.loc[0, "RAZON"] = pd.NA
+    pd.testing.assert_frame_equal(leido, esperado)
 
 
 def test_leer_resultado_con_alias_en_espanol(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -525,8 +606,19 @@ def test_linkage_con_carpeta_salida_escribe_el_estandar(tmp_path: Path) -> None:
     assert res.manifiesto["dir_trabajo"] == str(carpeta / "_trabajo")
     assert res.manifiesto["carpeta_salida"] == str(carpeta)
     assert set(_rutas_relativas(carpeta)) == set(RUTAS_ESPERADAS) - {"figuras/dashboard.png"}
-    man = json.loads((carpeta / "manifest.json").read_text(encoding="utf-8"))
+    # En memoria, ninguna ruta sigue apuntando a la pendiente que ya no existe.
+    assert res.manifiesto["columnas_tecnicas"]["quedan_en"] == str(carpeta / "_trabajo")
+    origen = res.manifiesto["completar"]["score_par"]["origen"]
+    assert origen == str(carpeta / "_trabajo" / "L3_scoring" / "scored.db")
+    assert Path(origen).is_file()
+    texto = (carpeta / "manifest.json").read_text(encoding="utf-8")
+    assert ".pendiente" not in texto
+    man = json.loads(texto)
+    # En el JSON publicado las rutas bajo la pendiente quedan relativas a la
+    # carpeta (sobreviven a mover la carpeta o cambiar de máquina).
     assert man["corrida"]["dir_trabajo"] == "_trabajo"
+    assert man["corrida"]["columnas_tecnicas"]["quedan_en"] == "_trabajo"
+    assert man["corrida"]["completar"]["score_par"]["origen"] == "_trabajo/L3_scoring/scored.db"
     assert set(man["tiempos_por_fase"]) == {
         "L1_prep",
         "L2_lsh_candidates",
@@ -537,6 +629,9 @@ def test_linkage_con_carpeta_salida_escribe_el_estandar(tmp_path: Path) -> None:
     leido = leer_resultado(carpeta)
     assert leido.validar().ok
     assert leido.dir_trabajo == carpeta / "_trabajo"
+    # leer_resultado las resuelve contra la carpeta leída.
+    assert leido.manifiesto["columnas_tecnicas"]["quedan_en"] == str(carpeta / "_trabajo")
+    assert leido.manifiesto["completar"]["score_par"]["origen"] == origen
 
 
 def _exigir_l6() -> None:
@@ -658,6 +753,64 @@ def test_con_l6_las_figuras_van_a_figuras(corrida_con_l6: dict[str, Any]) -> Non
     res: ResultadoLinkage = corrida_con_l6["res"]
     assert res.metricas["report_files"]
     assert leer_resultado(carpeta).validar().ok
+
+
+def test_con_l6_las_rutas_del_resultado_sobreviven_al_rename(
+    corrida_con_l6: dict[str, Any],
+) -> None:
+    """El docstring de ``linkage()`` promete ``report_files`` con L6 activo:
+    tras el ``rename`` de la pendiente esas rutas (y las demás del resultado)
+    deben existir, no apuntar a ``.conl6.pendiente/``."""
+    carpeta: Path = corrida_con_l6["carpeta"]
+    res: ResultadoLinkage = corrida_con_l6["res"]
+    report_files = [Path(f) for f in res.metricas["report_files"]]
+    assert len(report_files) >= 20
+    assert all(f.is_file() for f in report_files), [str(f) for f in report_files if not f.is_file()]
+    assert all(carpeta / "_trabajo" in f.parents for f in report_files)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        assert res.get("report_files") == res.metricas["report_files"]
+    assert res.manifiesto["columnas_tecnicas"]["quedan_en"] == str(carpeta / "_trabajo")
+    assert Path(res.manifiesto["completar"]["score_par"]["origen"]).is_file()
+    assert ".pendiente" not in json.dumps(res.manifiesto, default=str)
+    assert ".pendiente" not in json.dumps(res.metricas, default=str)
+    assert ".pendiente" not in (carpeta / "manifest.json").read_text(encoding="utf-8")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reubicar y relativizar rutas anidadas (lo que usa el rename)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_reubicar_rutas_recorre_la_estructura_y_respeta_el_limite(tmp_path: Path) -> None:
+    de = tmp_path / ".x.pendiente"
+    a = tmp_path / "2026-10-06_1430_x"
+    valor = {
+        "lista": [str(de / "_trabajo" / "a.db"), de / "_trabajo", str(de)],
+        "tupla": (str(de / "b"), 3, None),
+        "otro": str(tmp_path / ".x.pendiente2" / "c"),  # NO está bajo de: límite en el separador
+        "texto": "sin ruta",
+        "anidado": {"quedan_en": str(de / "_trabajo")},
+    }
+    nuevo = escritor._reubicar_rutas(valor, de, a)
+    assert nuevo == {
+        "lista": [str(a / "_trabajo" / "a.db"), a / "_trabajo", str(a)],
+        "tupla": (str(a / "b"), 3, None),
+        "otro": str(tmp_path / ".x.pendiente2" / "c"),
+        "texto": "sin ruta",
+        "anidado": {"quedan_en": str(a / "_trabajo")},
+    }
+    assert isinstance(nuevo["lista"][1], Path)
+    assert valor["anidado"]["quedan_en"] == str(de / "_trabajo")  # el original no se toca
+    relativo = escritor._relativizar_rutas(valor, de)
+    assert relativo["lista"] == ["_trabajo/a.db", Path("_trabajo"), "."]
+    assert relativo["otro"] == valor["otro"]
+    # El camino inverso (leer_resultado): de relativa a la carpeta leída.
+    vuelta = escritor._reubicar_rutas(
+        relativo, Path("_trabajo"), a / "_trabajo", tambien_resuelta=False
+    )
+    assert vuelta["lista"][:2] == [str(a / "_trabajo" / "a.db"), a / "_trabajo"]
+    assert vuelta["anidado"] == {"quedan_en": str(a / "_trabajo")}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

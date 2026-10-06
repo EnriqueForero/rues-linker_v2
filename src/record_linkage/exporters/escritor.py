@@ -38,7 +38,17 @@ Reglas
   la forma del archivo de decisiones, y nada se repara en silencio. La
   neutralización de hoja de cálculo (``prepare_spreadsheet_data``: apóstrofo
   ante ``=``, ``+``, ``-``, ``@``) se aplica SOLO a lo que se abre en una
-  hoja: los ``.xlsx`` y los alias ``.csv.gz`` de v1.
+  hoja: los ``.xlsx`` y los alias ``.csv.gz`` de v1. Única limitación, del
+  formato: un CSV no distingue la celda vacía del ausente; en el estándar la
+  celda vacía ES el ausente y ``leer_resultado`` la devuelve como ``pd.NA``
+  (una ``''`` en memoria vuelve como NA). Los textos ``NA``, ``null``,
+  ``nan``… siguen siendo texto.
+* **Sin rutas a la pendiente.** Tras el ``rename``, toda ruta del resultado
+  que apuntaba a ``.<nombre>.pendiente/`` (``metricas['report_files']``,
+  ``manifiesto['columnas_tecnicas']``, el ``origen`` de SCORE_PAR…) se
+  reubica bajo la carpeta definitiva; en ``manifest.json`` esas rutas van
+  RELATIVAS a la carpeta (``_trabajo/...``) y ``leer_resultado`` las resuelve
+  contra la carpeta leída si ``_trabajo/`` sigue ahí.
 * **Determinista.** Los parquet se escriben con ``pyarrow`` fijando el
   esquema del contrato y sin metadatos variables (sin el bloque ``pandas``
   con versiones): dos escrituras del mismo resultado producen los mismos
@@ -75,8 +85,10 @@ import gzip
 import hashlib
 import json
 import logging
+import os
 import shutil
-from collections.abc import Iterable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -366,6 +378,10 @@ def escribir_csv(df: pd.DataFrame, ruta: Path) -> None:
     escribe es lo que ``leer_resultado`` devuelve, sin apóstrofos ante ``=``,
     ``+``, ``-`` o ``@``. La neutralización queda para ``escribir_xlsx`` y los
     alias ``.csv.gz`` (``escribir_csv_gz*``), que se abren en hoja de cálculo.
+
+    Lo único que el CSV no conserva es la diferencia entre ``''`` y ausente:
+    ambos se escriben como celda vacía y ``leer_resultado`` la devuelve como
+    ``pd.NA`` (ver ``leer_resultado``).
     """
     df.to_csv(ruta, index=False, lineterminator="\n")
 
@@ -445,6 +461,91 @@ def _leeme_no_cabe(tabla: str, n_filas: int) -> pd.DataFrame:
 
 def _miles(n: int) -> str:
     return f"{n:,}".replace(",", ".")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rutas anidadas: reubicar tras el rename y relativizar en el manifiesto
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _transformar_rutas(valor: Any, transformar: Callable[[str], str | None]) -> Any:
+    """Aplica ``transformar`` a cada ``str``/``Path`` de una estructura anidada.
+
+    Recorre dict, list y tuple y devuelve contenedores NUEVOS (el original no
+    se toca). ``transformar`` devuelve la cadena nueva o ``None`` si esa no es
+    una ruta que le interese; un ``Path`` sigue siendo ``Path``. Cualquier
+    otro objeto (números, DataFrames…) se devuelve tal cual.
+    """
+    if isinstance(valor, Path):
+        nuevo = transformar(str(valor))
+        return valor if nuevo is None else Path(nuevo)
+    if isinstance(valor, str):
+        nuevo = transformar(valor)
+        return valor if nuevo is None else nuevo
+    if isinstance(valor, dict):
+        return {k: _transformar_rutas(v, transformar) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_transformar_rutas(v, transformar) for v in valor]
+    if isinstance(valor, tuple):
+        return tuple(_transformar_rutas(v, transformar) for v in valor)
+    return valor
+
+
+def _bajo(ruta: str, base: str) -> bool:
+    """``ruta`` es ``base`` o está debajo (límite en el separador: ``x.pendiente2``
+    no está bajo ``x.pendiente``). Acepta ``/`` además de ``os.sep``: las rutas
+    relativas del ``manifest.json`` son POSIX."""
+    base = base.rstrip(os.sep + "/")
+    return ruta == base or ruta.startswith(base + os.sep) or ruta.startswith(base + "/")
+
+
+def _pares_de_prefijos(de: Path, a: Path, *, tambien_resuelta: bool) -> list[tuple[str, str]]:
+    """``(de, a)`` tal cual y, si difiere, resuelta: L1…L6 guardan unas rutas
+    como se las dieron (relativas) y otras absolutas (``Orchestrator``
+    resuelve ``work_dir``)."""
+    pares = [(str(de), str(a))]
+    if tambien_resuelta and str(de.resolve()) != str(de):
+        pares.append((str(de.resolve()), str(a.resolve())))
+    return pares
+
+
+def _reubicar_rutas(valor: Any, de: Path, a: Path, *, tambien_resuelta: bool = True) -> Any:
+    """Copia de ``valor`` con toda ruta bajo ``de`` llevada bajo ``a``.
+
+    Es lo que hace sobrevivir al ``rename`` de la pendiente a las rutas que
+    el resultado guarda en memoria (``metricas['report_files']``,
+    ``manifiesto['columnas_tecnicas']['quedan_en']``, ``origen`` de
+    SCORE_PAR…). Con ``tambien_resuelta=False`` solo se compara el prefijo
+    literal (p. ej. ``_trabajo`` relativo al leer una carpeta).
+    """
+    pares = _pares_de_prefijos(de, a, tambien_resuelta=tambien_resuelta)
+
+    def transformar(ruta: str) -> str | None:
+        for viejo, nuevo in pares:
+            if _bajo(ruta, viejo):
+                return nuevo + ruta[len(viejo) :]
+        return None
+
+    return _transformar_rutas(valor, transformar)
+
+
+def _relativizar_rutas(valor: Any, base: Path) -> Any:
+    """Copia de ``valor`` con toda ruta bajo ``base`` relativa a ella (POSIX).
+
+    Es lo que va al ``manifest.json``: una ruta absoluta a la pendiente no
+    sobrevive al ``rename``, y una absoluta a la carpeta no sobrevive a
+    moverla ni a cambiar de máquina. ``base`` misma queda como ``"."``.
+    """
+    pares = _pares_de_prefijos(base, base, tambien_resuelta=True)
+
+    def transformar(ruta: str) -> str | None:
+        for viejo, _ in pares:
+            if _bajo(ruta, viejo):
+                resto = ruta[len(viejo) :].lstrip(os.sep + "/")
+                return Path(resto).as_posix() if resto else "."
+        return None
+
+    return _transformar_rutas(valor, transformar)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -613,6 +714,38 @@ def _excel(
         _registrar(artefactos, carpeta, ruta)
 
 
+def _figuras_sin_choques(figuras: Sequence[Path]) -> list[Path]:
+    """Las figuras sin repetir la misma ruta; falla si dos DISTINTAS se llaman igual.
+
+    ``figuras/`` es plano: la segunda pisaría a la primera y el manifiesto
+    listaría dos entradas para un archivo, y ``leer_resultado`` culparía al
+    usuario de una edición que no hizo. La misma ruta dos veces no es un
+    choque: se copia una vez.
+    """
+    unicas: list[Path] = []
+    vistas: set[Path] = set()
+    for figura in figuras:
+        ruta = Path(figura)
+        clave = ruta.resolve()
+        if clave not in vistas:
+            vistas.add(clave)
+            unicas.append(ruta)
+    repetidos = sorted(n for n, k in Counter(f.name for f in unicas).items() if k > 1)
+    if repetidos:
+        detalle = "; ".join(
+            f"{n}: " + ", ".join(str(f) for f in unicas if f.name == n) for n in repetidos
+        )
+        raise ErrorRuesLinker(
+            mensaje_accionable(
+                f"dos figuras se llaman igual ({detalle}).",
+                "figuras/ es plano: la segunda pisaría a la primera y el manifiesto no "
+                "describiría lo que hay.",
+                "renombre las PNG antes de pasarlas a figuras=.",
+            )
+        )
+    return unicas
+
+
 def _escribir_en(
     res: ResultadoLinkage,
     carpeta: Path,
@@ -630,6 +763,7 @@ def _escribir_en(
     """
     artefactos: list[dict[str, Any]] = []
     omitidos: list[dict[str, str]] = []
+    figuras = _figuras_sin_choques(figuras)
 
     ruta = carpeta / "correlativa.parquet"
     _escribir_parquet(res.correlativa, ruta, contrato.CORRELATIVA)
@@ -687,11 +821,11 @@ def _escribir_en(
     corrida = {
         k: v for k, v in res.manifiesto.items() if k not in ("entradas", "parametros", "omitidos")
     }
-    corrida["dir_trabajo"] = (
-        NOMBRE_TRABAJO
-        if dir_trabajo_relativo
-        else (str(res.dir_trabajo) if res.dir_trabajo is not None else None)
-    )
+    corrida["dir_trabajo"] = str(res.dir_trabajo) if res.dir_trabajo is not None else None
+    if dir_trabajo_relativo:
+        # _trabajo/ vive en la pendiente: ninguna ruta absoluta a ella entra
+        # al JSON (dir_trabajo → "_trabajo", quedan_en, origen de SCORE_PAR…).
+        corrida = _relativizar_rutas(corrida, carpeta)
     tiempos, rss, motivo = _tiempos_y_rss(res.dir_trabajo)
     if motivo is not None:
         logger.warning("tiempos_por_fase y rss_por_fase quedan vacíos: %s", motivo)
@@ -765,13 +899,17 @@ def escribir_resultado(
 
     Returns:
         ``Manifiesto`` (``.carpeta`` es la ruta definitiva). Si ``res.dir_trabajo``
-        estaba dentro de la carpeta pendiente, ``res.dir_trabajo`` y
-        ``res.manifiesto['dir_trabajo']`` se actualizan a la ruta definitiva, y
-        ``res.manifiesto['carpeta_salida']`` queda apuntando a la carpeta.
+        estaba dentro de la carpeta pendiente, ``res.dir_trabajo`` pasa a la
+        definitiva y ``res.metricas``/``res.manifiesto`` se reemplazan por
+        copias en las que toda ruta bajo la pendiente (``report_files`` de L6,
+        ``columnas_tecnicas['quedan_en']``, el ``origen`` de SCORE_PAR…) queda
+        bajo la definitiva; ``res.manifiesto['carpeta_salida']`` apunta a la
+        carpeta.
 
     Raises:
         ContratoSalidaError: si ``res`` incumple el contrato.
-        ErrorRuesLinker: si la carpeta definitiva ya existe (la marca tiene
+        ErrorRuesLinker: si dos figuras distintas se llaman igual (``figuras/``
+            es plano); si la carpeta definitiva ya existe (la marca tiene
             resolución de minuto: dos escrituras del mismo ``nombre`` en el
             mismo minuto chocan; la segunda falla sin tocar la primera y, si
             ``_trabajo/`` estaba en la pendiente, lo conserva para reanudar);
@@ -804,10 +942,15 @@ def escribir_resultado(
         and Path(res.dir_trabajo).resolve() == trabajo_pendiente.resolve()
     )
     if not trabajo_dentro and trabajo_pendiente.exists():
+        donde = (
+            f"tiene su trabajo en {res.dir_trabajo}"
+            if res.dir_trabajo is not None
+            else "no tiene dir_trabajo"
+        )
         raise ErrorRuesLinker(
             mensaje_accionable(
                 f"hay un {NOMBRE_TRABAJO}/ de otra corrida en {pendiente} y el resultado "
-                f"que se quiere publicar tiene su trabajo en {res.dir_trabajo}.",
+                f"que se quiere publicar {donde}.",
                 "es de una corrida interrumpida de linkage(carpeta_salida=...); publicarlo "
                 "con este resultado dejaría una carpeta cuyo manifiesto no describe los "
                 "checkpoints que contiene.",
@@ -829,7 +972,11 @@ def escribir_resultado(
         _limpiar_pendiente(pendiente, conservar_trabajo=trabajo_dentro)
         raise
     if trabajo_dentro:
+        # La pendiente ya no existe: todo lo que apuntaba a ella (dir_trabajo,
+        # report_files de L6, quedan_en, origen de SCORE_PAR…) pasa a la definitiva.
         res.dir_trabajo = definitiva / NOMBRE_TRABAJO
+        res.metricas = _reubicar_rutas(res.metricas, pendiente, definitiva)
+        res.manifiesto = _reubicar_rutas(res.manifiesto, pendiente, definitiva)
         res.manifiesto["dir_trabajo"] = str(res.dir_trabajo)
     res.manifiesto["carpeta_salida"] = str(definitiva)
     return manifiesto
@@ -862,7 +1009,13 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
 
     ``manifiesto`` del resultado trae las claves de la corrida (``funcion``,
     ``parametros``, ``entradas``…) y, en ``manifest``, el manifiesto completo
-    de la carpeta. ``dir_trabajo`` apunta a ``_trabajo/`` si está dentro.
+    de la carpeta. ``dir_trabajo`` apunta a ``_trabajo/`` si está dentro, y
+    entonces las rutas que el JSON guarda relativas a ``_trabajo/`` vuelven
+    absolutas, resueltas contra la carpeta leída (``manifest`` conserva el
+    JSON tal cual).
+
+    En ``revision.csv`` la celda vacía es el ausente: vuelve como ``pd.NA``
+    (``na_values=[""]``); ``NA``, ``null``, ``nan``… son texto.
     """
     if alias is not None and alias not in _ALIAS:
         raise ValueError(
@@ -898,7 +1051,9 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         if (carpeta / "enlaces.parquet").is_file()
         else None
     )
-    revision = pd.read_csv(carpeta / "revision.csv", dtype="string", keep_default_na=False)
+    revision = pd.read_csv(
+        carpeta / "revision.csv", dtype="string", keep_default_na=False, na_values=[""]
+    )
     if revision.empty:
         revision = contrato.revision_vacia()
     diccionario = pd.read_csv(carpeta / "diccionario.csv", dtype="string", keep_default_na=False)
@@ -912,6 +1067,10 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     trabajo = carpeta / NOMBRE_TRABAJO
     dir_trabajo = trabajo if trabajo.is_dir() else None
     manifiesto: dict[str, Any] = dict(man.corrida)
+    if dir_trabajo is not None:
+        manifiesto = _reubicar_rutas(
+            manifiesto, Path(NOMBRE_TRABAJO), dir_trabajo, tambien_resuelta=False
+        )
     manifiesto["entradas"] = man.insumos
     manifiesto["parametros"] = man.parametros
     manifiesto["contrato"] = {"version": man.contrato}
