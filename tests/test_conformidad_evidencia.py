@@ -70,12 +70,14 @@ def test_evaluar_linkage_registra_corroborar_y_camino(conjunto: ConjuntoConformi
         for f in conjunto.linkage_verdad.itertuples(index=False)
         if str(f.MATCH_ESPERADO).strip().lower() == "true"
     }
+    # F2.13: el camino tiene que ser uno de `CAMINOS` (la evidencia de un
+    # camino inventado no sería comparable con nada); se registra tal cual.
     informe = evaluar_linkage(
-        conjunto, verdaderos, etiqueta="t", version="0", corroborar=False, camino="otro_camino"
+        conjunto, verdaderos, etiqueta="t", version="0", corroborar=False, camino="linkage"
     )
     datos = informe.a_dict()
     assert datos["corroborar"] is False
-    assert datos["camino"] == "otro_camino"
+    assert datos["camino"] == "linkage"
 
 
 def test_el_flag_sobrevive_al_json(conjunto: ConjuntoConformidad, tmp_path: Path) -> None:

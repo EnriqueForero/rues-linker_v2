@@ -56,7 +56,8 @@ moverla sin declararlo rompe la suite.
 | archivo | qué fija | quién lo lee |
 |---|---|---|
 | `corrida_base_f0.json` | el banco (30.486 registros): huella `1e365ba8…`, F1 0,878, macro-F1 0,892, 287 FP que tocan negativos, recursos por fase | `tests/lineas_base.py` (`BANCO_F0`) y `tests/test_banco_linea_base.py` (la prueba `slow` reproduce la huella) |
-| `conformidad_{dedup,linkage}_{base,corroborado}.json` | los 43 casos sin y con `--corroborar` (C09 y C21 solo pasan con él) | `tests/test_conformidad_evidencia.py` |
+| `conformidad_{dedup,linkage}_{base,corroborado}.json` | los 43 casos por `dedupe_esquema`, sin y con `--corroborar` (C09 y C21 solo pasan con él) | `tests/test_conformidad_evidencia.py` |
+| `conformidad_{dedup,linkage}_{linkage,flujo_cruce}_base.json` | los mismos 43 por el camino de producción `api.linkage()` y por `flujo.cruce` (F2.13); `--corroborar` no existe ahí. Veredicto por caso y camino en `docs/CONFORMIDAD.md` §4 | `tests/test_conformidad_caminos.py` |
 | `escala_base_f0.json` | tiempo por fase y pico de RSS a 139k y 463k filas sintéticas; `scripts/escala.py --comparar` falla con una regresión > 10 % | `tests/test_escala.py` |
 | `deuda_f0.json` | el techo de deuda técnica (sección anterior); el nombre es el de F0, el contenido es el techo VIGENTE (F1 lo bajó: `except` 121 → 103, mypy 108 → 102) | job `deuda` del CI |
 | `escala_f1.json` | la misma medición que `escala_base_f0.json` sobre el tronco de F1 (contrato de salida); `scripts/escala.py --comparar base_f0 f1` es la compuerta | `tests/test_escala.py` |
