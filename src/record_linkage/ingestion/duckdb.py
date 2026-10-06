@@ -655,7 +655,7 @@ def _write_manifest_atomic(
                 f"Ya existe el manifiesto autoritativo {manifest_path}; "
                 "use overwrite=True para publicar una nueva generación."
             )
-        os.replace(pending, manifest_path)
+        pending.replace(manifest_path)
         _fsync_directory(manifest_path.parent)
     finally:
         _cleanup_file(pending, purpose="manifiesto pendiente")
@@ -997,7 +997,11 @@ class DuckDBSourceCompactor:
         compact_rows = int(connection.execute("SELECT count(*) FROM _rues_compact").fetchone()[0])
         return invalid_values, input_rows, compact_rows
 
-    def compact(
+    # Complejidad ciclomática 22 heredada del notebook. El noqa la exime de la
+    # compuerta por archivo del CI (máximo 15 en código tocado); el trinquete
+    # (scripts/deuda.py, --ignore-noqa) la sigue contando en deuda_f0.json
+    # hasta que F5 la descomponga. No añada ramas aquí: extraiga funciones.
+    def compact(  # noqa: C901
         self,
         spec: SourceSpec,
         output_directory: str | Path,
@@ -1209,7 +1213,7 @@ class DuckDBSourceCompactor:
                 if preserve_payload and payload_columns:
                     _fsync_file(payload_pending)
                 _fsync_directory(pending_dir)
-                os.replace(pending_dir, generation_dir)
+                pending_dir.replace(generation_dir)
                 _fsync_directory(generations_dir)
                 published_payload = payload_path if preserve_payload and payload_columns else None
                 manifest = {
