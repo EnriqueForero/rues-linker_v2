@@ -97,6 +97,7 @@ def _containment_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     correl = pd.DataFrame(
         {
             "ID_GRUPO": [10, 11, 12],
+            "SRC": ["RUES", "CRM", "RUES"],
             "NIT": ["8909002860", "8909002860", "800111222"],
             "RAZON_SOCIAL": [
                 "DEPARTAMENTO DE ANTIOQUIA",
@@ -114,14 +115,16 @@ def test_consolidacion_low_copy_preserva_api_y_permite_transferir_propiedad() ->
     golden, correl = _containment_frames()
     original = correl.copy(deep=True)
 
-    gold_copy, corr_copy = consolidate_groups_by_nit_balanced(golden, correl, verbose=False)
+    gold_copy, corr_copy = consolidate_groups_by_nit_balanced(
+        golden, correl, verbose=False, prioridad_fuentes=["RUES", "CRM"]
+    )
     pd.testing.assert_frame_equal(correl, original)
     assert corr_copy is not correl
     assert len(gold_copy) == 2
 
     golden, correl = _containment_frames()
     gold_owned, corr_owned = consolidate_groups_by_nit_balanced(
-        golden, correl, verbose=False, copiar_correlativa=False
+        golden, correl, verbose=False, copiar_correlativa=False, prioridad_fuentes=["RUES", "CRM"]
     )
     assert corr_owned is correl
     assert len(gold_owned) == 2
@@ -146,12 +149,19 @@ def test_consolidacion_transferida_no_queda_parcial_si_falla_validacion(
             correl,
             verbose=False,
             copiar_correlativa=False,
+            prioridad_fuentes=["RUES", "CRM"],
         )
 
     pd.testing.assert_frame_equal(correl, original)
 
 
 def test_concat_por_columnas_equivale_a_concat_tradicional() -> None:
+    """Equivale a ``pd.concat`` RESTRINGIDO a las columnas del golden (F1.1).
+
+    Hasta la 0.22.x ``SOLO_ABAJO`` (una columna de la correlativa) se pegaba al
+    golden con NaN arriba; hoy se ignora, y una columna del golden que falte
+    abajo es error en vez de NaN.
+    """
     golden = pd.DataFrame(
         {
             "ID_GRUPO": pd.array([0, 1, 2], dtype="int64"),
@@ -163,15 +173,20 @@ def test_concat_por_columnas_equivale_a_concat_tradicional() -> None:
         {
             "ID_GRUPO": pd.array([1], dtype="int64"),
             "NIT_FINAL": pd.array(["bb"], dtype="string[pyarrow]"),
+            "SOLO_ARRIBA": [0.25],
             "SOLO_ABAJO": pd.array([7], dtype="int64"),
         }
     )
     affected = {1}
-    expected = pd.concat([golden[~golden["ID_GRUPO"].isin(affected)], new], ignore_index=True)
+    expected = pd.concat([golden[~golden["ID_GRUPO"].isin(affected)], new], ignore_index=True)[
+        list(golden.columns)
+    ]
 
     result = _concat_filtrado_por_columnas(golden, new, affected)
 
     pd.testing.assert_frame_equal(result, expected)
+    with pytest.raises(ValueError, match="SOLO_ARRIBA"):
+        _concat_filtrado_por_columnas(golden, new.drop(columns=["SOLO_ARRIBA"]), affected)
 
 
 def test_liberacion_de_fuentes_no_retiene_bloques_originales() -> None:

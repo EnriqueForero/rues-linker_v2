@@ -31,6 +31,7 @@ from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
+from ..golden.metricas import verificar_golden
 from ..processing.dtypes import optimizar_dtypes_categoricos
 from ..reporting.strategies import (
     BaseReportingStrategy,
@@ -1795,6 +1796,7 @@ class Orchestrator:
                 correl,
                 verbose=False,
                 copiar_correlativa=False,
+                prioridad_fuentes=priority,
             )
             if correl_final is not correl:
                 del correl
@@ -1804,6 +1806,11 @@ class Orchestrator:
         except Exception as e:
             self.log.warning(f"   ⚠️ Consolidación falló, usando resultados directos: {e}")
             golden_final, correl_final = golden, correl
+
+        # F1.1: red final antes de persistir. Fuera del try anterior a propósito:
+        # un golden con métricas nulas o columnas de la correlativa no se
+        # degrada a «resultados directos», detiene la corrida.
+        verificar_golden(golden_final, correl_final.columns)
 
         # Guardar resultados
         golden_final.to_parquet(out_gold, index=False)
