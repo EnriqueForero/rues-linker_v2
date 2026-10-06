@@ -326,17 +326,18 @@ def test_cruce_en_memoria_responde_el_qa_sin_columnas_tecnicas(fuentes_csv, tmp_
 
 
 def test_conflictos_identificador_parten_de_las_tecnicas_del_motor() -> None:
-    """La regla única del QA (r3): la base de cada registro es ``NIT_OK`` del
-    motor (NitProcessor) cuando ``NIT_VALID`` lo acepta, reducida con
-    ``bases_validas``; dos bases distintas en un grupo = 1 conflicto; un NIT
-    con DV y otro sin DV son la misma base; lo que el motor no valida no cuenta."""
+    """La regla única del QA (r3/r5): la base de cada registro es ``NIT_BASE``
+    del motor (NitProcessor) cuando ``NIT_VALID`` lo acepta, sin ninguna
+    reducción propia; dos bases distintas en un grupo = 1 conflicto; un NIT
+    con DV y otro sin DV traen el mismo ``NIT_BASE``; lo que el motor no
+    valida no cuenta, aunque traiga base."""
     id_grupo = pd.Series([0, 0, 1, 1, 2, 2, 3, 3])
-    nit_ok = pd.Series(
+    nit_base = pd.Series(
         [
-            "9001112221",  # 900111222 + DV correcto (1)
-            "900111222",  # misma base: no es conflicto
-            "8003334448",
-            "7009998881",  # 700999888 + DV correcto (1): otra base válida → conflicto
+            "900111222",  # NIT_OK 9001112221 (con DV)
+            "900111222",  # NIT_OK 900111222 (sin DV): misma base, no es conflicto
+            "800333444",
+            "700999888",  # otra base válida en el grupo → conflicto
             "123",  # el motor no lo valida (NIT_VALID=0): no cuenta
             "",
             "900555666",
@@ -344,7 +345,7 @@ def test_conflictos_identificador_parten_de_las_tecnicas_del_motor() -> None:
         ]
     )
     nit_valid = pd.Series(["1", 1, True, "true", "0", "", "1", False])
-    bases = bases_del_motor(nit_ok.to_numpy(), nit_valid.to_numpy())
+    bases = bases_del_motor(nit_base.to_numpy(), nit_valid.to_numpy())
     assert list(bases) == [
         "900111222",
         "900111222",

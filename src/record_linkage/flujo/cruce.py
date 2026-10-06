@@ -348,7 +348,7 @@ def _conflictos_del_contrato(metricas: Mapping[str, Any]) -> int:
     Desde F1.9 las columnas técnicas (``NIT_BASE``, ``NIT_VALID``…) ya no
     viajan en el entregable —quedan en ``_trabajo/``—, así que el conteo NO se
     recalcula aquí desde ``NIT``: lo calcula una sola vez
-    ``salida.completar`` con las técnicas del motor (``NIT_OK`` donde
+    ``salida.completar`` con las técnicas del motor (``NIT_BASE`` donde
     ``NIT_VALID``, la misma regla que decide ``METODO_UNION``), lo publica en
     el manifiesto del contrato y :func:`ejecutar_cruce` lo copia a
     ``metricas["conflictos_identificador"]``. Recalcularlo desde ``NIT``

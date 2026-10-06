@@ -28,17 +28,25 @@ las dos tablas con la forma del estándar (``contrato.py``):
 * ``METODO_UNION`` ∈ {``identificador``, ``nombre``, ``sin_pareja``}:
   ``sin_pareja`` si el grupo tiene un registro; ``identificador`` si el
   registro trae identificador válido cuya base es la de ``NIT_FINAL`` del
-  grupo; ``nombre`` en el resto. «Identificador válido» es el del MOTOR:
-  ``NIT_OK`` donde ``NIT_VALID`` (NitProcessor, L1), reducido a su base con
-  ``bases_validas`` — la misma reducción que recibe ``NIT_FINAL``, que por
-  construcción es el ``NIT_OK`` de un miembro del grupo
-  (``golden.selector.select_best_nit_batch``). Así un NIT que la fuente trae
+  grupo; ``nombre`` en el resto. La regla de «base válida» es UNA y es la
+  del MOTOR (NitProcessor, L1): la base del registro es ``NIT_BASE`` donde
+  ``NIT_VALID``, sin ninguna reducción propia, y la base del grupo es el
+  ``NIT_BASE`` de la fila cuyo ``NIT_OK == NIT_FINAL`` (``NIT_FINAL`` es por
+  construcción el ``NIT_OK`` de un miembro del grupo:
+  ``golden.selector.select_best_nit_batch``). Así un NIT que la fuente trae
   como flotante (``900111222.0``) o con prefijo se compara como lo vio el
-  motor, y la regla no se escribe dos veces. Solo cuando la correlativa no
-  trae las técnicas (no viene del motor) se recalcula desde la columna de
-  identificador, y el reporte lo dice (``identificador``). El mismo cálculo
-  cuenta los grupos con dos bases válidas distintas
-  (``grupos_con_bases_distintas``), que es el QA de identificador del flujo.
+  motor, y lo que el motor unió por nombre (una cédula de 8 dígitos frente al
+  NIT de 10 que la contiene) no se declara unido por identificador. Medido en
+  el banco (r5): reducir ``NIT_OK`` con ``bases_validas`` discrepaba de
+  ``NIT_BASE`` en 3.573 de 22.455 filas válidas. Solo cuando la correlativa
+  no trae las técnicas (no viene del motor) se recalcula desde la columna de
+  identificador con ``bases_validas``, y el reporte lo dice
+  (``identificador``). El mismo cálculo cuenta los grupos con dos bases
+  válidas distintas (``grupos_con_bases_distintas``), que es el QA de
+  identificador del flujo (``flujo/cruce.py`` lo lee del manifiesto).
+  ``bases_validas`` (base canónica del preámbulo) queda SOLO para
+  ``ID_ENTIDAD``; por eso un identificador de 6 dígitos que el motor validó
+  une por ``identificador`` y recibe ``ENT-…``.
 * ``CONFIANZA`` = la del grupo en el golden. Sin golden (``dedupe``) queda
   nula y el reporte lo dice; F2.12 unifica la regla.
 * Columnas: las 12 fijas primero, después TODAS las de la fuente, después las
@@ -140,8 +148,10 @@ class ReporteCompletar:
         id_entidad: cuántos grupos recibieron ``NIT-…`` y cuántos ``ENT-…``,
             y los grupos que comparten NIT con otro y por eso se desplazaron
             a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo).
-        identificador: de dónde salió la base de cada registro (``NIT_OK``/
-            ``NIT_VALID`` del motor, o la columna de la fuente si no vienen)
+        identificador: de dónde salió la base de cada registro (``NIT_BASE``/
+            ``NIT_VALID`` del motor, o la columna de la fuente si no vienen),
+            cómo se eligió la base del grupo, ``grupos_sin_fila_de_nit_final``
+            (grupos cuyo ``NIT_FINAL`` no es el ``NIT_OK`` de ningún miembro)
             y ``grupos_con_bases_distintas``: grupos que mezclan dos bases
             válidas distintas (el QA de identificador del flujo).
         score_par: origen (ruta de ``scored.db``) y conteos, o el motivo de
@@ -410,27 +420,27 @@ def _sha16(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16]
 
 
-def bases_del_motor(nit_ok: np.ndarray, nit_valid: np.ndarray) -> np.ndarray:
-    """Base canónica de cada registro según el MOTOR: ``NIT_OK`` donde ``NIT_VALID``.
+def bases_del_motor(nit_base: np.ndarray, nit_valid: np.ndarray) -> np.ndarray:
+    """Base de cada registro según el MOTOR: ``NIT_BASE`` donde ``NIT_VALID``.
 
-    ``NIT_OK`` es el identificador como lo dejó NitProcessor (L1): sin sufijo
-    ``.0`` de un flotante, sin prefijos, con el DV calculado. ``NIT_VALID``
-    viaja como bool, 0/1 o texto según la fase que lo escribió
-    (``engine.scorer._a_booleano`` hace la coerción). La reducción final es
-    ``bases_validas`` —la misma que recibe ``NIT_FINAL``—, así que comparar
-    las dos es comparar lo que el motor comparó.
+    ``NIT_BASE`` es la base que dejó NitProcessor (L1): sin sufijo ``.0`` de
+    un flotante, sin prefijos, sin el DV que el motor reconoció. No se
+    reduce de nuevo (``bases_validas`` encadena DV y exige longitud mínima:
+    discrepa del motor en el 16 % de las filas válidas del banco).
+    ``NIT_VALID`` viaja como bool, 0/1 o texto según la fase que lo escribió
+    (``engine.scorer._a_booleano`` hace la coerción).
 
     Returns:
-        Arreglo ``object`` con la base válida, o ``""`` si el motor no validó
-        el identificador o la base es demasiado corta.
+        Arreglo ``object`` con ``NIT_BASE``, o ``""`` si el motor no validó el
+        identificador o no dejó base.
     """
-    if len(nit_ok) != len(nit_valid):
+    if len(nit_base) != len(nit_valid):
         raise ValueError(
-            f"NIT_OK y NIT_VALID con longitudes distintas: {len(nit_ok)} vs {len(nit_valid)}"
+            f"NIT_BASE y NIT_VALID con longitudes distintas: {len(nit_base)} vs {len(nit_valid)}"
         )
     validos = _a_booleano(np.asarray(nit_valid))
-    ok = pd.Series(pd.array(np.asarray(nit_ok), dtype="string")).fillna("").to_numpy(dtype=object)
-    return bases_validas(np.where(validos, ok, ""))
+    base = pd.Series(pd.array(np.asarray(nit_base), dtype="string")).fillna("")
+    return np.where(validos, base.to_numpy(dtype=object), "")
 
 
 def grupos_con_bases_distintas(id_grupo: pd.Series, bases: np.ndarray | pd.Series) -> int:
@@ -447,25 +457,67 @@ def grupos_con_bases_distintas(id_grupo: pd.Series, bases: np.ndarray | pd.Serie
     return int((serie[validas].groupby(id_grupo[validas]).nunique() > 1).sum())
 
 
-def _bases_de_registro(correl: pd.DataFrame, columna_nit: str) -> tuple[pd.Series, dict[str, Any]]:
-    """Base válida por registro: la del motor si viajan sus técnicas; si no, la
-    de la columna de identificador, y el reporte lo declara."""
-    if {"NIT_OK", "NIT_VALID"} <= set(correl.columns):
-        bases = bases_del_motor(correl["NIT_OK"].to_numpy(), correl["NIT_VALID"].to_numpy())
+#: Técnicas del motor de las que sale la regla única de «base válida».
+_TECNICAS_IDENTIFICADOR = ("NIT_OK", "NIT_BASE", "NIT_VALID")
+
+
+def _bases_de_registro(
+    correl: pd.DataFrame, columna_nit: str, base_canonica_grupo: pd.Series
+) -> tuple[pd.Series, pd.Series, dict[str, Any]]:
+    """Base válida por registro y base del grupo para ``METODO_UNION``.
+
+    Con las técnicas del motor: la del registro es ``NIT_BASE`` donde
+    ``NIT_VALID`` y la del grupo es el ``NIT_BASE`` de la fila cuyo
+    ``NIT_OK == NIT_FINAL`` (la que aportó el identificador adoptado). Sin
+    ellas (correlativa que no viene del motor): ``bases_validas`` sobre la
+    columna de identificador y sobre ``NIT_FINAL`` (``base_canonica_grupo``,
+    la misma de ``ID_ENTIDAD``), y el reporte lo declara.
+
+    Returns:
+        ``(base_registro, base_grupo, info)``; las bases son ``string`` con
+        ``""``/``<NA>`` donde no hay base válida.
+    """
+    if set(_TECNICAS_IDENTIFICADOR) <= set(correl.columns):
+        base_registro = pd.Series(
+            bases_del_motor(correl["NIT_BASE"].to_numpy(), correl["NIT_VALID"].to_numpy()),
+            index=correl.index,
+            dtype="string",
+        )
+        nit_ok = correl["NIT_OK"].astype("string").fillna("")
+        nit_final = correl["NIT_FINAL"].astype("string").fillna("")
+        base_motor = correl["NIT_BASE"].astype("string").fillna("")
+        aporta = (nit_ok == nit_final) & (nit_final != "") & (base_motor != "")
+        base_grupo = (
+            base_motor.where(aporta, pd.NA)
+            .groupby(correl["ID_GRUPO"], sort=False)
+            .transform("first")
+        )
+        grupos_con_final = correl.loc[nit_final != "", "ID_GRUPO"].nunique()
+        grupos_con_base = correl.loc[base_grupo.notna(), "ID_GRUPO"].nunique()
         info: dict[str, Any] = {
-            "origen": "NIT_OK/NIT_VALID del motor (NitProcessor, L1), reducidos con bases_validas"
+            "origen": "NIT_BASE/NIT_VALID del motor (NitProcessor, L1), sin reducción propia",
+            "base_del_grupo": "NIT_BASE de la fila cuyo NIT_OK == NIT_FINAL",
+            "grupos_sin_fila_de_nit_final": int(grupos_con_final - grupos_con_base),
         }
-    elif columna_nit in correl.columns:
-        bases = bases_validas(correl[columna_nit].to_numpy())
+        return base_registro, base_grupo, info
+    if columna_nit in correl.columns:
+        base_registro = pd.Series(
+            bases_validas(correl[columna_nit].to_numpy()), index=correl.index, dtype="string"
+        )
         info = {
-            "origen": f"columna {columna_nit} de la fuente (sin NIT_OK/NIT_VALID)",
+            "origen": f"columna {columna_nit} de la fuente (sin NIT_BASE/NIT_VALID)",
+            "base_del_grupo": "bases_validas(NIT_FINAL), la misma de ID_ENTIDAD",
             "motivo": "la correlativa no trae las técnicas del motor; un identificador "
             "flotante o con prefijo puede no reducirse como lo hizo NitProcessor.",
         }
     else:
-        bases = np.full(len(correl), "", dtype=object)
-        info = {"origen": None, "motivo": f"no hay columna {columna_nit!r} ni técnicas del motor."}
-    return pd.Series(bases, index=correl.index, dtype="string"), info
+        base_registro = pd.Series("", index=correl.index, dtype="string")
+        info = {
+            "origen": None,
+            "base_del_grupo": "bases_validas(NIT_FINAL), la misma de ID_ENTIDAD",
+            "motivo": f"no hay columna {columna_nit!r} ni técnicas del motor.",
+        }
+    return base_registro, base_canonica_grupo, info
 
 
 def _grupos_principales_por_nit(
@@ -714,30 +766,31 @@ def completar_correlativa(
         correl, info_score = anexar_score_par(correl, dir_trabajo)
     correl["SCORE_PAR"] = correl["SCORE_PAR"].astype("float64")
 
-    # Identificador del registro (el del motor: NIT_OK donde NIT_VALID) y del
-    # grupo (NIT_FINAL), reducidos a su base con la misma función.
-    columna_nit = col_nit if col_nit in correl.columns else "NIT"
-    base_registro, info_identificador = _bases_de_registro(correl, columna_nit)
-    info_identificador["grupos_con_bases_distintas"] = grupos_con_bases_distintas(
-        correl["ID_GRUPO"], base_registro.fillna("").to_numpy(dtype=object)
-    )
+    # ID_ENTIDAD: base canónica de NIT_FINAL (decisión del preámbulo), una por grupo.
     base_fila = pd.Series(
         bases_validas(correl["NIT_FINAL"].to_numpy()), index=correl.index, dtype="string"
     )
     base_fila = base_fila.mask(base_fila == "", pd.NA)
-    base_grupo = base_fila.groupby(correl["ID_GRUPO"], sort=False).transform("first")
-    grupo_con_nit = base_grupo.notna().to_numpy()
-    grupo_principal, info_entidad = _grupos_principales_por_nit(correl, base_grupo)
+    base_canonica_grupo = base_fila.groupby(correl["ID_GRUPO"], sort=False).transform("first")
+    grupo_principal, info_entidad = _grupos_principales_por_nit(correl, base_canonica_grupo)
+    correl["ID_ENTIDAD"] = _id_entidad(correl, base_canonica_grupo, grupo_principal).astype(str)
 
-    correl["ID_ENTIDAD"] = _id_entidad(correl, base_grupo, grupo_principal).astype(str)
-
+    # METODO_UNION y QA de identificador: la regla del motor (NIT_BASE donde
+    # NIT_VALID; base del grupo = NIT_BASE de quien aportó NIT_FINAL).
+    columna_nit = col_nit if col_nit in correl.columns else "NIT"
+    base_registro, base_grupo, info_identificador = _bases_de_registro(
+        correl, columna_nit, base_canonica_grupo
+    )
+    info_identificador["grupos_con_bases_distintas"] = grupos_con_bases_distintas(
+        correl["ID_GRUPO"], base_registro.fillna("").to_numpy(dtype=object)
+    )
     tamano = correl.groupby("ID_GRUPO", sort=False)["ID_GRUPO"].transform("size").to_numpy()
     registro_valido = (base_registro != "").fillna(False).to_numpy()
     misma_base = (base_registro == base_grupo).fillna(False).to_numpy()
     correl["METODO_UNION"] = np.where(
         tamano == 1,
         "sin_pareja",
-        np.where(registro_valido & grupo_con_nit & misma_base, "identificador", "nombre"),
+        np.where(registro_valido & misma_base, "identificador", "nombre"),
     )
 
     prioridad = list(prioridad_fuentes or fuentes)

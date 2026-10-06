@@ -38,6 +38,7 @@ import pytest
 
 import record_linkage as rl
 from record_linkage import contrato
+from record_linkage.matching.identificadores import bases_validas
 from record_linkage.pipeline.errores import ContratoSalidaError
 from record_linkage.resultado import ReporteValidacion, ResultadoLinkage
 from record_linkage.salida.completar import completar_correlativa
@@ -579,7 +580,7 @@ def test_col_id_no_unico_cae_a_fila_y_lo_dice(tmp_path: Path) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# r3 · la regla de «base válida» es la del motor (NIT_OK/NIT_VALID)
+# r3/r5 · la regla de «base válida» es la del motor (NIT_BASE/NIT_VALID)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -612,7 +613,7 @@ def _asegurar_union_por_identificador(res: ResultadoLinkage) -> None:
         "sin_pareja",
     ]
     identificador = res.manifiesto["completar"]["identificador"]
-    assert identificador["origen"].startswith("NIT_OK/NIT_VALID del motor")
+    assert identificador["origen"].startswith("NIT_BASE/NIT_VALID del motor")
     assert identificador["grupos_con_bases_distintas"] == 0
 
 
@@ -651,8 +652,141 @@ def test_completar_sin_tecnicas_recalcula_desde_nit_y_lo_declara(tmp_path: Path)
         correl, None, tmp_path, None, fuentes, col_nit="NIT"
     )
     assert list(correlativa["METODO_UNION"]) == ["identificador", "identificador", "sin_pareja"]
-    assert reporte.identificador["origen"] == "columna NIT de la fuente (sin NIT_OK/NIT_VALID)"
+    assert reporte.identificador["origen"] == "columna NIT de la fuente (sin NIT_BASE/NIT_VALID)"
     assert "NitProcessor" in reporte.identificador["motivo"]
+    assert reporte.identificador["grupos_con_bases_distintas"] == 0
+
+
+def test_completar_con_tecnicas_usa_nit_base_del_motor(tmp_path: Path) -> None:
+    """r5: la regla de «base válida» es UNA y es la del motor. ``METODO_UNION``
+    y ``grupos_con_bases_distintas`` salen de ``NIT_BASE`` donde ``NIT_VALID``
+    (sin pasar por ``bases_validas``), y la base del grupo es el ``NIT_BASE``
+    de la fila cuyo ``NIT_OK == NIT_FINAL``. Casos medidos en el banco: una
+    cédula de 8 dígitos frente al NIT de 10 que la contiene (el motor vio dos
+    bases y unió por nombre), un identificador de 6 dígitos que el motor sí
+    validó (``bases_validas`` lo descartaría por corto) y un NIT con y sin
+    DV. ``ID_ENTIDAD`` sigue la base canónica del preámbulo."""
+    correl = pd.DataFrame(
+        {
+            "NIT": [
+                "10282948",
+                "1028294826",
+                "456866",
+                "456866",
+                "9001112221",
+                "900111222",
+                "8003334448",
+            ],
+            "RAZON_SOCIAL": [
+                "JUAN PEREZ",
+                "JUAN PEREZ",
+                "LA ESQUINA",
+                "LA ESQUINA LTDA",
+                "ACME SAS",
+                "ACME S.A.S.",
+                "GLOBEX",
+            ],
+            "SRC": ["X"] * 7,
+            "ORIGINAL_INDEX": list(range(7)),
+            "NIT_OK": [
+                "10282948",
+                "1028294826",
+                "456866",
+                "456866",
+                "9001112221",
+                "900111222",
+                "8003334448",
+            ],
+            "NIT_BASE": [
+                "10282948",
+                "102829482",
+                "456866",
+                "456866",
+                "900111222",
+                "900111222",
+                "800333444",
+            ],
+            "NIT_VALID": ["1", 1, True, "true", "1", "1", "1"],
+            "ID_GRUPO": [0, 0, 1, 1, 2, 2, 3],
+            "NIT_FINAL": [
+                "1028294826",
+                "1028294826",
+                "456866",
+                "456866",
+                "9001112221",
+                "9001112221",
+                "8003334448",
+            ],
+            "RAZON_SOCIAL_FINAL": [
+                "JUAN PEREZ",
+                "JUAN PEREZ",
+                "LA ESQUINA",
+                "LA ESQUINA",
+                "ACME SAS",
+                "ACME SAS",
+                "GLOBEX",
+            ],
+            "NAME_SIMILARITY_SCORE": [1.0, 1.0, 0.9, 0.9, 1.0, 0.95, 1.0],
+            "NIT_DISTANCE": [0] * 7,
+        }
+    )
+    fuentes = {"X": correl[["NIT", "RAZON_SOCIAL"]]}
+    correlativa, _, reporte = completar_correlativa(
+        correl, None, tmp_path, None, fuentes, col_nit="NIT"
+    )
+    # La cédula 10282948 no es la base del grupo (102829482): el motor la unió
+    # por nombre. La fila que aportó NIT_FINAL trae, por definición, la base
+    # del grupo (regla del preámbulo) y queda como ``identificador``.
+    assert list(correlativa["METODO_UNION"]) == [
+        "nombre",
+        "identificador",
+        "identificador",
+        "identificador",
+        "identificador",
+        "identificador",
+        "sin_pareja",
+    ]
+    identificador = reporte.identificador
+    assert identificador["origen"].startswith("NIT_BASE/NIT_VALID del motor")
+    assert "NIT_OK" in identificador["base_del_grupo"]
+    assert identificador["grupos_con_bases_distintas"] == 1
+    assert identificador["grupos_sin_fila_de_nit_final"] == 0
+    # ID_ENTIDAD es NIT-<base canónica de NIT_FINAL> (decisión del preámbulo), no
+    # el NIT_BASE del motor: el de 6 dígitos no tiene base canónica y recibe ENT-.
+    assert correlativa.loc[0, "ID_ENTIDAD"] == "NIT-" + bases_validas(np.array(["1028294826"]))[0]
+    assert correlativa.loc[2, "ID_ENTIDAD"].startswith("ENT-")
+    assert correlativa.loc[4, "ID_ENTIDAD"] == "NIT-900111222"
+    assert correlativa.loc[6, "ID_ENTIDAD"] == "NIT-800333444"
+    # Las técnicas no viajan en el entregable.
+    assert not {"NIT_OK", "NIT_BASE", "NIT_VALID"} & set(correlativa.columns)
+
+
+def test_completar_con_tecnicas_sin_fila_de_nit_final_lo_declara(tmp_path: Path) -> None:
+    """Si ningún miembro del grupo aporta ``NIT_FINAL`` (no debería pasar con el
+    motor), el grupo no tiene base: nadie se une por identificador y el
+    reporte cuenta el grupo en vez de inventar una base."""
+    correl = pd.DataFrame(
+        {
+            "NIT": ["900111222", "900111222"],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME S.A.S."],
+            "SRC": ["X", "X"],
+            "ORIGINAL_INDEX": [0, 1],
+            "NIT_OK": ["900111222", "900111222"],
+            "NIT_BASE": ["900111222", "900111222"],
+            "NIT_VALID": [True, True],
+            "ID_GRUPO": [0, 0],
+            "NIT_FINAL": ["9001112221", "9001112221"],
+            "RAZON_SOCIAL_FINAL": ["ACME SAS", "ACME SAS"],
+            "NAME_SIMILARITY_SCORE": [1.0, 1.0],
+            "NIT_DISTANCE": [0, 0],
+        }
+    )
+    fuentes = {"X": correl[["NIT", "RAZON_SOCIAL"]]}
+    correlativa, _, reporte = completar_correlativa(
+        correl, None, tmp_path, None, fuentes, col_nit="NIT"
+    )
+    assert list(correlativa["METODO_UNION"]) == ["nombre", "nombre"]
+    assert reporte.identificador["grupos_sin_fila_de_nit_final"] == 1
     assert reporte.identificador["grupos_con_bases_distintas"] == 0
 
 
