@@ -8,12 +8,16 @@ Qué congela
 * El diccionario de cada tabla con ``CONFIANZA`` (correlativa, golden, enlaces)
   cita la función por su nombre y nombra el vocabulario.
 * Los cinco caminos la aplican y solo producen valores del vocabulario:
-  ``linkage()``, ``link()``, ``dedupe()`` (correlativa; golden cuando lo hay),
-  ``ejecutar_cruce`` (pandas y DuckDB) y ``deduplicar_importadores``
-  (``GOLDEN`` y ``CORRELATIVA``, que hasta F2.12 no traían ``CONFIANZA``).
+  ``linkage()``, ``link()``, ``dedupe()``, ``ejecutar_cruce`` (pandas y DuckDB)
+  y ``deduplicar_importadores`` (``GOLDEN`` y ``CORRELATIVA``, que hasta F2.12
+  no traían ``CONFIANZA``).
 * En cada camino, la ``CONFIANZA`` del golden se reproduce bit a bit con
   ``confianza_de_grupo`` sobre las métricas del propio golden, y la de la
   correlativa es la del grupo.
+* ``dedupe()`` no trae golden en memoria (la correlativa lleva ``CONFIANZA``
+  nula; eso lo congela ``test_contrato_salida``), así que aquí se lee el golden
+  que deja en disco por régimen (``con_nit``/``sin_nit``): una aserción sobre
+  la columna nula de la correlativa no podría fallar nunca.
 
 Las empresas son inventadas. Ningún dato licenciado entra aquí.
 """
@@ -152,11 +156,17 @@ def res_link(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 @pytest.fixture(scope="module")
-def res_dedupe(tmp_path_factory: pytest.TempPathFactory) -> Any:
+def dir_dedupe(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Carpeta de ``dedupe()``: ahí queda el golden por régimen que no viaja en memoria."""
+    return tmp_path_factory.mktemp("dedupe")
+
+
+@pytest.fixture(scope="module")
+def res_dedupe(dir_dedupe: Path) -> Any:
     fuentes = _fuentes()
     df = pd.concat(fuentes.values(), ignore_index=True)
     with _silencio():
-        return rl.dedupe(df, output_dir=str(tmp_path_factory.mktemp("dedupe")))
+        return rl.dedupe(df, output_dir=str(dir_dedupe))
 
 
 @pytest.fixture(scope="module")
@@ -210,7 +220,9 @@ def _tablas(
     return correl, golden
 
 
-CAMINOS = ("linkage", "link", "dedupe", "cruce_pandas", "cruce_duckdb", "importadores")
+# ``dedupe`` no está aquí: su correlativa lleva CONFIANZA nula por diseño y su
+# golden vive en disco; lo cubre test_dedupe_aplica_la_regla_en_el_golden_de_cada_regimen.
+CAMINOS = ("linkage", "link", "cruce_pandas", "cruce_duckdb", "importadores")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -291,12 +303,24 @@ def test_la_confianza_del_golden_es_la_regla_sobre_sus_metricas(
     assert {"ALTA", "MEDIA"} <= set(golden["CONFIANZA"])
 
 
-def test_dedupe_declara_por_que_su_confianza_es_nula(res_dedupe: Any) -> None:
-    """``dedupe()`` no trae golden en memoria: la correlativa lleva CONFIANZA nula
-    y el manifiesto lo dice; en cuanto haya golden, la regla es la misma."""
-    assert res_dedupe.golden is None
-    assert res_dedupe.correlativa["CONFIANZA"].isna().all()
-    assert "golden" in res_dedupe.manifiesto["completar"]["confianza"]["motivo"]
+def test_dedupe_aplica_la_regla_en_el_golden_de_cada_regimen(
+    res_dedupe: Any, dir_dedupe: Path
+) -> None:
+    """``dedupe()`` deja un golden por régimen (``con_nit``, ``sin_nit``) en disco;
+    cada uno trae CONFIANZA del vocabulario y es la regla sobre sus métricas."""
+    assert res_dedupe.golden is None  # por eso se lee de disco
+    goldens = sorted(
+        dir_dedupe.glob("*/intermediate_checkpoints/checkpoint_05_golden_final.parquet")
+    )
+    assert goldens, f"dedupe no dejó golden en {dir_dedupe}"
+    for ruta in goldens:
+        g = pd.read_parquet(ruta)
+        regimen = ruta.relative_to(dir_dedupe)
+        assert "CONFIANZA" in g.columns, f"{regimen}: el golden no trae CONFIANZA"
+        assert not g["CONFIANZA"].isna().any(), f"{regimen}: golden con CONFIANZA nula"
+        assert set(g["CONFIANZA"]) <= NIVELES, f"{regimen}: fuera del vocabulario"
+        esperado = confianza_de_grupo(g[["NIT_VARIATIONS", "SOURCES_COUNT", "RECORD_COUNT"]])
+        assert list(g["CONFIANZA"]) == list(esperado), f"{regimen}: no es la regla única"
 
 
 def test_importadores_aplica_la_regla_con_sus_metricas(res_importadores: Any) -> None:
