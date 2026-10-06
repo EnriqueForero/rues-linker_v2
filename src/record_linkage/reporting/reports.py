@@ -21,6 +21,20 @@ from ..utils.logger import CustomLogger
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
 
+def _entero_o_na(valor: int | None) -> str:
+    """Entero con separador de miles, o «N/A» si la métrica no se pudo medir.
+
+    Un conteo ausente (base SQLite no encontrada) no se muestra como 0: ese 0
+    es justo la cifra falsa que F1.7 elimina del resumen ejecutivo.
+    """
+    return "N/A" if valor is None else f"{int(valor):,}"
+
+
+def _gib_o_na(rss_mib: float | None) -> str:
+    """RSS pico en GiB con dos decimales, o «N/A» si ninguna fase lo midió."""
+    return "N/A" if rss_mib is None else f"{rss_mib / 1024:.2f} GiB"
+
+
 class ReportGenerator:
     """
     Generador de reportes V6.0 - Versión final con todas las mejoras.
@@ -53,9 +67,9 @@ class ReportGenerator:
         self.config = config or {}
         self.logger = CustomLogger("ReportGenerator")
 
-        # Configuración de límites de memoria
-        self.sample_size = config.get("report_sample_size", 100000)
-        self.chunk_size = config.get("report_chunk_size", 50000)
+        # Configuración de límites de memoria (sobre self.config: config puede ser None)
+        self.sample_size = self.config.get("report_sample_size", 100000)
+        self.chunk_size = self.config.get("report_chunk_size", 50000)
 
         # Logging de diagnóstico mejorado
         self.logger.info("=" * 60)
@@ -395,14 +409,14 @@ class ReportGenerator:
                     {
                         "Categoría": "EFICIENCIA",
                         "Métrica": "Candidatos Encontrados",
-                        "Valor": f"{self.metrics.get('candidates_found', 0):,}",
-                        "Descripción": "Pares candidatos identificados por LSH",
+                        "Valor": _entero_o_na(self.metrics.get("candidatos")),
+                        "Descripción": "Pares candidatos generados por L2 (candidates.db)",
                     },
                     {
                         "Categoría": "EFICIENCIA",
                         "Métrica": "Pares Evaluados",
-                        "Valor": f"{self.metrics.get('pairs_scored', 0):,}",
-                        "Descripción": "Pares que pasaron scoring detallado",
+                        "Valor": _entero_o_na(self.metrics.get("pares_puntuados")),
+                        "Descripción": "Pares puntuados por L3 (scored.db)",
                     },
                 ]
             )
@@ -464,8 +478,8 @@ class ReportGenerator:
                         {
                             "Categoría": "RENDIMIENTO",
                             "Métrica": "Memoria Máxima",
-                            "Valor": f"{self.metrics.get('max_memory_gb', 0):.1f} GB",
-                            "Descripción": "Uso máximo de memoria",
+                            "Valor": _gib_o_na(self.metrics.get("rss_pico_mib")),
+                            "Descripción": "RSS pico del proceso (máximo entre fases L1-L5)",
                         },
                     ]
                 )
@@ -1039,11 +1053,11 @@ class ReportGenerator:
         total_records = self.metrics.get("total_records", 0)
 
         if phase == "Generación Candidatos":
-            items = self.metrics.get("candidates_found", 0)
+            items = self.metrics.get("candidatos") or 0
             speed = items / time_val
             return f"{speed:.0f} candidatos/seg"
         elif phase == "Scoring":
-            items = self.metrics.get("pairs_scored", 0)
+            items = self.metrics.get("pares_puntuados") or 0
             speed = items / time_val
             return f"{speed:.0f} pares/seg"
         elif phase == "Golden Records":

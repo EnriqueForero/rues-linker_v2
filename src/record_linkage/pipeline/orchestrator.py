@@ -29,6 +29,7 @@ from ..engine.clusterer import OptimizedClusterer
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
 from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
+from ..evaluation.banco import _contar_filas_sqlite
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
 from ..processing.dtypes import optimizar_dtypes_categoricos
@@ -1949,9 +1950,48 @@ class Orchestrator:
 
         return all_files, all_files
 
+    def _contar_filas_fase(self, fase: Phase, archivo: str, tabla: str) -> int | None:
+        """Filas de una tabla SQLite escrita por una fase, sin cargarla.
+
+        Devuelve ``None`` —nunca 0— cuando la base o la tabla no están (p. ej.
+        una instancia parcial sin ``dirs`` o un L6 relanzado tras limpiar el
+        directorio de trabajo): un conteo ausente se muestra como «N/A», un 0
+        sería una cifra falsa. Reutiliza ``evaluation.banco._contar_filas_sqlite``
+        (privada en ese módulo; es la misma regla que usa el banco y se escribe
+        una sola vez).
+        """
+        carpeta = getattr(self, "dirs", {}).get(fase)
+        if carpeta is None:
+            return None
+        ruta = Path(carpeta) / archivo
+        total = _contar_filas_sqlite(ruta, tabla)
+        if total is None and hasattr(self, "log"):
+            self.log.warning(
+                f"   ⚠️ No se pudo contar {tabla} en {ruta}: el resumen ejecutivo "
+                "mostrará N/A en vez de un número."
+            )
+        return total
+
     def _build_metrics(self, golden_df: pd.DataFrame, correl_df: pd.DataFrame) -> dict[str, Any]:
         """
-        Construye diccionario de métricas para reportes.
+        Construye diccionario de métricas para reportes (fuente única de L6).
+
+        Claves de volumen de trabajo del motor (F1.7), leídas de la verdad en
+        disco y no de contadores en memoria:
+
+        - ``candidatos``: filas de ``L2_lsh_candidates/candidates.db``
+          (tabla ``candidate_pairs``); ``None`` si la base no está.
+        - ``pares_puntuados``: filas de ``L3_scoring/scored.db``
+          (tabla ``scored_pairs``); ``None`` si la base no está.
+        - ``rss_pico_mib``: máximo de ``peak_rss_mib_by_phase`` (RSS pico del
+          proceso entre las fases ya cerradas; L6 aún no lo está cuando se
+          construyen las métricas); ``None`` si ninguna fase registró RSS.
+
+        ``candidates_found``, ``pairs_scored`` y ``max_memory_gb`` son alias
+        heredados de los mismos valores para los consumidores que siguen en
+        inglés (``visualizer``, ``suite``, ``dashboard``); con ``None`` se
+        entregan como 0 porque esos consumidores dividen por ellos. El resumen
+        ejecutivo lee las claves en español.
 
         Args:
             golden_df: DataFrame de Golden Records
@@ -1964,12 +2004,25 @@ class Orchestrator:
         if not isinstance(phase_peak_rss_mib, dict):
             raise TypeError("_phase_peak_rss_mib debe ser un diccionario")
 
+        candidatos = self._contar_filas_fase(
+            Phase.L2_LSH_CANDIDATES, "candidates.db", "candidate_pairs"
+        )
+        pares_puntuados = self._contar_filas_fase(Phase.L3_SCORING, "scored.db", "scored_pairs")
+        rss_pico_mib = max(phase_peak_rss_mib.values()) if phase_peak_rss_mib else None
+
         metrics: dict[str, Any] = {
             "total_records": len(correl_df),
             "unique_groups": len(golden_df),
             "execution_time": time.time() - self._start_time if self._start_time else 0,
             "phase_times": self._phase_times.copy(),
             "peak_rss_mib_by_phase": phase_peak_rss_mib.copy(),
+            "candidatos": candidatos,
+            "pares_puntuados": pares_puntuados,
+            "rss_pico_mib": rss_pico_mib,
+            # Alias heredados (ver docstring).
+            "candidates_found": candidatos or 0,
+            "pairs_scored": pares_puntuados or 0,
+            "max_memory_gb": (rss_pico_mib or 0.0) / 1024,
         }
 
         # Tasa de linkage/reducción
