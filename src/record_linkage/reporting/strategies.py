@@ -22,6 +22,7 @@ directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import gzip
 import json
@@ -41,7 +42,9 @@ import pyarrow.parquet as pq
 
 from ..exporters._spreadsheet import prepare_spreadsheet_data
 from ..pipeline._internal import _class_exists
+from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
+from .contrato_l6 import ArtefactoOmitido, es_estrategia_obligatoria
 from .reports import ReportGenerator
 
 # v0.7.2 (Sprint 0.8.2, Tarea 2.4): los imports de ExecutiveDashboard,
@@ -153,13 +156,32 @@ class BaseReportingStrategy(ABC):
     Implementa el patrón Template Method para:
     - Verificación de dependencias antes de ejecutar
     - Logging estructurado y consistente
-    - Manejo de errores con fallback graceful
+    - Fallos tipados: una excepción dentro de ``_execute_impl`` se relanza
+      como ``EstrategiaFallo`` (F1.4). Hasta entonces se convertía en ``[]``
+      y una corrida sin entregables pasaba por buena.
 
     Las subclases solo deben implementar:
     - name: Nombre descriptivo
     - required_class: Clase del notebook que necesita
     - _execute_impl: Lógica específica de generación
+
+    Un artefacto OPCIONAL que no se pudo escribir se registra con
+    ``self.omitir(artefacto, motivo)``; el orquestador lo lleva al manifiesto.
+    ``omitidos`` se vacía al empezar cada ``execute``.
     """
+
+    omitidos: list[ArtefactoOmitido]
+
+    @property
+    def obligatoria(self) -> bool:
+        """``True`` si la estrategia produce algún artefacto obligatorio del
+        contrato de L6 (``reporting.contrato_l6``). Si falla, la corrida falla.
+        Las subclases heredan el contrato de su base declarada."""
+        return es_estrategia_obligatoria(self)
+
+    def omitir(self, artefacto: str, motivo: str) -> None:
+        """Deja constancia de un artefacto opcional que NO se escribió."""
+        self.omitidos.append(ArtefactoOmitido(artefacto, type(self).__name__, motivo))
 
     @property
     @abstractmethod
@@ -199,42 +221,46 @@ class BaseReportingStrategy(ABC):
 
     def execute(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
         """
-        Template Method: ejecuta con validación y manejo de errores.
+        Template Method: ejecuta con validación y fallo tipado.
 
         Flujo:
         1. Verificar disponibilidad de dependencias
         2. Ejecutar implementación específica
-        3. Reportar resultado o error
+        3. Reportar resultado, o relanzar ``EstrategiaFallo``
 
         Returns:
-            Lista de archivos generados (vacía si hay error o no disponible)
+            Lista de archivos generados (vacía si la dependencia no está:
+            esa omisión queda en ``omitidos`` con su motivo).
+
+        Raises:
+            EstrategiaFallo: si ``_execute_impl`` lanza. La causa queda
+                encadenada en ``__cause__``. Quien llama decide si la
+                corrida falla (estrategia obligatoria) o se registra la
+                omisión (opcional). Nunca se devuelve ``[]`` por un error.
         """
+        self.omitidos = []
+
         # Verificar dependencias
         if not self.is_available():
-            logger.warning(
-                f"   ⚠️ {self.name}: Clase '{self.required_class}' no disponible, omitiendo"
-            )
+            motivo = f"clase '{self.required_class}' no disponible en el entorno"
+            logger.warning(f"   ⚠️ {self.name}: {motivo}, omitiendo")
+            self.omitir(self.name, motivo)
             return []
 
         try:
-            # Ejecutar estrategia
             files = self._execute_impl(ctx, logger)
-
-            # Reportar éxito
-            if files:
-                logger.info(f"   ✅ {self.name}: {len(files)} archivo(s) generado(s)")
-            else:
-                logger.debug(f"   ℹ️ {self.name}: Sin archivos generados")
-
-            return files
-
         except Exception as e:
-            # Reportar error pero no propagar (fallback graceful)
             logger.error(f"   ❌ {self.name} falló: {type(e).__name__}: {e}")
-            import traceback
+            logger.debug("   Traceback:", exc_info=True)
+            raise EstrategiaFallo(self.name, e) from e
 
-            logger.debug(f"   Traceback: {traceback.format_exc()}")
-            return []
+        if files:
+            logger.info(f"   ✅ {self.name}: {len(files)} archivo(s) generado(s)")
+        else:
+            logger.debug(f"   ℹ️ {self.name}: Sin archivos generados")
+        for omitido in self.omitidos:
+            logger.warning(f"   ⚠️ {self.name}: omitido {omitido.artefacto} ({omitido.motivo})")
+        return files
 
 
 @dataclass
@@ -312,13 +338,14 @@ class DataExportStrategy(BaseReportingStrategy):
             ),
         ]
 
+        # F1.4: una tarea que falla NO se registra como advertencia y se
+        # sigue: parquet y csv.gz son obligatorios y la excepción sube como
+        # EstrategiaFallo → ArtefactoObligatorioError. Solo el Excel (opcional)
+        # se omite con constancia.
         for task in export_tasks:
-            try:
-                files = self._process_export_task(task, ctx.output_dir, excel_limit, logger)
-                generated_files.extend(files)
-                gc.collect()
-            except Exception as e:
-                logger.error(f"   ❌ Error exportando {task.name}: {e}")
+            files = self._process_export_task(task, ctx.output_dir, excel_limit, logger)
+            generated_files.extend(files)
+            gc.collect()
 
         return generated_files
 
@@ -376,25 +403,44 @@ class DataExportStrategy(BaseReportingStrategy):
             logger.info(f"      ✅ {parquet_dest.name} (copia)")
             files.append(parquet_dest)
 
-        # 3. Excel (Solo muestra)
+        # 3. Excel (opcional: si falla se omite con constancia, no se traga)
         if total_rows <= excel_limit:
             xlsx_path = output_dir / f"{base_name}.xlsx"
-            df_excel = pd.read_parquet(source_path)
-            prepare_spreadsheet_data(df_excel).to_excel(xlsx_path, index=False, engine="openpyxl")
-            del df_excel
-            gc.collect()
-            logger.info(f"      ✅ {xlsx_path.name}")
-            files.append(xlsx_path)
+            try:
+                df_excel = pd.read_parquet(source_path)
+                prepare_spreadsheet_data(df_excel).to_excel(
+                    xlsx_path, index=False, engine="openpyxl"
+                )
+                del df_excel
+                gc.collect()
+                logger.info(f"      ✅ {xlsx_path.name}")
+                files.append(xlsx_path)
+            except Exception as e:
+                self._omitir_excel(xlsx_path, e, logger)
         else:
             xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
-            df_sample = next(parquet_file.iter_batches(batch_size=excel_limit)).to_pandas()
-            prepare_spreadsheet_data(df_sample).to_excel(xlsx_path, index=False, engine="openpyxl")
-            del df_sample
-            gc.collect()
-            logger.info(f"      ✅ {xlsx_path.name} (muestra)")
-            files.append(xlsx_path)
+            try:
+                df_sample = next(parquet_file.iter_batches(batch_size=excel_limit)).to_pandas()
+                prepare_spreadsheet_data(df_sample).to_excel(
+                    xlsx_path, index=False, engine="openpyxl"
+                )
+                del df_sample
+                gc.collect()
+                logger.info(f"      ✅ {xlsx_path.name} (muestra)")
+                files.append(xlsx_path)
+            except Exception as e:
+                self._omitir_excel(xlsx_path, e, logger)
 
         return files
+
+    def _omitir_excel(self, xlsx_path: Path, causa: Exception, logger: logging.Logger) -> None:
+        """Un Excel que falla no se escribe a medias ni se olvida: se borra el
+        archivo parcial y la omisión queda registrada con su motivo."""
+        with contextlib.suppress(OSError):
+            xlsx_path.unlink(missing_ok=True)
+        motivo = f"{type(causa).__name__}: {causa}"
+        logger.warning(f"      ⚠️ {xlsx_path.name} omitido: {motivo}")
+        self.omitir(xlsx_path.name, motivo)
 
     def _export_from_memory(
         self,
@@ -404,45 +450,44 @@ class DataExportStrategy(BaseReportingStrategy):
         excel_limit: int,
         logger: logging.Logger,
     ) -> list[Path]:
-        """Exporta desde DataFrame en memoria."""
+        """Exporta desde DataFrame en memoria.
+
+        Parquet y CSV.gz son obligatorios: si fallan, la excepción sube (hasta
+        F1.4 se convertía en una advertencia y la corrida seguía sin
+        entregable). El Excel es opcional y se omite con constancia.
+        """
         files: list[Path] = []
         n_rows = len(df)
 
-        # 1. Parquet
-        try:
-            parquet_path = output_dir / f"{base_name}.parquet"
-            df_clean = self._prepare_for_parquet(df)
-            df_clean.to_parquet(parquet_path, index=False, engine="pyarrow", compression="snappy")
-            del df_clean
-            gc.collect()
-            logger.info(f"      ✅ {parquet_path.name}")
-            files.append(parquet_path)
-        except Exception as e:
-            logger.warning(f"      ⚠️ Parquet falló: {e}")
+        # 1. Parquet (obligatorio)
+        parquet_path = output_dir / f"{base_name}.parquet"
+        df_clean = self._prepare_for_parquet(df)
+        df_clean.to_parquet(parquet_path, index=False, engine="pyarrow", compression="snappy")
+        del df_clean
+        gc.collect()
+        logger.info(f"      ✅ {parquet_path.name}")
+        files.append(parquet_path)
 
-        # 2. CSV.gz
-        try:
-            csv_path = output_dir / f"{base_name}.csv.gz"
-            prepare_spreadsheet_data(df).to_csv(csv_path, index=False, compression="gzip")
-            logger.info(f"      ✅ {csv_path.name}")
-            files.append(csv_path)
-        except Exception as e:
-            logger.warning(f"      ⚠️ CSV.gz falló: {e}")
+        # 2. CSV.gz (obligatorio)
+        csv_path = output_dir / f"{base_name}.csv.gz"
+        prepare_spreadsheet_data(df).to_csv(csv_path, index=False, compression="gzip")
+        logger.info(f"      ✅ {csv_path.name}")
+        files.append(csv_path)
 
-        # 3. Excel (si es seguro)
+        # 3. Excel (opcional; solo si es seguro para la RAM)
         mem_percent = psutil.virtual_memory().percent
         if n_rows <= excel_limit and mem_percent < 85:
+            xlsx_path = output_dir / f"{base_name}.xlsx"
             try:
-                xlsx_path = output_dir / f"{base_name}.xlsx"
                 prepare_spreadsheet_data(df).to_excel(xlsx_path, index=False, engine="openpyxl")
                 gc.collect()
                 logger.info(f"      ✅ {xlsx_path.name}")
                 files.append(xlsx_path)
             except Exception as e:
-                logger.warning(f"      ⚠️ Excel falló: {e}")
+                self._omitir_excel(xlsx_path, e, logger)
         elif n_rows > excel_limit:
+            xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
             try:
-                xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
                 prepare_spreadsheet_data(df.head(excel_limit)).to_excel(
                     xlsx_path, index=False, engine="openpyxl"
                 )
@@ -450,7 +495,12 @@ class DataExportStrategy(BaseReportingStrategy):
                 logger.info(f"      ✅ {xlsx_path.name} (muestra)")
                 files.append(xlsx_path)
             except Exception as e:
-                logger.warning(f"      ⚠️ Excel muestra falló: {e}")
+                self._omitir_excel(xlsx_path, e, logger)
+        else:
+            self.omitir(
+                f"{base_name}.xlsx",
+                f"RAM al {mem_percent:.1f} %: se evita el Excel completo para proteger la corrida",
+            )
 
         return files
 
@@ -511,11 +561,19 @@ class ExcelReportsStrategy(BaseReportingStrategy):
         )
 
         reports = generator.generate_all_reports()
+        # Los reportes que el generador no pudo producir ya vienen con motivo.
+        self.omitidos.extend(generator.omitidos)
         generated = []
 
         for report_name, df_report in reports.items():
             path = ctx.output_dir / f"reporte_{report_name}.xlsx"
-            prepare_spreadsheet_data(df_report).to_excel(path, index=False, engine="openpyxl")
+            try:
+                prepare_spreadsheet_data(df_report).to_excel(path, index=False, engine="openpyxl")
+            except Exception as e:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                self.omitir(path.name, f"escritura Excel falló: {type(e).__name__}: {e}")
+                continue
             generated.append(path)
             logger.debug(f"      • reporte_{report_name}.xlsx ({len(df_report):,} filas)")
 
@@ -556,6 +614,10 @@ class VisualizationsStrategy(BaseReportingStrategy):
         viz_dir.mkdir(exist_ok=True)
 
         files_map = visualizer.save_all_visualizations(str(viz_dir))
+        self.omitidos.extend(
+            ArtefactoOmitido(f"visualizaciones/{nombre}", type(self).__name__, motivo)
+            for nombre, motivo in visualizer.omitidos
+        )
 
         return [Path(p) for p in files_map.values() if Path(p).exists()]
 
@@ -599,12 +661,12 @@ class DashboardStrategy(BaseReportingStrategy):
 
         # Dashboard mejorado si el método existe
         if hasattr(dashboard, "generate_enhanced_dashboard"):
+            enhanced_path = ctx.output_dir / "dashboard_ejecutivo_mejorado.png"
             try:
-                enhanced_path = ctx.output_dir / "dashboard_ejecutivo_mejorado.png"
                 dashboard.generate_enhanced_dashboard(str(enhanced_path))
                 generated.append(enhanced_path)
             except Exception as e:
-                logger.debug(f"   Dashboard mejorado no generado: {e}")
+                self.omitir(enhanced_path.name, f"{type(e).__name__}: {e}")
 
         return generated
 
@@ -637,6 +699,10 @@ class EnhancedInsightsStrategy(BaseReportingStrategy):
         )
 
         files_map = suite.generate_all_enhanced_reports(str(ctx.output_dir))
+        self.omitidos.extend(
+            ArtefactoOmitido(nombre, type(self).__name__, motivo)
+            for nombre, motivo in suite.omitidos
+        )
 
         return [Path(p) for p in files_map.values() if Path(p).exists()]
 

@@ -242,6 +242,20 @@ class StateManager:
         }
         self.save()
 
+    def anotar_meta(self, phase: Phase, meta: dict) -> None:
+        """Añade metadatos a una fase SIN tocar hash, estado ni artefactos.
+
+        Para los caminos que generan L6 fuera de ``_exec_phase``
+        (``Orchestrator.export_reports``, reportes tras postprocesar): no son
+        un checkpoint, pero el manifiesto debe decir igual qué artefactos se
+        omitieron y por qué (F1.4). Si la fase no tiene entrada se crea una
+        sin ``hash`` ni ``status`` DONE, que ``is_valid`` rechaza.
+        """
+        rec = self.manifest.setdefault(phase.value, {"status": "SIN_CHECKPOINT"})
+        rec.setdefault("meta", {}).update(meta)
+        rec["timestamp"] = datetime.now().isoformat()
+        self.save()
+
     def invalidate_from(self, phase: Phase) -> None:
         """
         Invalida una fase y todas las posteriores.

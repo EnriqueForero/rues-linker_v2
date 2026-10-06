@@ -64,6 +64,8 @@ class DataVisualizer:
         self.pipeline_start_time = pipeline_start_time
         self.config = config or {}
         self.logger = CustomLogger("DataVisualizer")
+        # F1.4: (archivo, motivo) de cada figura que no se escribió.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Límites de memoria
         self.sample_size = self.config.get("viz_sample_size", 50000)
@@ -426,12 +428,15 @@ class DataVisualizer:
         successful = 0
         failed = 0
         skipped = 0
+        # F1.4: (archivo, motivo) de cada figura que no se escribió.
+        self.omitidos = []
 
         for viz_config in visualizations:
             try:
                 # Verificar si tenemos los datos necesarios
                 if not self._has_required_data(viz_config):
                     self.logger.info(f"⏭️  {viz_config['filename']}: Omitido (datos insuficientes)")
+                    self.omitidos.append((viz_config["filename"], "datos insuficientes"))
                     skipped += 1
                     continue
 
@@ -453,12 +458,14 @@ class DataVisualizer:
                     self.logger.info(f"✓ Guardado: {viz_config['filename']}")
                 else:
                     self.logger.warning(f"✗ Sin datos para: {viz_config['filename']}")
+                    self.omitidos.append((viz_config["filename"], "la función no devolvió figura"))
                     failed += 1
 
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ Error en {viz_config['filename']}: {e!s}")
                 self.logger.debug("Stack trace:", exc_info=True)
+                self.omitidos.append((viz_config["filename"], f"{type(e).__name__}: {e!s}"))
                 plt.close("all")  # Limpiar cualquier figura abierta
 
         # Liberar memoria

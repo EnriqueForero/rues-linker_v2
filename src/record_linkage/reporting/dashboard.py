@@ -367,9 +367,13 @@ class ExecutiveDashboard:
             return fig
 
         except Exception as e:
+            # F1.4: nunca un PNG con el texto del error. Se cierra la figura
+            # y la excepción sube; DashboardStrategy la convierte en una
+            # omisión con motivo en el manifiesto.
             self.logger.error(f"Error generando dashboard: {e}")
             self.logger.debug("Stack trace:", exc_info=True)
-            return self._generate_error_dashboard(output_path, format, dpi)
+            plt.close("all")
+            raise
 
     def _insufficient_data(self) -> bool:
         """Verifica si hay datos suficientes para el dashboard."""
@@ -1520,41 +1524,4 @@ class ExecutiveDashboard:
 
         self._save_figure(fig, output_path, format, dpi)
         self.logger.warning("Dashboard mínimo generado por falta de datos")
-        return fig
-
-    def _generate_error_dashboard(self, output_path: str, format: str, dpi: int):
-        """Genera dashboard de error como fallback."""
-        fig, ax = plt.subplots(figsize=(12, 8), facecolor="white")
-        ax.axis("off")
-
-        error_text = f"""DASHBOARD EJECUTIVO
-Record Linkage Pipeline
-
-Error generando visualizaciones completas.
-Por favor, revise los logs para más detalles.
-
-Información disponible:
-- Registros correlative: {len(self.correlative_table):,}
-- Golden records: {len(self.golden_records):,}
-- Métricas: {len(self.metrics)}
-
-Generado: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
-
-        ax.text(
-            0.5,
-            0.5,
-            error_text,
-            fontsize=12,
-            ha="center",
-            va="center",
-            bbox=dict(
-                boxstyle="round,pad=1",
-                facecolor=self.colors["light"],
-                edgecolor=self.colors["danger"],
-                linewidth=2,
-            ),
-        )
-
-        self._save_figure(fig, output_path, format, dpi)
-        self.logger.error("Dashboard de error generado como fallback")
         return fig

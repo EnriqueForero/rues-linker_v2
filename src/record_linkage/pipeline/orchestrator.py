@@ -32,6 +32,12 @@ from ..engine.scorer import VectorizedScorer
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
 from ..processing.dtypes import optimizar_dtypes_categoricos
+from ..reporting.contrato_l6 import (
+    ArtefactoOmitido,
+    artefactos_de,
+    es_estrategia_obligatoria,
+    verificar_artefactos,
+)
 from ..reporting.strategies import (
     BaseReportingStrategy,
     ConfigAuditStrategy,
@@ -47,6 +53,7 @@ from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
+from .errores import ArtefactoObligatorioError, EstrategiaFallo
 from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
 from .state_manager import StateManager
@@ -201,6 +208,14 @@ class Orchestrator:
         # el atributo, incluso si alguien llama un método interno sin
         # haber invocado `run()` (escenario de testing/debug).
         self._force_rerun_phases: set[Phase] = set()
+
+        # (F1.4) Metadatos que una fase quiere dejar en su entrada del
+        # manifiesto además de duración y RSS (hoy: L6 → `omitidos`).
+        # `_exec_phase` los mezcla en `mark_done(meta=…)` y los vacía.
+        self._meta_extra: dict[str, dict[str, Any]] = {}
+        # Artefactos opcionales de L6 que no se escribieron en la última
+        # generación de reportes, con estrategia y motivo.
+        self.l6_omitidos: list[dict[str, str]] = []
 
         # Estrategias de reporting (orden de ejecución)
         self._reporting_strategies: list[BaseReportingStrategy] = [
@@ -768,6 +783,13 @@ class Orchestrator:
             }
 
         files, _ = self._run_L6(results)
+        # Este camino no pasa por _exec_phase/mark_done (no es un checkpoint:
+        # los resultados pueden venir postprocesados). El manifiesto debe
+        # decir igual qué se omitió y por qué (F1.4).
+        self.state.anotar_meta(
+            Phase.L6_REPORTING,
+            {"omitidos": list(self.l6_omitidos), "files": [str(f) for f in files]},
+        )
         return files
 
     def add_reporting_strategy(self, strategy: BaseReportingStrategy) -> None:
@@ -860,15 +882,12 @@ class Orchestrator:
         self._phase_times[phase.value] = duration
 
         # Persistir estado
-        self.state.mark_done(
-            phase,
-            ph_hash,
-            files,
-            {
-                "duration": duration,
-                "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
-            },
-        )
+        meta_fase: dict[str, Any] = {
+            "duration": duration,
+            "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
+        }
+        meta_fase.update(self._meta_extra.pop(phase.value, {}))
+        self.state.mark_done(phase, ph_hash, files, meta_fase)
         self.log.info(
             f"✅ {phase.value}: Completado en {_fmt_time(duration)} (hash: {ph_hash[:6]})"
         )
@@ -1895,59 +1914,88 @@ class Orchestrator:
             phase_times=self._phase_times.copy(),
         )
 
-        # 6. EJECUTAR ESTRATEGIAS CON PROTECCIÓN
+        # 6. EJECUTAR ESTRATEGIAS BAJO EL CONTRATO DE L6 (F1.4)
+        #    - obligatoria (produce un artefacto obligatorio) y falla → la
+        #      corrida falla con ArtefactoObligatorioError;
+        #    - opcional y falla → se omite y queda en el manifiesto con motivo;
+        #    - al final, verificar_artefactos exige los obligatorios por
+        #      nombre exacto (no por prefijo).
         all_files: list[Path] = []
+        omitidos: list[ArtefactoOmitido] = []
         self.log.info(f"📊 Ejecutando {len(self._reporting_strategies)} estrategias...")
 
         for strategy in self._reporting_strategies:
             current_mem = psutil.virtual_memory().percent
             is_data_export = isinstance(strategy, DataExportStrategy)
+            nombre_clase = type(strategy).__name__
+            # Una estrategia que solo cumple el Protocol (sin heredar de
+            # BaseReportingStrategy) no declara `obligatoria` ni `omitidos`;
+            # el contrato la conoce por su jerarquía de clases.
+            obligatoria = bool(
+                getattr(strategy, "obligatoria", es_estrategia_obligatoria(strategy))
+            )
 
-            # La exportación es un artefacto contractual, no una visualización
-            # opcional: incluso bajo presión crítica debe intentarse. La
-            # estrategia ya usa streaming desde checkpoints cuando es válido
-            # y evita Excel completo con RAM alta. Solo se omite analítica.
-            if current_mem > 95 and not is_data_export:
-                self.log.error(f"   🛑 RAM crítica ({current_mem:.1f}%), saltando {strategy.name}")
+            # Los artefactos obligatorios se intentan incluso bajo presión
+            # crítica (la exportación usa streaming desde checkpoints y evita
+            # el Excel completo con RAM alta; la auditoría es un JSON). Solo
+            # se omite la analítica, y con constancia.
+            if current_mem > 95 and not obligatoria:
+                motivo = f"RAM crítica ({current_mem:.1f} %): se omitió para proteger la corrida"
+                self.log.error(f"   🛑 {strategy.name}: {motivo}")
+                omitidos.extend(self._omisiones_de(strategy, motivo))
                 continue
 
+            self.log.info(f"   ▶️ {strategy.name}...")
+            strategy_ctx = export_ctx if is_data_export else ctx
             try:
-                self.log.info(f"   ▶️ {strategy.name}...")
-                strategy_ctx = export_ctx if is_data_export else ctx
                 files = strategy.execute(strategy_ctx, self.log)
+            except EstrategiaFallo as exc:
+                if obligatoria:
+                    raise ArtefactoObligatorioError(
+                        artefactos_de(strategy) or (strategy.name,),
+                        output_dir,
+                        detalle=f"{nombre_clase} falló: {type(exc.causa).__name__}: {exc.causa}",
+                    ) from exc
+                omitidos.extend(
+                    self._omisiones_de(strategy, f"{type(exc.causa).__name__}: {exc.causa}")
+                )
+                continue
+            finally:
+                gc.collect()
 
-                # BaseReportingStrategy es deliberadamente tolerante y
-                # convierte errores en []. Para la estrategia contractual
-                # incorporada eso ocultaría una corrida sin sus dos salidas.
-                if type(strategy) is DataExportStrategy:
-                    names = [Path(path).name for path in files]
-                    missing_exports = [
-                        prefix
-                        for prefix in ("golden_records", "tabla_correlativa")
-                        if not any(name.startswith(prefix) for name in names)
-                    ]
-                    if missing_exports:
-                        raise RuntimeError(
-                            "DataExportStrategy no generó artefactos para: "
-                            + ", ".join(missing_exports)
-                        )
-                all_files.extend(files)
-                self.log.info(f"   ✅ {strategy.name}: {len(files)} archivo(s)")
-            except Exception as e:
-                self.log.error(f"   ❌ {strategy.name} falló: {e}")
-                if is_data_export:
-                    raise RuntimeError(
-                        "Falló la exportación contractual de resultados; "
-                        "no se marcará L6 como completada."
-                    ) from e
+            omitidos.extend(getattr(strategy, "omitidos", ()))
+            all_files.extend(files)
+            self.log.info(f"   ✅ {strategy.name}: {len(files)} archivo(s)")
 
-            gc.collect()
+        # 7. VERIFICAR EL CONTRATO: obligatorios por nombre exacto
+        reporte = verificar_artefactos(output_dir, all_files)
+        if not reporte.ok:
+            raise ArtefactoObligatorioError(reporte.obligatorios_faltantes, output_dir)
 
-        # 7. RESUMEN
+        self.l6_omitidos = [o.como_dict() for o in omitidos]
+        self._meta_extra[Phase.L6_REPORTING.value] = {"omitidos": list(self.l6_omitidos)}
+
+        # 8. RESUMEN
         self.log.info(f"   📁 Total: {len(all_files)} archivos generados")
+        if omitidos:
+            self.log.warning(
+                f"   ⚠️ {len(omitidos)} artefacto(s) opcional(es) omitido(s); "
+                "detalle en manifest.json → L6_reporting.meta.omitidos"
+            )
         self.log.info(f"   💾 Memoria final: {psutil.virtual_memory().percent:.1f}%")
 
         return all_files, all_files
+
+    @staticmethod
+    def _omisiones_de(strategy: BaseReportingStrategy, motivo: str) -> list[ArtefactoOmitido]:
+        """Una omisión por cada artefacto que la estrategia habría producido.
+
+        Para una estrategia no declarada en ``contrato_l6`` (añadida con
+        ``add_reporting_strategy``) se registra su nombre como artefacto.
+        """
+        nombre_clase = type(strategy).__name__
+        patrones = artefactos_de(strategy) or (strategy.name,)
+        return [ArtefactoOmitido(patron, nombre_clase, motivo) for patron in patrones]
 
     def _build_metrics(self, golden_df: pd.DataFrame, correl_df: pd.DataFrame) -> dict[str, Any]:
         """

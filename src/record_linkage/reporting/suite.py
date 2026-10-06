@@ -11,6 +11,7 @@ directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import os
@@ -65,6 +66,8 @@ class EnhancedReportingSuite:
         self.config = config or {}
         self.max_memory_mb = max_memory_mb
         self.logger = CustomLogger("EnhancedReportingSuite")
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Configuración de límites
         self.sample_size = min(50000, max_memory_mb * 100)
@@ -230,42 +233,48 @@ class EnhancedReportingSuite:
         """
         self.logger.info("Iniciando generación de reportes mejorados...")
         generated_files = {}
+        self.omitidos = []
 
-        # 1. Heatmap de intersección
-        try:
-            self.logger.info("Generando Heatmap de Intersección...")
-            heatmap_path = self.generate_intersection_heatmap(output_dir)
-            if heatmap_path:
-                generated_files["intersection_heatmap"] = heatmap_path
-        except Exception as e:
-            self.logger.error(f"Error en heatmap: {e!s}", exc_info=True)
-
-        # 2. Dashboard Ejecutivo Mejorado
-        try:
-            self.logger.info("Generando Dashboard Ejecutivo Mejorado...")
-            dashboard_path = self.generate_enhanced_dashboard(output_dir)
-            if dashboard_path:
-                generated_files["enhanced_dashboard"] = dashboard_path
-        except Exception as e:
-            self.logger.error(f"Error en dashboard: {e!s}", exc_info=True)
-
-        # 3. Tarjeta de Calidad
-        try:
-            self.logger.info("Generando Tarjeta de Calidad...")
-            quality_card_path = self.generate_quality_card(output_dir)
-            if quality_card_path:
-                generated_files["quality_card"] = quality_card_path
-        except Exception as e:
-            self.logger.error(f"Error en tarjeta de calidad: {e!s}", exc_info=True)
-
-        # 4. Reporte de Casos Problemáticos
-        try:
-            self.logger.info("Generando Reporte de Casos Problemáticos...")
-            problematic_path = self.generate_problematic_cases_report(output_dir)
-            if problematic_path:
-                generated_files["problematic_cases"] = problematic_path
-        except Exception as e:
-            self.logger.error(f"Error en casos problemáticos: {e!s}", exc_info=True)
+        # F1.4: cada reporte que no sale queda en `omitidos` con motivo
+        # (excepción, o «sin datos» cuando el generador devuelve None).
+        generadores = [
+            (
+                "intersection_heatmap",
+                "heatmap_interseccion_mejorado.png",
+                "Heatmap de Intersección",
+                self.generate_intersection_heatmap,
+            ),
+            (
+                "enhanced_dashboard",
+                "dashboard_ejecutivo_mejorado.png",
+                "Dashboard Ejecutivo Mejorado",
+                self.generate_enhanced_dashboard,
+            ),
+            (
+                "quality_card",
+                "tarjeta_calidad_datos.png",
+                "Tarjeta de Calidad",
+                self.generate_quality_card,
+            ),
+            (
+                "problematic_cases",
+                "casos_problematicos_detallado.xlsx",
+                "Reporte de Casos Problemáticos",
+                self.generate_problematic_cases_report,
+            ),
+        ]
+        for clave, archivo, titulo, generador in generadores:
+            try:
+                self.logger.info(f"Generando {titulo}...")
+                ruta = generador(output_dir)
+            except Exception as e:
+                self.logger.error(f"Error en {titulo}: {e!s}", exc_info=True)
+                self.omitidos.append((archivo, f"{type(e).__name__}: {e!s}"))
+                continue
+            if ruta:
+                generated_files[clave] = ruta
+            else:
+                self.omitidos.append((archivo, "datos insuficientes para generarlo"))
 
         # Liberar memoria
         gc.collect()
@@ -373,7 +382,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error en generate_intersection_heatmap: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _calculate_intersection_from_db(self) -> pd.DataFrame:
         """Calcula matriz de intersección directamente desde SQLite."""
@@ -703,7 +712,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando tarjeta de calidad: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _plot_performance_metrics(self, ax):
         """
@@ -864,7 +873,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando dashboard: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _add_kpi_cards(self, fig, grid_area):
         """Agrega tarjetas KPI al dashboard."""
@@ -1528,7 +1537,10 @@ class EnhancedReportingSuite:
 
             except Exception as e:
                 self.logger.error(f"Error guardando reporte Excel: {e!s}")
-                return None
+                # F1.4: no dejar un xlsx a medias ni perder el motivo.
+                with contextlib.suppress(OSError):
+                    os.unlink(output_path)
+                raise
         else:
             self.logger.info("No se detectaron casos problemáticos significativos")
             return None

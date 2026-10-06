@@ -19,6 +19,7 @@ import pandas as pd
 
 from ..utils.logger import CustomLogger
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
+from .contrato_l6 import ArtefactoOmitido
 
 
 class ReportGenerator:
@@ -69,6 +70,10 @@ class ReportGenerator:
         # Guardar referencias originales
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
+
+        # F1.4: reportes que no se produjeron, con motivo. Se vacía en cada
+        # generate_all_reports(); ExcelReportsStrategy lo lleva al manifiesto.
+        self.omitidos: list[ArtefactoOmitido] = []
 
         # Cargar datos con gestión inteligente de memoria
         self.correlative_sample = self._load_data_sample(correlative_data, "correlative_table")
@@ -262,10 +267,15 @@ class ReportGenerator:
 
     def generate_all_reports(self) -> dict[str, pd.DataFrame]:
         """
-        Genera todos los reportes disponibles con manejo robusto de errores.
-        Versión mejorada con más reportes y mejor gestión de memoria.
+        Genera todos los reportes disponibles.
+
+        Un reporte que falla o no tiene datos NO entra al diccionario: hasta
+        F1.4 se devolvía un DataFrame con una sola celda «Error generando
+        reporte: …» que terminaba escrito como xlsx. Ahora se omite y queda en
+        ``self.omitidos`` (artefacto, estrategia, motivo).
         """
         self.logger.info("Iniciando generación de reportes...")
+        self.omitidos = []
 
         # Definir todos los reportes disponibles (orden optimizado)
         report_generators = [
@@ -288,6 +298,7 @@ class ReportGenerator:
                 # Verificar si debe generarse
                 if not always_generate and self._should_skip_report(report_name):
                     self.logger.info(f"⏭️  {report_name}: Omitido (datos insuficientes)")
+                    self._omitir(report_name, "datos insuficientes")
                     skipped += 1
                     continue
 
@@ -303,13 +314,15 @@ class ReportGenerator:
                     self.logger.info(f"✓ {report_name}: {len(report_df)} filas generadas")
                 else:
                     self.logger.warning(f"✗ {report_name}: Sin datos para generar")
+                    self._omitir(report_name, "el generador no devolvió filas")
                     failed += 1
 
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ {report_name}: Error - {e!s}", exc_info=True)
-                # Crear reporte de error
-                reports[report_name] = pd.DataFrame({"Error": [f"Error generando reporte: {e!s}"]})
+                # F1.4: nunca un archivo con un error dentro. Se omite y se
+                # deja constancia; el usuario lo ve en manifest.json.
+                self._omitir(report_name, f"{type(e).__name__}: {e!s}")
 
         # Liberar memoria después de generar reportes
         gc.collect()
@@ -319,6 +332,11 @@ class ReportGenerator:
         )
 
         return reports
+
+    def _omitir(self, report_name: str, motivo: str) -> None:
+        self.omitidos.append(
+            ArtefactoOmitido(f"reporte_{report_name}.xlsx", "ExcelReportsStrategy", motivo)
+        )
 
     def _should_skip_report(self, report_name: str) -> bool:
         """Determina si un reporte debe omitirse por falta de datos."""
@@ -474,14 +492,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en resumen ejecutivo: {e!s}")
-            return pd.DataFrame(
-                {
-                    "Categoría": ["ERROR"],
-                    "Métrica": ["Error generando resumen"],
-                    "Valor": [str(e)],
-                    "Descripción": ["Revisar logs para más detalles"],
-                }
-            )
+            raise
 
     def _generate_quality_metrics(self) -> pd.DataFrame:
         """
@@ -582,7 +593,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en métricas de calidad: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas: {e!s}"]})
+            raise
 
     def _generate_source_analysis(self) -> pd.DataFrame:
         """
@@ -643,7 +654,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en análisis de fuentes: {e!s}")
-            return pd.DataFrame({"Error": [f"Error analizando fuentes: {e!s}"]})
+            raise
 
     def _generate_source_analysis_from_db(self) -> pd.DataFrame:
         """Genera análisis de fuentes directamente desde base de datos."""
@@ -781,7 +792,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en casos de revisión: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando casos de revisión: {e!s}"]})
+            raise
 
     def _determine_main_review_reason(self, row) -> str:
         """Determina la razón principal para revisar un caso."""
@@ -894,7 +905,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en estadísticas de grupos: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando estadísticas: {e!s}"]})
+            raise
 
     def _generate_group_statistics_from_db(self) -> pd.DataFrame:
         """Genera estadísticas de grupos directamente desde base de datos."""
@@ -1029,7 +1040,7 @@ class ReportGenerator:
 
         except Exception as e:
             self.logger.error(f"Error en métricas de performance: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas de performance: {e!s}"]})
+            raise
 
     def _calculate_phase_speed(self, phase: str, time_val: float) -> str:
         """Calcula velocidad específica por fase."""
