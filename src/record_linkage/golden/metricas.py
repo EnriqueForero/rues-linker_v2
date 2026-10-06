@@ -18,7 +18,15 @@ Aquí viven las dos reglas como funciones puras de módulo:
 * :func:`confianza_de_grupo` — ALTA · MEDIA · BAJA desde ``NIT_VARIATIONS``,
   ``SOURCES_COUNT`` y ``RECORD_COUNT``; es la regla que :func:`metricas_de_grupo`
   aplica y la que ``contrato.py`` documenta como definición de ``CONFIANZA``
-  (F1.9: una sola copia, aquí).
+  (F1.9: una sola copia, aquí). Su vocabulario es ``contrato.NIVELES_CONFIANZA``.
+  F2.12: la misma función la aplican los cinco caminos — ``linkage()``,
+  ``link()`` y ``ejecutar_cruce`` a través del golden; ``dedupe()`` la hereda
+  cuando hay golden (sin golden en memoria la correlativa la deja nula y el
+  manifiesto lo declara); ``flujo.importadores`` la llama con sus propias
+  métricas (``NIT_VARIATIONS = 0``, ``SOURCES_COUNT = 1``, ``RECORD_COUNT`` =
+  filas del grupo); los ``enlaces`` de vinculación (F3) la documentan con el
+  mismo texto del contrato. Ninguna otra copia: ``GoldenRecordGeneratorV7``
+  perdió en F2.12 la suya fila a fila (``_calcular_confianza``).
 * :func:`metricas_de_calidad` — la MISMA fórmula que el ``UPDATE`` SQL de
   ``_add_quality_metrics``, incluido el redondeo de SQLite
   (``tests/test_golden_consolidacion_nit.py`` prueba la paridad valor a valor
@@ -41,6 +49,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ..contrato import NIVELES_CONFIANZA
 from ..pipeline.errores import GoldenInvalidoError, mensaje_accionable
 
 #: Las 13 columnas del golden de v1, en el orden en que las crea
@@ -172,16 +181,32 @@ def metricas_de_grupo(
     return metricas[list(COLUMNAS_METRICAS_GRUPO)]
 
 
+#: Umbrales de la regla de CONFIANZA. Viven aquí y en ningún otro sitio; el
+#: texto del contrato (``contrato._DEFINICION_CONFIANZA``) los repite para el
+#: diccionario y ``tests/test_contrato_salida.py`` comprueba que coinciden.
+MAX_IDENTIFICADORES_MEDIA = 2
+MAX_REGISTROS_MEDIA = 5
+
+
 def confianza_de_grupo(metricas: pd.DataFrame) -> np.ndarray:
     """ALTA · MEDIA · BAJA desde ``NIT_VARIATIONS``, ``SOURCES_COUNT`` y ``RECORD_COUNT``.
 
-    Paso 1.5 del plan maestro, vectorizado con ``np.select``:
+    Es LA regla de ``CONFIANZA`` del estándar de salida (paso 1.5 del plan
+    maestro; F2.12 la deja como única copia para los cinco caminos),
+    vectorizada con ``np.select``:
 
     * ALTA: identificador único (``NIT_VARIATIONS == 1``) confirmado por dos o
       más fuentes (``SOURCES_COUNT >= 2``).
-    * MEDIA: hasta dos identificadores (``NIT_VARIATIONS <= 2``) y grupo
-      pequeño (``RECORD_COUNT <= 5``).
+    * MEDIA: hasta :data:`MAX_IDENTIFICADORES_MEDIA` identificadores y grupo
+      pequeño (``RECORD_COUNT <= MAX_REGISTROS_MEDIA``). Un registro solo sin
+      identificador (``NIT_VARIATIONS = 0``) cae aquí.
     * BAJA: el resto.
+
+    Los nombres de los niveles salen de ``contrato.NIVELES_CONFIANZA``: la
+    función no tiene vocabulario propio. Un camino sin identificador ni
+    varias fuentes (``flujo.importadores``) la llama con ``NIT_VARIATIONS = 0``
+    y ``SOURCES_COUNT = 1``: la regla solo distingue entonces por tamaño del
+    grupo (MEDIA hasta 5 filas, BAJA después), y eso es lo que se declara.
 
     No rellena nulos: las métricas de grupo nunca los traen (las produce
     :func:`metricas_de_grupo`) y un nulo aquí sería un defecto a detectar, no
@@ -193,16 +218,17 @@ def confianza_de_grupo(metricas: pd.DataFrame) -> np.ndarray:
     Returns:
         Arreglo de cadenas alineado con ``metricas.index``.
     """
+    alta, media, baja = NIVELES_CONFIANZA
     nit_vars = metricas["NIT_VARIATIONS"]
     fuentes = metricas["SOURCES_COUNT"]
     miembros = metricas["RECORD_COUNT"]
     return np.select(
         [
             (nit_vars == 1) & (fuentes >= 2),
-            (nit_vars <= 2) & (miembros <= 5),
+            (nit_vars <= MAX_IDENTIFICADORES_MEDIA) & (miembros <= MAX_REGISTROS_MEDIA),
         ],
-        ["ALTA", "MEDIA"],
-        default="BAJA",
+        [alta, media],
+        default=baja,
     )
 
 

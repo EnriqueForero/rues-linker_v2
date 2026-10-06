@@ -34,7 +34,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .. import contrato
 from ..engine.cobertura import cobertura_estrella
+from ..golden.metricas import confianza_de_grupo
 from ..matching.campos import CampoSpec, EsquemaCampos, PoliticaFaltante, TipoCampo
 from ..matching.genericos import (
     GENERICOS_ESTRUCTURALES,
@@ -63,6 +65,7 @@ from ..processing.saneamiento import (
 __all__ = [
     "ConfigImportadores",
     "ResultadoImportadores",
+    "confianza_importadores",
     "construir_entregables",
     "deduplicar_importadores",
     "ejecutar",
@@ -786,10 +789,47 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
     }
 
 
+def confianza_importadores(golden: pd.DataFrame) -> np.ndarray:
+    """``CONFIANZA`` de cada importador con LA regla del estándar (F2.12).
+
+    No hay regla propia de este flujo: se llama a
+    :func:`record_linkage.golden.metricas.confianza_de_grupo` con las tres
+    métricas que la regla exige, tal como son en una base sin identificador y
+    de una sola fuente: ``NIT_VARIATIONS = 0`` (ningún identificador),
+    ``SOURCES_COUNT = 1`` (una base) y ``RECORD_COUNT = N_FILAS_ORIGEN``. Con
+    esas entradas la regla solo discrimina por tamaño del grupo: MEDIA hasta
+    5 filas, BAJA después; nunca ALTA, porque ALTA exige un identificador
+    confirmado por dos fuentes y aquí no hay ninguno. Eso es lo honesto —y lo
+    que el diccionario documenta— en vez de inventar una escala distinta.
+
+    Args:
+        golden: tabla ``GOLDEN`` de :func:`construir_entregables` (una fila
+            por importador, con ``N_FILAS_ORIGEN``).
+
+    Returns:
+        Arreglo de cadenas de ``contrato.NIVELES_CONFIANZA`` alineado con
+        ``golden.index``.
+    """
+    metricas_regla = pd.DataFrame(
+        {
+            "NIT_VARIATIONS": np.zeros(len(golden), dtype="int64"),
+            "SOURCES_COUNT": np.ones(len(golden), dtype="int64"),
+            "RECORD_COUNT": golden["N_FILAS_ORIGEN"].to_numpy(dtype="int64"),
+        },
+        index=golden.index,
+    )
+    return confianza_de_grupo(metricas_regla)
+
+
 def construir_entregables(
     prep: pd.DataFrame, corrida: dict, cfg: ConfigImportadores
 ) -> dict[str, pd.DataFrame]:
-    """CORRELATIVA, GOLDEN, PAISES y REVISION a partir de la corrida."""
+    """CORRELATIVA, GOLDEN, PAISES y REVISION a partir de la corrida.
+
+    ``CONFIANZA`` (F2.12) se calcula una vez por importador en ``GOLDEN`` con
+    :func:`confianza_importadores` y la correlativa lleva la de su grupo, como
+    en el resto de caminos del estándar.
+    """
     rep = corrida["representantes"]
     lideres = rep.loc[rep.ES_LIDER, ["ID_IMPORTADOR", "NOMBRE_NORM"]].rename(
         columns={"NOMBRE_NORM": "NOMBRE_NORM_FINAL"}
@@ -929,6 +969,10 @@ def construir_entregables(
     )
     orden = cfg.col_peso_economico if cfg.col_peso_economico in golden.columns else "N_FILAS_ORIGEN"
     golden = golden.sort_values(orden, ascending=False).reset_index(drop=True)
+    golden["CONFIANZA"] = confianza_importadores(golden)
+    correlativa["CONFIANZA"] = correlativa["ID_IMPORTADOR"].map(
+        golden.set_index("ID_IMPORTADOR")["CONFIANZA"]
+    )
 
     paises = (
         correlativa.groupby([cfg.col_pais, "PAIS_FINAL", "PAIS_ISO3", "PAIS_METODO"])
@@ -1102,6 +1146,20 @@ def verificar_invariantes(
         (
             "ningún grupo mezcla dos grafías de país",
             int(correlativa.groupby("ID_IMPORTADOR")["PAIS_FINAL"].nunique().max()) == 1,
+        ),
+        # F2.12: la CONFIANZA es la del estándar (una regla, un vocabulario) y
+        # la correlativa lleva exactamente la de su importador en GOLDEN.
+        (
+            "CONFIANZA en el vocabulario del contrato y la de su grupo",
+            bool(golden["CONFIANZA"].isin(contrato.NIVELES_CONFIANZA).all())
+            and bool(
+                (
+                    correlativa["CONFIANZA"]
+                    == correlativa["ID_IMPORTADOR"].map(
+                        golden.set_index("ID_IMPORTADOR")["CONFIANZA"]
+                    )
+                ).all()
+            ),
         ),
     ]
     if peso:

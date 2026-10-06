@@ -893,34 +893,11 @@ class GoldenRecordGeneratorV7:
 
         return golden_df, correl_df
 
-    @staticmethod
-    def _calcular_confianza(row) -> str:
-        """
-        Asigna nivel de confianza ALTA/MEDIA/BAJA basado en evidencia del grupo.
-
-        Reglas:
-          ALTA  — NIT único + más de una fuente confirma
-          MEDIA — NIT único con una sola fuente, o ≤2 NITs con grupo pequeño
-          BAJA  — Múltiples NITs, o grupo muy grande (>5 miembros)
-
-        Paso 1.5 del Plan Maestro.
-        """
-        nit_vars = row.get("NIT_VARIATIONS", 1)
-        fuentes = row.get("SOURCES_COUNT", 1)
-        n_miembros = row.get("RECORD_COUNT", 1)
-
-        # ALTA: NIT único confirmado por múltiples fuentes
-        if nit_vars == 1 and fuentes >= 2:
-            return "ALTA"
-
-        # MEDIA: NIT único pero solo una fuente,
-        #        o hasta 2 NITs con grupo pequeño (≤5)
-        elif nit_vars <= 2 and n_miembros <= 5:
-            return "MEDIA"
-
-        # BAJA: Múltiples NITs, o grupo demasiado grande
-        else:
-            return "BAJA"
+    # F2.12: la regla de CONFIANZA (ALTA · MEDIA · BAJA) vive UNA vez en
+    # ``golden.metricas.confianza_de_grupo`` y llega aquí por
+    # ``metricas_de_grupo``. La copia fila a fila ``_calcular_confianza`` que
+    # vivía en este punto quedó sin uso desde F1.1 y se retiró: dos copias de
+    # una regla son la forma en que una se corrige y la otra sigue rota.
 
     def _calculate_quality_scores(self, df: pd.DataFrame) -> pd.DataFrame:
         """
