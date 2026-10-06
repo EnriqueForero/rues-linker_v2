@@ -297,6 +297,61 @@ def test_fecha_con_zona_horaria_falla_con_mensaje_y_sin_restos(tmp_path: Path) -
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize(
+    "zonas",
+    [
+        pytest.param([datetime.timezone.utc] * 3, id="utc"),
+        pytest.param([datetime.timezone(datetime.timedelta(hours=-5))] * 3, id="menos_cinco"),
+        pytest.param(
+            [datetime.timezone.utc, datetime.timezone(datetime.timedelta(hours=-5)), None],
+            id="offsets_distintos_y_nulo",
+        ),
+    ],
+)
+def test_columna_object_con_datetime_con_zona_horaria_falla_con_mensaje_y_sin_restos(
+    tmp_path: Path, zonas: list[datetime.timezone | None]
+) -> None:
+    """Revisión F1.11 ronda 4 (medio): una columna ``object`` de ``datetime`` con
+    ``tzinfo`` (un driver de base de datos por fila, un JSON de API; con offsets
+    distintos pandas la deja en object) hacía que ``_fechas_antiguas`` comparara una
+    serie tz-aware con un Timestamp naive FUERA del ``try`` → ``TypeError`` crudo que
+    tumbaba la carpeta. Debe salir por la misma puerta que ``DatetimeTZDtype``:
+    ``EscrituraSalidaError`` con «zona horaria» y el nombre de la columna, sin restos."""
+    valores = [
+        datetime.datetime(2026, 1, 1 + i, 10, 0, tzinfo=z) if z is not None else None
+        for i, z in enumerate(zonas)
+    ]
+    df = pd.DataFrame({"ID": [1, 2, 3], "CUANDO": pd.Series(valores, dtype=object)})
+    assert df["CUANDO"].dtype == object  # el caso del hallazgo: NO es DatetimeTZDtype
+    with pytest.raises(EscrituraSalidaError, match=r"CUANDO.*zona horaria") as info:
+        escribir_excel_o_leeme(df, tmp_path / "tz_object.xlsx")
+    assert "parquet" in str(info.value) and "linkage()" not in str(info.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_columna_object_con_fechas_naive_y_una_con_zona_no_sale_como_typeerror(
+    tmp_path: Path,
+) -> None:
+    """La variante más rara: naive y tz-aware MEZCLADOS en una columna object (pandas no
+    la infiere como tz-aware). xlsxwriter la rechaza al escribir y el error debe seguir
+    siendo ``EscrituraSalidaError`` nombrando la columna, nunca ``TypeError``."""
+    df = pd.DataFrame(
+        {
+            "ID": [1, 2],
+            "CUANDO": pd.Series(
+                [
+                    datetime.datetime(2026, 1, 1, 10, 0),
+                    datetime.datetime(2026, 1, 2, 10, 0, tzinfo=datetime.timezone.utc),
+                ],
+                dtype=object,
+            ),
+        }
+    )
+    with pytest.raises(EscrituraSalidaError, match=r"CUANDO"):
+        escribir_excel_o_leeme(df, tmp_path / "tz_mezcla.xlsx")
+    assert not list(tmp_path.iterdir())
+
+
 def test_celda_de_mas_de_32767_caracteres_falla_sin_pedir_otra_corrida(tmp_path: Path) -> None:
     df = pd.DataFrame({"OBS": ["x" * 40_000], "N": [1]})
     with pytest.raises(EscrituraSalidaError, match=r"32\.767") as info:

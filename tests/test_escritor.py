@@ -330,6 +330,39 @@ def test_columna_de_la_fuente_con_listas_se_publica_con_excel_como_texto(
     assert list(leido[columna].iloc[0]) == ["a", "b"]  # el parquet conserva la lista
 
 
+def test_columna_de_la_fuente_con_datetime_con_zona_omite_el_excel_y_publica(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Revisión F1.11 ronda 4 (medio): una columna extra de la fuente ``object`` con
+    ``datetime`` con ``tzinfo`` (driver de base de datos, JSON de API) hacía fallar la
+    carpeta ENTERA con ``TypeError`` tras la corrida completa. Ahora el Excel de la
+    correlativa queda en ``omitidos`` nombrando la columna y la zona horaria, el golden
+    se escribe y la carpeta se publica íntegra."""
+    from datetime import timedelta, timezone
+
+    correl = res.correlativa.copy()
+    columnas_fuente = [
+        c for c in correl.columns if c not in {c.nombre for c in contrato.CORRELATIVA}
+    ]
+    columna = columnas_fuente[0]
+    bogota = timezone(timedelta(hours=-5))
+    correl[columna] = pd.Series(
+        [datetime(2026, 1, 1, 8, 30, tzinfo=bogota)] * len(correl), dtype=object
+    )
+    assert correl[columna].dtype == object
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "prueba", marca_tiempo=MARCA)
+    assert man.carpeta.is_dir() and (man.carpeta / "correlativa.parquet").is_file()
+    assert not (man.carpeta / "excel" / "correlativa.xlsx").exists()
+    assert (man.carpeta / "excel" / "golden.xlsx").is_file()
+    motivos = {o["artefacto"]: o["motivo"] for o in man.omitidos}
+    assert set(motivos) == {"excel/correlativa.xlsx"}
+    assert "zona horaria" in motivos["excel/correlativa.xlsx"]
+    assert columna in motivos["excel/correlativa.xlsx"]
+    assert "TypeError" not in motivos["excel/correlativa.xlsx"]
+    assert "excel/correlativa.xlsx" not in {a["ruta"] for a in man.artefactos}
+    assert man.verificar() == []
+
+
 def test_dos_escrituras_producen_las_mismas_huellas(res: ResultadoLinkage, tmp_path: Path) -> None:
     """Los parquet y csv son deterministas; el xlsx no (fecha en el zip)."""
     m1 = escribir_resultado(res, tmp_path / "a", "prueba", marca_tiempo=MARCA)

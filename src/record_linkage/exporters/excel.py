@@ -29,6 +29,10 @@ Lo que Excel no representa como xlsxwriter lo escribiría
   1900-01-01 se vuelve «solo hora» y enero-febrero de 1900 cargan con el
   defecto del año bisiesto 1900. Esas celdas van como texto ISO
   (``1899-01-01 00:00:00``); las demás de la columna siguen siendo fechas;
+* una fecha con zona horaria (columna ``DatetimeTZDtype`` o ``object`` de
+  ``datetime`` con ``tzinfo``, como las entrega un driver de base de datos o un
+  JSON de API) no se escribe ni se le quita la zona en silencio: sale como
+  ``EscrituraSalidaError`` que nombra la columna y dice cómo convertirla;
 * un objeto que ni como texto se representa NO sale como ``TypeError``: sale
   como ``EscrituraSalidaError`` que nombra fila, columna y tipo, sin dejar
   restos; el escritor del estándar lo deja en ``omitidos`` y publica el resto.
@@ -236,6 +240,11 @@ def _fallo(ruta: Path, codigo: int, fila: int) -> EscrituraSalidaError:
     )
 
 
+def _con_zona_horaria(valor: Any) -> bool:
+    """Un ``datetime``/``time`` con ``tzinfo``: xlsxwriter lo rechaza aunque sea de un tipo admitido."""
+    return isinstance(valor, datetime.datetime | datetime.time) and valor.tzinfo is not None
+
+
 def _fallo_tipo(
     ruta: Path, fila: int, columnas: Sequence[Any], celdas: Sequence[Any], exc: TypeError
 ) -> EscrituraSalidaError:
@@ -244,7 +253,7 @@ def _fallo_tipo(
         (
             (c, v)
             for c, v in zip(columnas, celdas, strict=False)
-            if not isinstance(v, _TIPOS_DE_CELDA)
+            if not isinstance(v, _TIPOS_DE_CELDA) or _con_zona_horaria(v)
         ),
         None,
     )
@@ -287,8 +296,36 @@ def _fallo_zona_horaria(ruta: Path, columnas: list[str]) -> EscrituraSalidaError
     )
 
 
+def _fechas_de_objetos(columna: pd.Series) -> pd.Series | None:
+    """Una columna ``object`` de ``datetime.date``/``datetime.datetime`` como ``datetime64``.
+
+    ``None`` si la columna no es de fechas (otro dtype, u ``object`` con otra cosa) o
+    si pandas no la puede interpretar (mezcla de naive y con zona: xlsxwriter dirá).
+    El resultado puede ser tz-aware (``.dt.tz is not None``): una fuente que viene de
+    un driver de base de datos o de un JSON de API trae ``datetime`` con ``tzinfo``
+    fila a fila y pandas la deja en ``object`` (más aún con offsets distintos).
+    """
+    if not pd.api.types.is_object_dtype(columna.dtype):
+        return None
+    if pd.api.types.infer_dtype(columna, skipna=True) not in ("date", "datetime"):
+        return None
+    try:
+        return pd.to_datetime(columna, errors="coerce")
+    except (ValueError, TypeError):
+        return None
+
+
 def _columnas_con_zona_horaria(lote: pd.DataFrame) -> list[str]:
-    return [str(c) for c, d in lote.dtypes.items() if isinstance(d, pd.DatetimeTZDtype)]
+    """Columnas con zona horaria: ``DatetimeTZDtype`` y ``object`` de ``datetime`` con ``tzinfo``."""
+    con_zona: list[str] = []
+    for i, (nombre, dtipo) in enumerate(lote.dtypes.items()):
+        if isinstance(dtipo, pd.DatetimeTZDtype):
+            con_zona.append(str(nombre))
+            continue
+        fechas = _fechas_de_objetos(lote.iloc[:, i])  # iloc: a prueba de nombres repetidos
+        if fechas is not None and fechas.dt.tz is not None:
+            con_zona.append(str(nombre))
+    return con_zona
 
 
 def _escribir_hoja_leeme(libro: Any, leeme: pd.DataFrame) -> None:
@@ -301,19 +338,22 @@ def _fechas_antiguas(columna: pd.Series) -> np.ndarray:
     """Máscara de las celdas anteriores a 1900-03-01 (sin serial fiable en Excel); NaT → False.
 
     Cubre las columnas ``datetime64`` y las ``object`` de ``datetime.date`` /
-    ``datetime.datetime`` (una ``date32`` de parquet llega por lotes así).
+    ``datetime.datetime`` (una ``date32`` de parquet llega por lotes así). Una
+    columna con zona horaria devuelve la máscara vacía: no se compara (sería un
+    ``TypeError`` tz-aware vs naive) porque ya la rechazó
+    ``_columnas_con_zona_horaria`` con su propio mensaje.
     """
-    if pd.api.types.is_datetime64_dtype(columna.dtype):
-        return (columna < _PRIMERA_FECHA_EXCEL).to_numpy()
-    if pd.api.types.is_object_dtype(columna.dtype) and pd.api.types.infer_dtype(
-        columna, skipna=True
-    ) in ("date", "datetime"):
-        try:
-            fechas = pd.to_datetime(columna, errors="coerce")
-        except (ValueError, TypeError):
-            return np.zeros(len(columna), dtype=bool)  # mezcla de zonas: xlsxwriter dirá
+    fechas = (
+        columna if pd.api.types.is_datetime64_dtype(columna.dtype) else _fechas_de_objetos(columna)
+    )
+    if fechas is None or fechas.dt.tz is not None:
+        # Con zona horaria no hay comparación posible con el calendario naive de
+        # Excel; ``_columnas_con_zona_horaria`` ya la rechazó antes con su mensaje.
+        return np.zeros(len(columna), dtype=bool)
+    try:
         return (fechas < _PRIMERA_FECHA_EXCEL).to_numpy()
-    return np.zeros(len(columna), dtype=bool)
+    except TypeError:  # red: nunca un TypeError crudo desde aquí
+        return np.zeros(len(columna), dtype=bool)
 
 
 def _texto_iso(valor: Any) -> str:
