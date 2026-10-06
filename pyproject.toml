@@ -103,6 +103,12 @@ dev = [
     "hypothesis>=6.90",
     # Validación formal de schema de los notebooks en la misma venv de CI.
     "nbformat>=5.10,<6",
+    # nbclient + ipykernel: ejecutan los notebooks 01–06 enteros sobre
+    # tests/data_sintetica/ (tests/test_notebooks_contrato.py, marcado `slow`;
+    # el kernel se registra con `python -m ipykernel install --user --name
+    # rues-linker-v2`). Son dependencias de prueba, no de runtime.
+    "nbclient>=0.10,<1",
+    "ipykernel>=6,<8",
     # tomli: backport de tomllib para Python 3.10 (usado por
     # scripts/verificar_coherencia_version.py, que corre en el CI de 3.10).
     "tomli>=2.0; python_version < '3.11'",
