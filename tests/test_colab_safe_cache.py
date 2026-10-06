@@ -98,6 +98,13 @@ def test_streaming_consolidates_every_chunk_without_mutating_input(
         result["ID_GRUPO"] = 0
         result["NIT_OK"] = result["NIT"]
         result["RECORD_COUNT"] = len(result)
+        # F2.10: las fijas de contrato.CONEXIONES que el motor real siempre trae;
+        # la consolidación arma la tabla conexiones y las exige.
+        result["SRC"] = "DEDUP_SOURCE"
+        result["NIT_FINAL"] = result["NIT"]
+        result["RAZON_SOCIAL_FINAL"] = result["RAZON_SOCIAL"]
+        result["NAME_SIMILARITY_SCORE"] = 1.0
+        result["NIT_DISTANCE"] = 0
         return result, result.copy()
 
     monkeypatch.setattr(colab_module, "ColabOptimizedManager", FakeManager)

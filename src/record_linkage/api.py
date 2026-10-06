@@ -875,7 +875,10 @@ def dedupe(
     la correlativa se COMPLETA al contrato 1.0 (``salida.completar``): se
     añaden ``ID_REGISTRO``, ``ID_ENTIDAD``, ``METODO_UNION`` y las columnas
     fijas van primero; las técnicas (``NOMBRE_LIMPIO``, ``NIT_OK``…) salen del
-    entregable y quedan en ``output_dir/<regimen>/``.
+    entregable y quedan en ``correlativa.parquet`` de ``output_dir`` (por
+    régimen, ``con_nit/``/``sin_nit/``, si el dataset es mixto), junto a
+    ``conexiones.parquet`` (``contrato.CONEXIONES``); las rutas van en
+    ``metricas['stats_pipeline']`` (F2.10).
 
     Args:
         df: tabla con al menos ``col_nit`` y ``col_name``.
