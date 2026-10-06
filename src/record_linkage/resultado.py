@@ -81,6 +81,17 @@ def _avisar(clave: str) -> None:
     )
 
 
+def _avisar_recorrido() -> None:
+    """Aviso propio de ``keys()``/``iter()``: no hay una clave que mapear."""
+    warnings.warn(
+        "res.keys() está obsoleto desde 0.23.0: use los campos res.correlativa, res.golden "
+        f"y res.metricas (ResultadoLinkage, contrato {contrato.VERSION_CONTRATO}). "
+        "Las claves del dict viejo desaparecen en 1.0.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 @dataclass
 class ResultadoLinkage:
     """Resultado tipado de la fachada: las tablas del estándar + trazabilidad.
@@ -181,7 +192,7 @@ class ResultadoLinkage:
 
     def keys(self) -> list[str]:
         """Las claves que tenía el ``dict`` viejo (``work_dir`` nunca fue una)."""
-        _avisar("keys()")
+        _avisar_recorrido()
         candidatas = ("correlative", "golden", *_CLAVES_EN_METRICAS)
         return [c for c in candidatas if self._presente(c)]
 

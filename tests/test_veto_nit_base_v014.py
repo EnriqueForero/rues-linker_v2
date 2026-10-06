@@ -16,6 +16,7 @@ import pytest
 
 import record_linkage as rl
 from record_linkage.engine.scorer import VectorizedScorer, _a_booleano
+from record_linkage.matching.identificadores import bases_validas
 
 #: Caso real observado en la corrida RUES x DANE (NIT y nombres verbatim).
 CASO_REAL = pd.DataFrame(
@@ -121,7 +122,11 @@ def test_end_to_end_no_fusiona_nits_validos_distintos() -> None:
     """El caso real completo, por la fachada pública."""
     resultado = rl.dedupe(CASO_REAL.copy(), mode="AGRESIVO")
     correlativa = resultado.correlativa
-    grupos = correlativa.groupby("ID_GRUPO")["NIT_BASE"].nunique()
+    # F1.9: NIT_BASE/NIT_VALID son técnicas y ya no viajan en el entregable;
+    # la base válida se recalcula desde NIT con la regla única del contrato.
+    bases = pd.Series(bases_validas(correlativa["NIT"].to_numpy()), index=correlativa.index)
+    validas = bases != ""
+    grupos = bases[validas].groupby(correlativa.loc[validas, "ID_GRUPO"]).nunique()
     assert (grupos <= 1).all(), (
         "ningún grupo puede contener dos NIT base válidos distintos: "
         f"{correlativa[['NIT', 'RAZON_SOCIAL', 'ID_GRUPO']].to_dict('records')}"

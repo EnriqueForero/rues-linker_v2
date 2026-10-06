@@ -486,11 +486,20 @@ _SIGNIFICADOS_MOTOR_EXTRA: dict[str, str] = {
 }
 
 
+#: Qué parámetro de ``linkage()`` produce cada renombre canónico del motor.
+PARAMETRO_CANONICO: dict[str, str] = {
+    "NIT": "col_nit",
+    "RAZON_SOCIAL": "col_name",
+    "CIUDAD": "col_ciudad",
+}
+
+
 def diccionario(
     tablas: Mapping[str, pd.DataFrame | None],
     *,
     columnas_fuente: Collection[str] = (),
     renombres: Mapping[str, str] | None = None,
+    renombres_canonicos: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
     """Diccionario de datos: tabla · columna · tipo · significado · origen · alias_es.
 
@@ -506,9 +515,14 @@ def diccionario(
             renombradas si hubo colisión).
         renombres: ``{nombre_en_fuente: nombre_en_salida}`` de las colisiones
             resueltas, para explicarlas.
+        renombres_canonicos: ``{columna_del_usuario: columna_canónica}`` que
+            el motor aplicó en la ingesta (``col_name="NOMBRE"`` →
+            ``RAZON_SOCIAL``), para que el diccionario no diga «sin cambios»
+            de una columna que cambió de nombre.
     """
     renombres = dict(renombres or {})
     invertido = {v: k for k, v in renombres.items()}
+    canonico_invertido = {v: k for k, v in dict(renombres_canonicos or {}).items()}
     fuente = set(columnas_fuente)
     filas: list[dict[str, Any]] = []
     for tabla, columnas in TABLAS.items():
@@ -535,6 +549,13 @@ def diccionario(
                 significado = (
                     f"Columna '{invertido[nombre_s]}' de la fuente, renombrada por colisión "
                     f"con la columna fija del contrato del mismo nombre."
+                )
+                origen = "fuente"
+            elif nombre_s in canonico_invertido:
+                parametro = PARAMETRO_CANONICO.get(nombre_s, "columna canónica")
+                significado = (
+                    f"Columna '{canonico_invertido[nombre_s]}' de la fuente, renombrada a la "
+                    f"canónica {nombre_s} por el motor ({parametro}='{canonico_invertido[nombre_s]}')."
                 )
                 origen = "fuente"
             elif nombre_s in fuente:

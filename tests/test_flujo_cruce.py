@@ -19,8 +19,10 @@ from record_linkage.flujo import (
     preparar_insumo_local,
     reportar_composicion,
 )
+from record_linkage.flujo.cruce import _conflictos_identificador
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
 from record_linkage.ingestion import DuckDBIngestionSettings
+from record_linkage.resultado import ResultadoLinkage
 
 
 @pytest.fixture
@@ -304,6 +306,44 @@ def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path:
     assert resultado.correlativa["ID_GRUPO"].nunique() == 4
 
 
+def test_cruce_en_memoria_responde_el_qa_sin_columnas_tecnicas(fuentes_csv, tmp_path: Path) -> None:
+    """F1.9: el entregable ya no trae NIT_BASE/NIT_VALID; el QA se calcula desde NIT."""
+    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+
+    assert not {"NIT_BASE", "NIT_VALID"} & set(resultado.correlativa.columns)
+    assert {"ID_REGISTRO", "ID_ENTIDAD", "METODO_UNION"} <= set(resultado.correlativa.columns)
+    assert resultado.conflictos_identificador() == 0
+    distribucion = resultado.distribucion_grupos()
+    assert distribucion["grupos_1_fila"] == 3 and distribucion["grupos_2a5_filas"] == 1
+    assert distribucion["max_filas_por_grupo"] == 2
+    por_fuente = resultado.identificadores_por_fuente()
+    assert set(por_fuente) == {"PADRON", "CLIENTES"}
+    assert por_fuente["PADRON"].filas == 3 and por_fuente["CLIENTES"].filas == 2
+    assert resultado.entidades_multifuente() == 1
+    assert len(resultado.grupos_sospechosos()) == 0
+
+
+def test_conflictos_identificador_detecta_dos_bases_validas_en_un_grupo() -> None:
+    """La regla única del QA: dos NIT válidos distintos en un grupo = 1 conflicto;
+    un NIT con DV y otro sin DV son la misma base; los cortos/vacíos no cuentan."""
+    id_grupo = pd.Series([0, 0, 1, 1, 2, 2, 3, 3])
+    nit = pd.Series(
+        [
+            "900111222",
+            "9001112221",  # misma base (DV correcto): no es conflicto
+            "800333444",
+            "700999888",  # dos bases válidas distintas: conflicto
+            "123",
+            "",  # demasiado corto / vacío: no cuentan
+            "900555666",
+            None,
+        ]
+    )
+    assert _conflictos_identificador(id_grupo, nit) == 1
+    assert _conflictos_identificador(id_grupo.iloc[:2], nit.iloc[:2]) == 0
+    assert _conflictos_identificador(id_grupo.iloc[4:6], nit.iloc[4:6]) == 0
+
+
 def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
 
@@ -429,7 +469,9 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
         )
         correlativa["NAME_SIMILARITY_SCORE"] = 1.0
         correlativa["NIT_DISTANCE"] = 0
-        return {"golden": correlativa.copy(), "correlative": correlativa}
+        # F1.9 — y devuelve ResultadoLinkage, no el dict viejo: el flujo lee
+        # los campos nuevos (``.golden``/``.correlativa``) sin pasar por el shim.
+        return ResultadoLinkage(correlativa=correlativa, golden=correlativa.copy())
 
     monkeypatch.setattr(modulo, "linkage", linkage_falso)
     resultado = ejecutar_cruce(

@@ -41,6 +41,7 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
+from ..matching.identificadores import bases_validas
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
 from .insumos import (
@@ -341,16 +342,28 @@ class ControlCalidad(Protocol):
 _AJUSTES_QA = DuckDBIngestionSettings(memory_limit="512MB", threads=2)
 
 
+def _conflictos_identificador(id_grupo: pd.Series, nit: pd.Series) -> int:
+    """Grupos que mezclan dos bases de identificador válidas distintas.
+
+    Desde F1.9 las columnas técnicas (``NIT_BASE``, ``NIT_VALID``) ya no
+    viajan en el entregable —quedan en ``_trabajo/``—, así que la base se
+    recalcula aquí desde ``NIT`` con la MISMA regla que usa el contrato de
+    salida para ``ID_ENTIDAD`` y ``METODO_UNION``
+    (``matching.identificadores.bases_validas``). Es la única definición de
+    «conflicto» del flujo y la comparten los dos modos de resultado.
+    """
+    bases = pd.Series(bases_validas(nit.to_numpy()), index=nit.index, dtype="string")
+    validas = bases != ""
+    if not validas.any():
+        return 0
+    return int((bases[validas].groupby(id_grupo[validas]).nunique() > 1).sum())
+
+
 def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
     """Métricas de QA sobre una correlativa materializada."""
     from .diagnostico import diagnosticar_identificadores
 
-    validos = correlativa[
-        correlativa["NIT_BASE"].notna()
-        & (correlativa["NIT_BASE"].astype("string").fillna("") != "")
-        & correlativa["NIT_VALID"].astype(str).isin(["True", "1", "true"])
-    ]
-    conflictos = int((validos.groupby("ID_GRUPO")["NIT_BASE"].nunique() > 1).sum())
+    conflictos = _conflictos_identificador(correlativa["ID_GRUPO"], correlativa["NIT"])
     tam = correlativa.groupby("ID_GRUPO").size()
     variedad = correlativa.groupby("ID_GRUPO")["RAZON_SOCIAL"].nunique()
     return {
@@ -367,23 +380,24 @@ def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
 
 
 def _qa_desde_parquet(ruta: Path, settings: Any) -> dict[str, Any]:
-    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM."""
+    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM.
+
+    Lo único que se materializa son dos columnas (``ID_GRUPO``, ``NIT``) de
+    las filas con identificador, para que la regla de conflicto sea la misma
+    función que en memoria y no una copia en SQL.
+    """
     import duckdb
 
     con = duckdb.connect()
     try:
         _configure_connection(con, settings)
         origen = f"read_parquet({_quote_literal(str(ruta))})"
-        conflictos = con.execute(
-            f"""
-            SELECT COUNT(*) FROM (
-                SELECT ID_GRUPO FROM {origen}
-                WHERE NIT_BASE IS NOT NULL AND NIT_BASE <> ''
-                  AND lower(CAST(NIT_VALID AS VARCHAR)) IN ('true', '1')
-                GROUP BY ID_GRUPO HAVING COUNT(DISTINCT NIT_BASE) > 1
-            )
-            """
-        ).fetchone()[0]
+        con_identificador = con.execute(
+            f"SELECT ID_GRUPO, NIT FROM {origen} WHERE NIT IS NOT NULL AND NIT <> ''"
+        ).df()
+        conflictos = _conflictos_identificador(
+            con_identificador["ID_GRUPO"], con_identificador["NIT"]
+        )
         tam = (
             con.execute(f"SELECT ID_GRUPO, COUNT(*) n FROM {origen} GROUP BY ID_GRUPO")
             .df()
@@ -1852,8 +1866,12 @@ def _ejecutar_cruce_medido(
             consume_sources=True,
         )
     segundos_link = time.time() - inicio_link
-    golden_compacta = salida["golden"]
-    correlativa_compacta = salida["correlative"]
+    # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
+    # dict viejo siguen funcionando pero avisan, y la librería no se avisa a
+    # sí misma.
+    golden_compacta = salida.golden
+    correlativa_compacta = salida.correlativa
+    assert golden_compacta is not None  # linkage() siempre trae golden
     publicacion: PublicacionResultadosDisco | None = None
     golden: pd.DataFrame | TablaParquet
     correlativa: pd.DataFrame | TablaParquet

@@ -46,6 +46,7 @@ __all__ = [
     "PESOS_DIAN",
     "base_canonica",
     "bases_canonicas",
+    "bases_validas",
     "digito_verificacion_dian",
     "es_extension_por_digito_verificacion",
     "formas_canonicas",
@@ -203,3 +204,19 @@ def bases_canonicas(valores: np.ndarray) -> np.ndarray:
     unicos = serie.drop_duplicates()
     mapa = {valor: base_canonica(valor) for valor in unicos}
     return serie.map(mapa).to_numpy(dtype=object)
+
+
+def bases_validas(valores: np.ndarray) -> np.ndarray:
+    """``bases_canonicas`` dejando vacía toda base que no sirve para agrupar.
+
+    Una base más corta que ``LONGITUD_MINIMA_BASE`` (o vacía) no identifica a
+    nadie: el contrato de salida (``salida/completar.py``: ``ID_ENTIDAD``,
+    ``METODO_UNION``) y el QA del flujo (``flujo/cruce.py``:
+    ``conflictos_identificador``) comparten ESTA regla, escrita una sola vez.
+
+    Returns:
+        Arreglo de ``object`` con la base canónica, o ``""`` si no es válida.
+    """
+    bases = bases_canonicas(valores)
+    longitudes = pd.Series(bases, dtype="string").str.len().fillna(0).to_numpy()
+    return np.where(longitudes >= LONGITUD_MINIMA_BASE, bases, "")

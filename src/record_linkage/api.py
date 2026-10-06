@@ -644,6 +644,7 @@ def _armar_resultado(
         {"correlativa": correlativa, "golden": golden, "enlaces": None, "revision": revision},
         columnas_fuente=reporte.columnas_fuente,
         renombres=reporte.renombres,
+        renombres_canonicos=reporte.renombres_canonicos,
     )
     resultado = ResultadoLinkage(
         correlativa=correlativa,

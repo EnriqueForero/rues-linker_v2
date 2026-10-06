@@ -539,8 +539,10 @@ def test_shim_claves_viejas_con_deprecation(res_linkage: ResultadoLinkage) -> No
     with pytest.warns(DeprecationWarning):
         assert "correlative" in res_linkage and "golden" in res_linkage
         assert "preprocessing" not in res_linkage
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=r"res\.keys\(\) está obsoleto.*res\.correlativa"):
         assert set(res_linkage.keys()) == {"correlative", "golden"}
+    with pytest.warns(DeprecationWarning, match=r"res\.keys\(\) está obsoleto"):
+        assert list(iter(res_linkage)) == res_linkage.keys()
     with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
         res_linkage["inexistente"]
     # Los campos nuevos no avisan.
@@ -740,7 +742,11 @@ def test_col_id_renombrado_por_colision_se_resuelve(tmp_path: Path) -> None:
 
 def test_col_id_renombrado_por_el_motor_se_resuelve(tmp_path: Path) -> None:
     """``col_nit="IDENT", col_id="IDENT"``: el motor renombra ``IDENT`` → ``NIT``.
-    Regla ``col_id`` o motivo de no unicidad; nunca ``ValueError``."""
+
+    Se resuelve al nombre efectivo (nunca ``ValueError``) y, como el sintético
+    repite el NIT en CRM (2 filas por entidad CON_NIT) y lo deja vacío en las
+    SIN_NIT y singletons, ambas fuentes caen a la regla ``fila`` con el motivo
+    exacto que lo explica."""
     fuentes = {
         n: f.rename(columns={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE"})
         for n, f in conjunto_sintetico().items()
@@ -755,10 +761,19 @@ def test_col_id_renombrado_por_el_motor_se_resuelve(tmp_path: Path) -> None:
             col_id="IDENT",
         )
     assert res.validar().ok
-    for fuente in (FUENTE_A, FUENTE_B):
-        nota = res.manifiesto["completar"]["id_registro"][fuente]
-        assert nota["columna"] == "NIT"
-        assert nota["regla"] == "col_id" or "único" in nota["motivo"] or "vacío" in nota["motivo"]
+    notas = res.manifiesto["completar"]["id_registro"]
+    assert notas[FUENTE_A] == {
+        "regla": "fila",
+        "columna": "NIT",
+        "motivo": f"col_id='NIT' en la fuente '{FUENTE_A}': 12 vacío(s)/ausente(s); "
+        "no es único por fila (24 repetido(s))",
+    }
+    assert notas[FUENTE_B] == {
+        "regla": "fila",
+        "columna": "NIT",
+        "motivo": f"col_id='NIT' en la fuente '{FUENTE_B}': 16 vacío(s)/ausente(s)",
+    }
+    assert res.correlativa["ID_REGISTRO"].str.match(r"^(CRM|ADUANAS)-F\d+$").all()
 
 
 def test_validar_reporta_golden_con_id_grupo_repetido(res_linkage: ResultadoLinkage) -> None:
@@ -890,6 +905,66 @@ def test_colision_no_recuperable_avisa(tmp_path: Path) -> None:
 
 
 def test_manifiesto_registra_el_costo_de_la_huella(resultado: ResultadoLinkage) -> None:
-    for entrada in resultado.manifiesto["entradas"].values():
-        assert entrada["segundos_huella"] >= 0.0
-    assert resultado.metricas["segundos_manifiesto"] >= 0.0
+    """En las tres rutas, ``segundos_huellas`` es la suma redondeada de las
+    huellas por entrada y las métricas la copian tal cual."""
+    entradas = resultado.manifiesto["entradas"]
+    assert entradas, "el manifiesto debe listar las entradas"
+    suma = round(sum(float(e["segundos_huella"]) for e in entradas.values()), 3)
+    assert resultado.manifiesto["segundos_huellas"] == suma
+    assert resultado.metricas["segundos_manifiesto"] == resultado.manifiesto["segundos_huellas"]
+
+
+def test_completar_correlativa_no_muta_la_entrada(tmp_path: Path) -> None:
+    """``completar_correlativa`` es pública: el DataFrame del llamador queda intacto."""
+    correl = _correl_dos_grupos()
+    correl["ID_GRUPO"] = ["C0", "C0", "S1", "C0"]  # texto: obliga a recodificar
+    columnas_antes = list(correl.columns)
+    copia = correl.copy()
+    fuentes = {"RUES": ["NIT", "RAZON_SOCIAL"], "CRM": ["NIT", "RAZON_SOCIAL"]}
+    completada, _, reporte = completar_correlativa(correl, None, tmp_path, None, fuentes)
+    assert list(correl.columns) == columnas_antes
+    pd.testing.assert_frame_equal(correl, copia)
+    assert reporte.id_grupo["recodificado"] is True
+    assert correl["ID_GRUPO"].tolist() == ["C0", "C0", "S1", "C0"]
+    assert pd.api.types.is_integer_dtype(completada["ID_GRUPO"])
+    assert "ID_REGISTRO" in completada.columns and "ID_REGISTRO" not in correl.columns
+
+
+def test_diccionario_declara_renombre_canonico(tmp_path: Path) -> None:
+    """``col_name="NOMBRE"``, ``col_nit="IDENT"``: el motor entrega ``RAZON_SOCIAL`` y
+    ``NIT``; el diccionario y el manifiesto lo dicen, no «sin cambios»."""
+    fuentes = {
+        n: f.rename(columns={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE"})
+        for n, f in conjunto_sintetico().items()
+    }
+    with _silencio():
+        res = rl.linkage(
+            fuentes,
+            work_dir=str(tmp_path / "w"),
+            skip_reporting=True,
+            col_nit="IDENT",
+            col_name="NOMBRE",
+        )
+    assert res.manifiesto["completar"]["renombres_canonicos"] == {
+        "NOMBRE": "RAZON_SOCIAL",
+        "IDENT": "NIT",
+    }
+    assert "NOMBRE" not in res.correlativa.columns and "IDENT" not in res.correlativa.columns
+    dic = res.diccionario
+    correl = dic[dic["tabla"] == "correlativa"].set_index("columna")
+    assert correl.loc["RAZON_SOCIAL", "origen"] == "fuente"
+    assert correl.loc["RAZON_SOCIAL", "significado"] == (
+        "Columna 'NOMBRE' de la fuente, renombrada a la canónica RAZON_SOCIAL por el motor "
+        "(col_name='NOMBRE')."
+    )
+    assert correl.loc["NIT", "significado"] == (
+        "Columna 'IDENT' de la fuente, renombrada a la canónica NIT por el motor (col_nit='IDENT')."
+    )
+    assert "sin cambios" not in correl.loc["RAZON_SOCIAL", "significado"]
+    # Sin renombre, el texto sigue siendo el de siempre.
+    res_sin = _correr_linkage(tmp_path / "sin")
+    assert res_sin.manifiesto["completar"]["renombres_canonicos"] == {}
+    dic_sin = res_sin.diccionario.set_index(["tabla", "columna"])
+    assert dic_sin.loc[("correlativa", "RAZON_SOCIAL"), "significado"] == (
+        "Columna de la fuente, sin cambios."
+    )

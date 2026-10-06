@@ -233,6 +233,9 @@ def test_linkage_propaga_contrato_de_consumo_sin_cambiar_default(monkeypatch, tm
             self.sources = sources
             self.consume_sources = consume_sources
             self.profile = {"skip_reporting": True}
+            # Misma propiedad que Orchestrator.prioridad_fuentes: api.linkage()
+            # la lee para completar el contrato (F1.9).
+            self.prioridad_fuentes = ["RUES"]
             received_flags.append(consume_sources)
 
         def run(self, *, skip_reporting=None):

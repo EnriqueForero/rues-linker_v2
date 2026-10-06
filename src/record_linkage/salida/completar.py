@@ -73,7 +73,7 @@ import pandas as pd
 
 from .. import contrato
 from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
-from ..matching.identificadores import LONGITUD_MINIMA_BASE, bases_canonicas
+from ..matching.identificadores import bases_validas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
 
 __all__ = [
@@ -116,6 +116,9 @@ class ReporteCompletar:
 
     Attributes:
         renombres: ``{columna_en_fuente: columna_en_salida}`` por colisión.
+        renombres_canonicos: ``{columna_del_usuario: columna_canónica}`` que
+            el motor aplicó en la ingesta (``col_name`` → ``RAZON_SOCIAL``…)
+            y que por eso ya no aparece con su nombre original.
         colisiones_no_recuperables: columnas de la fuente que el motor ya
             había sobrescrito antes de llegar aquí.
         id_registro: por fuente, ``{"regla": "col_id" | "fila", ...}`` y el
@@ -135,6 +138,7 @@ class ReporteCompletar:
     """
 
     renombres: dict[str, str] = field(default_factory=dict)
+    renombres_canonicos: dict[str, str] = field(default_factory=dict)
     colisiones_no_recuperables: list[str] = field(default_factory=list)
     id_registro: dict[str, dict[str, str]] = field(default_factory=dict)
     id_grupo: dict[str, Any] = field(default_factory=dict)
@@ -149,6 +153,7 @@ class ReporteCompletar:
     def a_dict(self) -> dict[str, Any]:
         return {
             "renombres": dict(self.renombres),
+            "renombres_canonicos": dict(self.renombres_canonicos),
             "colisiones_no_recuperables": list(self.colisiones_no_recuperables),
             "id_registro": {k: dict(v) for k, v in self.id_registro.items()},
             "id_grupo": dict(self.id_grupo),
@@ -587,14 +592,24 @@ def completar_correlativa(
             sin métricas; por defecto, el orden de ``fuentes``.
 
     Returns:
-        ``(correlativa, golden, reporte)``.
+        ``(correlativa, golden, reporte)``. No muta ``correl`` ni ``golden``:
+        trabaja sobre una copia superficial (con Copy-on-Write de pandas 3 no
+        duplica datos) y el llamador conserva sus DataFrames tal como los pasó.
     """
     faltantes = [c for c in ("SRC", "ORIGINAL_INDEX", "ID_GRUPO", "NIT_FINAL") if c not in correl]
     if faltantes:
         raise ContratoSalidaError(
             [f"correlativa del motor sin {faltantes}: no se puede completar el contrato."]
         )
+    correl = correl.copy(deep=False)
     canonicos = dict(canonicos or {})
+    # Renombres canónicos del motor que SÍ ocurrieron: la columna del usuario
+    # ya no está y la canónica sí. Van al manifiesto y al diccionario.
+    renombres_canonicos = {
+        col: can
+        for col, can in canonicos.items()
+        if col != can and col not in correl.columns and can in correl.columns
+    }
     columnas_fuente = _columnas_de_fuentes(fuentes, canonicos, set(correl.columns))
     correl, renombres, no_recuperables = _resolver_colisiones(correl, columnas_fuente)
     columnas_fuente = [renombres.get(c, c) for c in columnas_fuente]
@@ -623,17 +638,18 @@ def completar_correlativa(
     correl["SCORE_PAR"] = correl["SCORE_PAR"].astype("float64")
 
     # Identificador del registro y del grupo, reducidos a su base canónica.
+    # La regla de «base válida» (``bases_validas``) es la misma del QA del flujo.
     columna_nit = col_nit if col_nit in correl.columns else "NIT"
     if columna_nit in correl.columns:
         base_registro = pd.Series(
-            bases_canonicas(correl[columna_nit].to_numpy()), index=correl.index, dtype="string"
+            bases_validas(correl[columna_nit].to_numpy()), index=correl.index, dtype="string"
         )
     else:
         base_registro = pd.Series("", index=correl.index, dtype="string")
     base_fila = pd.Series(
-        bases_canonicas(correl["NIT_FINAL"].to_numpy()), index=correl.index, dtype="string"
+        bases_validas(correl["NIT_FINAL"].to_numpy()), index=correl.index, dtype="string"
     )
-    base_fila = base_fila.where(base_fila.str.len() >= LONGITUD_MINIMA_BASE, pd.NA)
+    base_fila = base_fila.mask(base_fila == "", pd.NA)
     base_grupo = base_fila.groupby(correl["ID_GRUPO"], sort=False).transform("first")
     grupo_con_nit = base_grupo.notna().to_numpy()
     grupo_principal, info_entidad = _grupos_principales_por_nit(correl, base_grupo)
@@ -641,7 +657,7 @@ def completar_correlativa(
     correl["ID_ENTIDAD"] = _id_entidad(correl, base_grupo, grupo_principal).astype(str)
 
     tamano = correl.groupby("ID_GRUPO", sort=False)["ID_GRUPO"].transform("size").to_numpy()
-    registro_valido = (base_registro.str.len() >= LONGITUD_MINIMA_BASE).fillna(False).to_numpy()
+    registro_valido = (base_registro != "").fillna(False).to_numpy()
     misma_base = (base_registro == base_grupo).fillna(False).to_numpy()
     correl["METODO_UNION"] = np.where(
         tamano == 1,
@@ -674,6 +690,7 @@ def completar_correlativa(
 
     reporte = ReporteCompletar(
         renombres=renombres,
+        renombres_canonicos=renombres_canonicos,
         colisiones_no_recuperables=no_recuperables,
         id_registro=info_id,
         id_grupo=info_grupo,
