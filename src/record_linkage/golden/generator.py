@@ -30,6 +30,7 @@ from tqdm import tqdm
 
 from .columnas_finales import ReporteColumnasFinales, garantizar_columnas_finales
 from .selector import AdvancedValueSelector
+from .tipos import tipar_golden
 from .utils import MemoryMonitor, SafeSQLiteConnection
 
 
@@ -1101,6 +1102,9 @@ class GoldenRecordGeneratorV7:
                 "CREATED_AT" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # SQLite no tiene booleano: REQUIRES_REVIEW vive aquí como 0/1 y los
+        # conteos como INTEGER. El tipo del contrato (int64 / bool) lo aplica
+        # golden.tipos.tipar_golden al cargar (F1.14).
 
         # Tabla correlativa - se creará dinámicamente cuando se escriban los datos
         cursor.execute("DROP TABLE IF EXISTS correlative_table")
@@ -1256,6 +1260,10 @@ class GoldenRecordGeneratorV7:
             # Así el pico transitorio queda acotado a un bloque y el resultado
             # final usa buffers contiguos en vez de millones de PyObject str.
             golden = self._read_sql_arrow(conn, 'SELECT * FROM golden_records ORDER BY "ID_GRUPO"')
+            # F1.14: conteos int64 y REQUIRES_REVIEW bool, como promete el
+            # estándar. Estricto: aquí no puede haber nulos (cada grupo del
+            # golden tiene al menos una fila), y si los hay es un fallo real.
+            golden = tipar_golden(golden, registrador=self.logger)
 
             # Cargar tabla correlativa (ya tiene los golden fields)
             # Primero verificar qué columnas existen
@@ -1345,80 +1353,6 @@ class GoldenRecordGeneratorV7:
         )
 
         return golden_filtered
-
-    def _add_diagnostic_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Añade métricas de diagnóstico de forma eficiente.
-        Maneja columnas opcionales del preprocesamiento.
-        """
-        # Verificar que las columnas necesarias existan
-        required_cols = ["RAZON_SOCIAL_FINAL", "NIT_FINAL"]
-        missing_cols = [col for col in required_cols if col not in df.columns]
-
-        if missing_cols:
-            self.logger.warning(f"Columnas faltantes para métricas de diagnóstico: {missing_cols}")
-            self.logger.warning(f"Columnas disponibles: {list(df.columns)}")
-            # Retornar el DataFrame sin modificar si faltan columnas críticas
-            return df
-
-        # Usar NOMBRE_LIMPIO si existe, si no usar RAZON_SOCIAL
-        name_col = "NOMBRE_LIMPIO" if "NOMBRE_LIMPIO" in df.columns else "RAZON_SOCIAL"
-
-        # Verificar que la columna de nombre existe
-        if name_col not in df.columns:
-            self.logger.warning(
-                f"Columna {name_col} no encontrada, saltando métricas de diagnóstico"
-            )
-            return df
-
-        # Resolver vectorialmente vacíos/idénticos y enviar solo las
-        # diferencias a rapidfuzz en C++. Se evita materializar cuatro Series
-        # completas de objetos Python y recorrer millones de filas en Python.
-        from rapidfuzz import process as rf_process
-        from rapidfuzz.distance import Levenshtein as rf_levenshtein
-
-        name1 = df[name_col].astype("string[pyarrow]").fillna("")
-        name2 = df["RAZON_SOCIAL_FINAL"].astype("string[pyarrow]").fillna("")
-        if "NIT" in df.columns:
-            nit1 = df["NIT"].astype("string[pyarrow]").fillna("")
-        else:
-            nit1 = pd.Series("", index=df.index, dtype="string[pyarrow]")
-        nit2 = df["NIT_FINAL"].astype("string[pyarrow]").fillna("")
-
-        # Añadir columnas de métricas solo si no existen
-        if "NAME_SIMILARITY_SCORE" not in df.columns:
-            empty = (name1.str.strip() == "") | (name2.str.strip() == "")
-            equal = (name1 == name2) & ~empty
-            similarity = np.zeros(len(df), dtype=np.float64)
-            similarity[equal.to_numpy()] = 1.0
-            remaining = (~empty & ~equal).to_numpy()
-            if remaining.any():
-                indices = np.flatnonzero(remaining)
-                similarity[indices] = rf_process.cpdist(
-                    name1.iloc[indices].tolist(),
-                    name2.iloc[indices].tolist(),
-                    scorer=rf_levenshtein.normalized_similarity,
-                    dtype=np.float64,
-                    workers=-1,
-                )
-            df["NAME_SIMILARITY_SCORE"] = similarity
-
-        if "NIT_DISTANCE" not in df.columns:
-            with_both = ((nit1 != "") & (nit2 != "")).to_numpy()
-            different = with_both & (nit1 != nit2).to_numpy()
-            distance = np.zeros(len(df), dtype=np.int64)
-            if different.any():
-                indices = np.flatnonzero(different)
-                distance[indices] = rf_process.cpdist(
-                    nit1.iloc[indices].tolist(),
-                    nit2.iloc[indices].tolist(),
-                    scorer=rf_levenshtein.distance,
-                    dtype=np.int64,
-                    workers=-1,
-                )
-            df["NIT_DISTANCE"] = distance
-
-        return df
 
     def _intelligent_memory_cleanup(self):
         """Limpieza inteligente de memoria basada en uso actual."""

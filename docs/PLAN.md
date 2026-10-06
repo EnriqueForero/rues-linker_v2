@@ -135,7 +135,7 @@ estrategias de **bloqueo** siguen cableadas dentro de `disk_based.py`.
 | C35 | Calibrar `min_corroborantes` con datos reales | ⬜ | medición que distinga 1 de 2 · decisión con evidencia |
 | C36 | Un solo catálogo de BLOQUEO | ⬜ | las estrategias del motor multicampo disponibles en el camino en disco |
 | C37 | Discriminar bajo corrupción extrema sin identificador | ⬜ | recall de `positivo_ruido_sin_id` ≥ 0,75 sin perder precisión |
-| C38 | `NAME_SIMILARITY_SCORE` comparable | ⬜ | compara nombres normalizados entre sí · impacto medido sobre resultados publicados |
+| C38 | `NAME_SIMILARITY_SCORE` comparable | ✅ | compara nombres normalizados entre sí (huella del selector, F1.14, ADR-0010) · impacto medido sobre el banco: 1,0 pasa del 15,6 % al 64,8 % de las filas, huella de la partición idéntica |
 
 **C31 ✅ con resultado negativo documentado.** Los dos mecanismos —llaves
 declaradas y token raro— están implementados, probados y apagados por defecto.

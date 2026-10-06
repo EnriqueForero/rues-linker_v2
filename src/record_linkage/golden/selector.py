@@ -20,6 +20,52 @@ import pandas as pd
 
 from ..utils.logger import CustomLogger
 
+__all__ = [
+    "PATRON_FORMA_SOCIETARIA",
+    "AdvancedValueSelector",
+    "CompanyNameSelector",
+    "huella_de_nombre",
+]
+
+#: Formas societarias que la huella de un nombre ignora. Es la lente con la
+#: que el selector decide qué nombre adopta un grupo; F1.14 la reutiliza para
+#: NAME_SIMILARITY_SCORE, así la columna mide contra lo que el selector vio.
+PATRON_FORMA_SOCIETARIA = re.compile(
+    r"\b(S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|LIMITADA|E\.?U\.?|CIA|INC)\b", re.IGNORECASE
+)
+
+
+def _ascii_mayusculas(texto: object) -> str:
+    if not isinstance(texto, str):
+        return ""
+    return unicodedata.normalize("NFKD", texto.upper()).encode("ascii", "ignore").decode("utf-8")
+
+
+def huella_de_nombre(nombres: pd.Series) -> pd.Series:
+    """Huella normalizada de cada nombre, vectorizada (una regla, una vez).
+
+    Mayúsculas sin tildes, sin forma societaria (``S.A.S.``, ``LTDA``, ``CIA``…)
+    y sin nada que no sea letra o dígito. Es exactamente
+    ``AdvancedValueSelector._get_fingerprint`` aplicado a una Serie: la
+    normalización bajo la cual el selector elige el nombre adoptado del grupo.
+    Nulos y no-cadenas dan ``""``.
+
+    Example:
+        >>> huella_de_nombre(pd.Series(["Comercializadora Andina S.A.S.", "ACME SAS"])).tolist()
+        ['COMERCIALIZADORAANDINA', 'ACME']
+    """
+    # unicodedata.normalize no es vectorizable; se aplica por valor único,
+    # que en razones sociales reales son muchos menos que las filas.
+    base = nombres.astype(object)
+    unicos = pd.Series(base.unique())
+    normalizados = (
+        unicos.map(_ascii_mayusculas)
+        .str.replace(PATRON_FORMA_SOCIETARIA, "", regex=True)
+        .str.replace(r"[^A-Z0-9]", "", regex=True)
+    )
+    mapa = dict(zip(unicos, normalizados, strict=True))
+    return base.map(mapa).astype(str)
+
 
 class AdvancedValueSelector:
     """
@@ -49,9 +95,7 @@ class AdvancedValueSelector:
         """
         self.source_priority_map = source_priority_map
         self.source_quality_weights = source_quality_weights or {}
-        self.SOCIETARY_PATTERNS_REGEX = re.compile(
-            r"\b(S\.?A\.?S\.?|LTDA\.?|S\.?A\.?|LIMITADA|E\.?U\.?|CIA|INC)\b", re.IGNORECASE
-        )
+        self.SOCIETARY_PATTERNS_REGEX = PATRON_FORMA_SOCIETARIA
         self.TRIM_PUNCTUATION_REGEX = re.compile(r"^[\s\.:\-]+|[\s\.:\-]+$")
 
     def _get_fingerprint(self, name: str) -> str:
@@ -164,25 +208,10 @@ class AdvancedValueSelector:
     def _fingerprint_series(self, names: pd.Series) -> pd.Series:
         """Huella digital vectorizada (equivalente a _get_fingerprint por fila).
 
-        unicodedata.normalize no es vectorizable directamente, pero el resto sí.
-        Aplicamos la normalización NFKD→ascii por elemento (inevitable) y el
-        resto de transformaciones con métodos .str vectorizados.
+        Delega en :func:`huella_de_nombre`, que es la única implementación;
+        F1.14 la comparte con ``NAME_SIMILARITY_SCORE``.
         """
-        import unicodedata
-
-        def _nfkd_ascii(s: object) -> str:
-            if not isinstance(s, str):
-                return ""
-            return (
-                unicodedata.normalize("NFKD", s.upper()).encode("ascii", "ignore").decode("utf-8")
-            )
-
-        # Normalización por elemento (única parte no vectorizable).
-        norm = names.map(_nfkd_ascii)
-        # Quitar sufijos societarios y no-alfanuméricos (vectorizado).
-        norm = norm.str.replace(self.SOCIETARY_PATTERNS_REGEX, "", regex=True)
-        norm = norm.str.replace(r"[^A-Z0-9]", "", regex=True)
-        return norm
+        return huella_de_nombre(names)
 
     def select_best_name_batch(self, df: pd.DataFrame, group_col: str = "ID_GRUPO") -> pd.Series:
         """Selecciona el mejor nombre de CADA grupo, vectorizado.
