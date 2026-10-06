@@ -37,10 +37,18 @@ Del comparador reutiliza ``Comparacion``/``Veredicto`` y la función privada
 Criterio de ``--comparar``: FALLA (exit 1) si el tiempo total o el de
 cualquier fase sube más de 10 %, si el RSS pico sube más de 10 %, o si los
 candidatos cambian más de 10 % en cualquier dirección (menos candidatos
-también es un cambio: puede ser recall perdido). Para los tiempos hay además
-una holgura absoluta de 2 s: el 10 % de una fase de 2,4 s (L4 a 139k) es menos
-que el ruido del reloj en un contenedor compartido, y una compuerta que salta
-por ruido se aprende a ignorar.
+también es un cambio: puede ser recall perdido). Es el contrato del plan y
+no distingue fases cortas: L4 a 139k dura 2,1 s y su 10 % (0,2 s) está por
+debajo del ruido del reloj en un contenedor compartido, así que existe
+``--holgura-segundos N`` para quien quiera perdonar a las fases cortas hasta
+N segundos absolutos; por defecto es 0 (se mide con la corrida real: con
+2 s de holgura, L4 +50 % pasaba). Si una fase corta hace saltar la compuerta
+por ruido, repita la corrida antes que aflojar el criterio.
+
+Qué deja una corrida: solo ``escala_<etiqueta>.json`` en ``--evidencia``. El
+``prediccion_<etiqueta>_<tamaño>.parquet`` que escribe ``correr_banco`` cae en
+el work_dir temporal de la corrida, que se borra al terminar salvo con
+``--conservar-trabajo``; los CSV generados quedan en ``--dir-datos``.
 
 USO
     python scripts/escala.py --etiqueta base_f0                 # 139k y 463k
@@ -57,7 +65,6 @@ import argparse
 import json
 import math
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -69,10 +76,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import psutil
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
+import record_linkage as rl
 from record_linkage.evaluation.banco import Corrida, EspecificacionBanco, correr_banco
 from record_linkage.evaluation.comparador import (
     Comparacion,
@@ -87,8 +96,9 @@ PERFIL = "produccion_estandar"
 SEMILLA = 42
 #: Fracción de aumento tolerada en tiempo, RSS y candidatos.
 TOLERANCIA = 0.10
-#: Segundos de holgura absoluta para fases cortas (ver docstring del módulo).
-HOLGURA_SEGUNDOS = 2.0
+#: Holgura absoluta en segundos para fases cortas. 0 = el 10 % rige para todas
+#: las fases, como pide la especificación; se afloja solo con --holgura-segundos.
+HOLGURA_SEGUNDOS = 0.0
 
 
 class ConjuntoInesperadoError(ValueError):
@@ -211,19 +221,9 @@ def resolver_conjunto(params: ParametrosConjunto, dir_datos: Path) -> tuple[Path
 # ── Corrida ───────────────────────────────────────────────────────────────
 
 
-def _entorno() -> dict[str, Any]:
-    """Versiones y máquina: la línea base del plan se midió en 2 vCPU."""
-    import numpy as np
-    import psutil
-
-    import record_linkage as rl
-
+def _maquina() -> dict[str, Any]:
+    """Lo que ``Corrida.entorno`` no trae: la línea base del plan se midió en 2 vCPU."""
     return {
-        "version": rl.__version__,
-        "python": platform.python_version(),
-        "pandas": pd.__version__,
-        "numpy": np.__version__,
-        "plataforma": platform.platform(),
         "vcpu": os.cpu_count(),
         "memoria_total_mib": round(psutil.virtual_memory().total / 1024**2),
     }
@@ -231,7 +231,18 @@ def _entorno() -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class OpcionesCorrida:
-    """Dónde corre y qué conserva una medición."""
+    """Dónde corre y qué conserva una medición.
+
+    Attributes:
+        etiqueta: nombre de la corrida (``escala_<etiqueta>.json``).
+        dir_datos: caché de los CSV generados.
+        dir_evidencia: carpeta del JSON; no recibe ningún otro archivo.
+        dir_trabajo: carpeta base (existente) para el work_dir temporal de cada
+            tamaño, o None para el temporal del sistema.
+        conservar_trabajo: no borrar el work_dir (incluye el parquet de predicción).
+        silencioso: bajar el logging del pipeline.
+        nota: qué cambió en esta corrida.
+    """
 
     etiqueta: str
     dir_datos: Path = DIR_DATOS
@@ -240,6 +251,14 @@ class OpcionesCorrida:
     conservar_trabajo: bool = False
     silencioso: bool = True
     nota: str = ""
+
+    def __post_init__(self) -> None:
+        if self.dir_trabajo is not None and not Path(self.dir_trabajo).is_dir():
+            raise FileNotFoundError(
+                f"--dir-trabajo {self.dir_trabajo} no existe. Ahí se crea el work_dir de "
+                f"cada tamaño (cientos de MB a 463k) y conviene decidirlo antes de generar "
+                f"nada; créelo o use el temporal del sistema omitiendo la opción."
+            )
 
 
 def correr_tamano(nombre: str, opciones: OpcionesCorrida) -> dict[str, Any]:
@@ -253,12 +272,15 @@ def correr_tamano(nombre: str, opciones: OpcionesCorrida) -> dict[str, Any]:
     )
     print(f"▶ {nombre}: {ruta_datos.name} ({'generado' if generado else 'reutilizado'}, {filas})")
     trabajo = Path(tempfile.mkdtemp(prefix=f"escala_{nombre}_", dir=opciones.dir_trabajo))
+    # dir_evidencia=trabajo: el banco deja ahí prediccion_<etiqueta>.parquet
+    # (4 MB a 139k, ≈ 13 MB a 463k) y se va con el work_dir; en --evidencia
+    # solo entra el JSON.
     espec = EspecificacionBanco(
         etiqueta=f"{opciones.etiqueta}_{nombre}",
         datos=ruta_datos,
         perfil=PERFIL,
         dir_trabajo=trabajo,
-        dir_evidencia=opciones.dir_evidencia,
+        dir_evidencia=trabajo,
         nota=opciones.nota,
     )
     try:
@@ -276,7 +298,7 @@ def correr_tamano(nombre: str, opciones: OpcionesCorrida) -> dict[str, Any]:
         "version": corrida.version,
         "perfil": corrida.perfil,
         "marca_tiempo": corrida.marca_tiempo,
-        "entorno": _entorno(),
+        "entorno": {**corrida.entorno, "version": corrida.version, **_maquina()},
         "recursos": crudo["recursos"],
         "calidad": crudo["calidad"],
         "huella": corrida.huella,
@@ -329,11 +351,11 @@ def correr_escala(tamanos: Sequence[str], opciones: OpcionesCorrida) -> Path:
         "perfil": PERFIL,
         "semilla": SEMILLA,
         "marca_tiempo": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "entorno": _entorno(),
+        "version": rl.__version__,
+        "entorno": _maquina(),
         "nota": opciones.nota,
         "tamanos": {},
     }
-    documento["version"] = documento["entorno"]["version"]
     destino = guardar_evidencia(documento, opciones.dir_evidencia, opciones.etiqueta)
     for nombre in tamanos:
         documento["tamanos"][nombre] = correr_tamano(nombre, opciones)
@@ -422,13 +444,16 @@ def _veredicto_tiempo(
             nombre, base, nueva, "sin dato" if nueva is None and base is not None else "sin base"
         )
     tope = base + max(base * tolerancia, holgura)
+    criterio = f"≤ base × {1 + tolerancia:g}"  # noqa: RUF001  (mismo símbolo que el comparador)
+    if holgura > 0:
+        criterio += f" (o +{holgura:g} s)"
     return Veredicto(
         metrica=nombre,
         base=base,
         nueva=nueva,
         delta=nueva - base,
         pasa=nueva <= tope + 1e-9,
-        criterio=f"≤ base × {1 + tolerancia:g} (o +{holgura:g} s)",  # noqa: RUF001  (mismo símbolo que el comparador)
+        criterio=criterio,
     )
 
 
@@ -585,7 +610,9 @@ def construir_parser() -> argparse.ArgumentParser:
         help="carpeta base para el work_dir temporal de cada corrida (defecto: temporal del sistema)",
     )
     p.add_argument(
-        "--conservar-trabajo", action="store_true", help="no borrar el work_dir al terminar"
+        "--conservar-trabajo",
+        action="store_true",
+        help="no borrar el work_dir al terminar (incluye prediccion_<etiqueta>_<tamaño>.parquet)",
     )
     p.add_argument("--solo-generar", action="store_true", help="generar/cachear los CSV y salir")
     p.add_argument("--verboso", action="store_true", help="dejar pasar el logging del pipeline")
@@ -603,7 +630,10 @@ def construir_parser() -> argparse.ArgumentParser:
         "--holgura-segundos",
         type=float,
         default=HOLGURA_SEGUNDOS,
-        help=f"holgura absoluta en segundos para fases cortas (defecto {HOLGURA_SEGUNDOS})",
+        help=(
+            f"holgura absoluta en segundos para fases cortas (defecto {HOLGURA_SEGUNDOS:g}: "
+            f"el 10 %% rige para todas las fases)"
+        ),
     )
     return p
 

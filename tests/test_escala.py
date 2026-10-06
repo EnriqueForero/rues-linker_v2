@@ -2,12 +2,16 @@
 
 La compuerta decide si un cambio puede entrar según el tiempo, la memoria y
 los candidatos a 139k y 463k registros. Un instrumento sin calibrar no sirve:
-aquí se verifica (1) que la comparación pura falla exactamente cuando debe y
-nombra la fase culpable, (2) que la tabla de tamaños reproduce las cifras
-medidas, y (3) que la generación cachea por parámetros y reutiliza el archivo.
+aquí se verifica (1) que la comparación pura falla exactamente cuando debe,
+nombra la fase culpable y decide por la línea global de la compuerta (incluida
+una fase corta, con y sin ``--holgura-segundos``), (2) que la tabla de tamaños
+está fijada a la línea base medida, (3) que la generación cachea por parámetros
+y reutiliza el archivo, y (4) que una corrida deja en ``--evidencia`` solo el
+JSON y toma el entorno del banco sin recalcularlo.
 
 Ninguna prueba corre ``linkage()``: el conjunto diminuto (900/180) se genera en
-``tmp_path`` con el generador real, en menos de dos segundos.
+``tmp_path`` con el generador real, en menos de dos segundos; las corridas se
+prueban con ``correr_banco`` sustituido por una ``Corrida`` falsa.
 """
 
 from __future__ import annotations
@@ -64,22 +68,99 @@ def _evidencia(etiqueta: str, **tamanos: dict[str, Any]) -> dict[str, Any]:
 # ── Comparación pura ──────────────────────────────────────────────────────
 
 
+def _culpables(informe: Any) -> list[str]:
+    """Métricas que no pasaron, en el orden de la tabla."""
+    return [v.metrica for c in informe.comparaciones for v in c.veredictos if not v.pasa]
+
+
+def _veredicto_global(informe: Any) -> str:
+    """Última línea del informe: la de la compuerta, no la de cada tamaño."""
+    texto = informe.resumen().rstrip()
+    ultima = texto.splitlines()[-1]
+    assert ultima.lstrip().startswith("VEREDICTO ESCALA"), ultima
+    return ultima
+
+
 def test_corridas_identicas_pasan() -> None:
     informe = escala.comparar_escala(
         _evidencia("a", k139=_corrida()), _evidencia("b", k139=_corrida())
     )
     assert informe.pasa
-    assert "VEREDICTO: PASA" in informe.resumen()
+    assert _veredicto_global(informe).endswith("PASA")
 
 
 def test_una_fase_que_sube_once_por_ciento_falla_y_la_nombra() -> None:
     nueva = _corrida(fases={"L2_lsh_candidates": 250.0 * 1.11, "L3_scoring": 150.0})
     informe = escala.comparar_escala(_evidencia("a", k139=_corrida()), _evidencia("b", k139=nueva))
     assert not informe.pasa
-    culpables = [v.metrica for c in informe.comparaciones for v in c.veredictos if not v.pasa]
-    assert culpables == ["L2_lsh_candidates"]
+    assert _culpables(informe) == ["L2_lsh_candidates"]
     assert "L2_lsh_candidates" in informe.resumen()
-    assert "VEREDICTO: FALLA" in informe.resumen()
+    assert _veredicto_global(informe).endswith("FALLA")
+
+
+def test_con_dos_tamanos_basta_que_uno_falle() -> None:
+    """La línea de cada tamaño puede decir PASA; la de la compuerta manda."""
+    base = _evidencia("a", k139=_corrida(), k463=_corrida())
+    nueva = _evidencia(
+        "b",
+        k139=_corrida(),
+        k463=_corrida(fases={"L2_lsh_candidates": 250.0 * 1.11, "L3_scoring": 150.0}),
+    )
+    informe = escala.comparar_escala(base, nueva)
+    assert informe.pasa is False
+    assert [c.pasa for c in informe.comparaciones] == [True, False]
+    texto = informe.resumen()
+    assert "VEREDICTO: PASA" in texto and "VEREDICTO: FALLA" in texto
+    assert _veredicto_global(informe).endswith("FALLA")
+
+
+# ── Fases cortas y holgura absoluta ───────────────────────────────────────
+
+_FASES_CORTAS = {"L2_lsh_candidates": 250.0, "L3_scoring": 150.0, "L4_clustering": 2.4}
+
+
+def test_una_fase_corta_que_sube_mas_de_diez_por_ciento_falla_por_defecto() -> None:
+    """La especificación no distingue fases cortas: 2,4 → 2,9 s (+21 %) falla."""
+    nueva = _corrida(fases={**_FASES_CORTAS, "L4_clustering": 2.9})
+    informe = escala.comparar_escala(
+        _evidencia("a", k139=_corrida(fases=_FASES_CORTAS)), _evidencia("b", k139=nueva)
+    )
+    assert escala.HOLGURA_SEGUNDOS == 0.0
+    assert not informe.pasa
+    assert _culpables(informe) == ["L4_clustering"]
+
+
+def test_una_fase_corta_dentro_de_la_holgura_explicita_pasa() -> None:
+    nueva = _corrida(fases={**_FASES_CORTAS, "L4_clustering": 2.9})
+    informe = escala.comparar_escala(
+        _evidencia("a", k139=_corrida(fases=_FASES_CORTAS)),
+        _evidencia("b", k139=nueva),
+        holgura_segundos=2.0,
+    )
+    assert informe.pasa
+
+
+def test_una_fase_corta_fuera_de_la_holgura_explicita_falla_y_la_nombra() -> None:
+    nueva = _corrida(fases={**_FASES_CORTAS, "L4_clustering": 4.5})
+    informe = escala.comparar_escala(
+        _evidencia("a", k139=_corrida(fases=_FASES_CORTAS)),
+        _evidencia("b", k139=nueva),
+        holgura_segundos=2.0,
+    )
+    assert not informe.pasa
+    assert _culpables(informe) == ["L4_clustering"]
+    assert "L4_clustering" in informe.resumen()
+
+
+def test_la_holgura_no_afloja_una_fase_larga() -> None:
+    """Con 2 s de holgura, L2 (250 s) sigue regido por el 10 %: +11 % falla."""
+    nueva = _corrida(fases={**_FASES_CORTAS, "L2_lsh_candidates": 250.0 * 1.11})
+    informe = escala.comparar_escala(
+        _evidencia("a", k139=_corrida(fases=_FASES_CORTAS)),
+        _evidencia("b", k139=nueva),
+        holgura_segundos=2.0,
+    )
+    assert _culpables(informe) == ["L2_lsh_candidates"]
 
 
 def test_una_fase_que_sube_nueve_por_ciento_pasa() -> None:
@@ -154,8 +235,15 @@ def test_la_tolerancia_es_configurable() -> None:
 # ── Tabla de tamaños y parámetros ─────────────────────────────────────────
 
 
-def test_los_tamanos_reproducen_las_cifras_medidas() -> None:
-    """139.028 y 463.473 filas son las de la línea base del plan (semilla 42)."""
+def test_la_tabla_de_tamanos_esta_fijada_a_la_linea_base() -> None:
+    """Pin documental, no conducta: fija la tabla a la línea base medida.
+
+    139.028 y 463.473 filas (semilla 42) son las del plan y de
+    ``escala_base_f0.json``. Si esta prueba falla es porque alguien cambió
+    ``TAMANOS``: entonces la línea base deja de ser comparable y hay que volver
+    a medirla. La verificación real (conteo del CSV contra ``filas_esperadas``)
+    la cubre ``test_un_conteo_distinto_del_esperado_falla_con_mensaje_accionable``.
+    """
     t139, t463 = escala.TAMANOS["139k"], escala.TAMANOS["463k"]
     assert (t139.empresas_extra, t139.importadores_extra, t139.filas_esperadas) == (
         48_000,
@@ -236,6 +324,116 @@ def test_el_generador_falla_rapido_si_no_existe(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(escala, "GENERADOR", tmp_path / "no_existe.py")
     with pytest.raises(FileNotFoundError, match=r"no_existe\.py"):
         escala.resolver_conjunto(_DIMINUTO, tmp_path)
+
+
+# ── Corrida: qué deja y dónde ─────────────────────────────────────────────
+
+
+def _corrida_banco_falsa(etiqueta: str) -> Any:
+    """Una ``Corrida`` mínima pero real, con el ``entorno`` que arma el banco."""
+    from record_linkage.evaluation.banco import Corrida, MetricasCalidad, MetricasRecursos
+
+    return Corrida(
+        etiqueta=etiqueta,
+        version="0.0.0-prueba",
+        perfil="produccion_estandar",
+        marca_tiempo="2026-01-01T00:00:00",
+        entorno={"python": "3.x", "pandas": "3.x", "numpy": "2.x", "plataforma": "prueba"},
+        calidad=MetricasCalidad(
+            registros=2,
+            grupos_verdad=1,
+            grupos_predichos=1,
+            pares_verdaderos=1,
+            tp=1,
+            fp=0,
+            fn=0,
+            precision=1.0,
+            recall=1.0,
+            f1=1.0,
+            b3_precision=1.0,
+            b3_recall=1.0,
+            b3_f1=1.0,
+        ),
+        recursos=MetricasRecursos(segundos_total=0.1, candidatos=1, pares_scoreados=1),
+        huella="prueba",
+        especificacion={},
+    )
+
+
+@pytest.fixture
+def conjunto_mini(tmp_path: Path, monkeypatch) -> Path:
+    """Un tamaño ``mini`` ya cacheado (2 filas): no se invoca el generador."""
+    params = escala.ParametrosConjunto(empresas_extra=1, importadores_extra=1, filas_esperadas=2)
+    dir_datos = tmp_path / "datos"
+    dir_datos.mkdir()
+    (dir_datos / params.nombre_archivo).write_text(
+        "ID_REGISTRO,ID_GROUP,REGIMEN,NIT,RAZON_SOCIAL,FUENTE,CASO\n"
+        "1,g1,CON_NIT,1,EMPRESA FICTICIA SAS,A,positivo_con_nit\n"
+        "2,g1,CON_NIT,1,EMPRESA FICTICIA S.A.S.,B,positivo_con_nit\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(escala, "TAMANOS", {"mini": params})
+    return dir_datos
+
+
+def test_la_corrida_solo_deja_el_json_en_evidencia(
+    tmp_path: Path, monkeypatch, conjunto_mini: Path
+) -> None:
+    """``correr_banco`` escribe ``prediccion_<etiqueta>.parquet`` en su
+    ``dir_evidencia``; ese binario debe caer en el work_dir temporal (que se
+    borra), no en la carpeta de evidencia del repositorio."""
+    evidencia = tmp_path / "evidencia"
+    trabajo = tmp_path / "trabajo"
+    trabajo.mkdir()
+    vistos: dict[str, Any] = {}
+
+    def _banco_falso(espec: Any, *, silencioso: bool = True) -> Any:
+        vistos["espec"] = espec
+        destino = Path(espec.dir_evidencia) / f"prediccion_{espec.etiqueta}.parquet"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(b"parquet falso")
+        return _corrida_banco_falsa(espec.etiqueta)
+
+    monkeypatch.setattr(escala, "correr_banco", _banco_falso)
+    opciones = escala.OpcionesCorrida(
+        etiqueta="x", dir_datos=conjunto_mini, dir_evidencia=evidencia, dir_trabajo=trabajo
+    )
+    destino = escala.correr_escala(("mini",), opciones)
+
+    assert destino == evidencia / "escala_x.json"
+    assert sorted(p.name for p in evidencia.iterdir()) == ["escala_x.json"]
+    espec = vistos["espec"]
+    assert espec.etiqueta == "x_mini"
+    assert Path(espec.dir_evidencia).is_relative_to(trabajo)
+    assert Path(espec.dir_evidencia) != evidencia
+    # El work_dir temporal (y el parquet con él) se borró al terminar.
+    assert list(trabajo.iterdir()) == []
+
+
+def test_el_entorno_por_tamano_es_el_del_banco_mas_la_maquina(
+    tmp_path: Path, monkeypatch, conjunto_mini: Path
+) -> None:
+    """No se recalcula lo que ``Corrida.entorno`` ya trae; solo se añade lo que falta."""
+    monkeypatch.setattr(
+        escala, "correr_banco", lambda espec, **_k: _corrida_banco_falsa(espec.etiqueta)
+    )
+    opciones = escala.OpcionesCorrida(
+        etiqueta="x", dir_datos=conjunto_mini, dir_evidencia=tmp_path / "evidencia"
+    )
+    escala.correr_escala(("mini",), opciones)
+    documento = escala.cargar_evidencia(tmp_path / "evidencia", "x")
+    entorno = documento["tamanos"]["mini"]["entorno"]
+    assert entorno["plataforma"] == "prueba" and entorno["python"] == "3.x"
+    assert entorno["version"] == "0.0.0-prueba"
+    assert entorno["vcpu"] >= 1 and entorno["memoria_total_mib"] > 0
+    assert set(documento["entorno"]) == {"vcpu", "memoria_total_mib"}
+    assert documento["version"] == escala.rl.__version__
+
+
+def test_dir_trabajo_inexistente_falla_rapido_con_mensaje_accionable(tmp_path: Path) -> None:
+    """Antes se generaba el conjunto y recién después moría ``tempfile.mkdtemp``."""
+    with pytest.raises(FileNotFoundError, match=r"--dir-trabajo .*no_existe.*no existe"):
+        escala.OpcionesCorrida(etiqueta="x", dir_trabajo=tmp_path / "no_existe")
 
 
 # ── JSON de evidencia ─────────────────────────────────────────────────────
