@@ -1,0 +1,695 @@
+"""Contrato de salida 1.0 (F1.9): ``linkage()``, ``dedupe()`` y ``link()`` lo cumplen.
+
+Qué congela
+-----------
+Sobre un conjunto sintético inventado (64 filas, dos fuentes, duplicados
+CON_NIT y SIN_NIT, una fuente con su propia columna ``ID_REGISTRO`` y una
+columna extra del usuario), para las tres fachadas:
+
+* esquema y orden de las columnas fijas de la correlativa y del golden;
+* tipos (enteros, booleanos, decimales, texto);
+* ``ID_REGISTRO`` único; correlativa con N filas = N de entrada;
+* golden sin NaN en métricas y una fila por ``ID_GRUPO``;
+* ``ID_ENTIDAD`` ``NIT-…`` para grupos con identificador válido y ``ENT-…``
+  estable entre dos corridas (determinista por contenido);
+* ``METODO_UNION`` coherente (singleton → ``sin_pareja``; mismo NIT →
+  ``identificador``) y ``SCORE_PAR`` > 0 en una unión por nombre;
+* el diccionario cubre todas las columnas entregadas;
+* ``validar()`` detecta un contrato roto (mutando un DataFrame);
+* el shim de compatibilidad (``res["correlative"]`` …) avisa con
+  ``DeprecationWarning`` y mapea a los campos nuevos.
+
+Las empresas son inventadas. Ningún dato licenciado entra aquí.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import io
+import warnings
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pytest
+
+import record_linkage as rl
+from record_linkage import contrato
+from record_linkage.pipeline.errores import ContratoSalidaError
+from record_linkage.resultado import ReporteValidacion, ResultadoLinkage
+from record_linkage.salida.completar import completar_correlativa
+
+FUENTE_A = "CRM"
+FUENTE_B = "ADUANAS"
+
+# Palabras distintas por entidad SIN_NIT: evitan que el encadenamiento por
+# nombre (single-linkage) una entidades ajenas que solo difieren en un número.
+_NOMBRES_SIN_NIT = [
+    "PANADERIA LA ESPIGA DORADA",
+    "RESTAURANTE EL BUEN SABOR",
+    "LAVANDERIA BURBUJAS AZULES",
+    "CARPINTERIA ROBLE VIEJO",
+    "FLORISTERIA JARDIN SECRETO",
+    "PELUQUERIA TIJERAS MAGICAS",
+    "ZAPATERIA PASO FIRME",
+    "LIBRERIA PAGINAS ABIERTAS",
+    "VETERINARIA PATAS FELICES",
+    "OPTICA MIRADA CLARA",
+]
+
+
+def conjunto_sintetico() -> dict[str, pd.DataFrame]:
+    """64 filas inventadas en dos fuentes.
+
+    * 12 entidades CON_NIT: dos filas en CRM (variantes SAS / S.A.S.) y una en
+      ADUANAS → 36 filas, unión por identificador.
+    * 10 entidades SIN_NIT: una fila en cada fuente con sufijo distinto
+      (LTDA / LIMITADA) → 20 filas, unión por nombre.
+    * 8 singletons (2 en CRM, 6 en ADUANAS).
+
+    CRM trae ``CODIGO`` (único por fila: sirve de ``col_id``) y ``SECTOR``
+    (columna extra del usuario). ADUANAS trae su propia ``ID_REGISTRO``, que
+    choca con el contrato y debe conservarse renombrada ``ID_REGISTRO_FUENTE``.
+    """
+    a: list[dict[str, str]] = []
+    b: list[dict[str, str]] = []
+    for i in range(12):
+        nit = f"{800200000 + i}"
+        base = f"FERRETERIA EL TORNILLO {i:02d}"
+        a.append(
+            {
+                "NIT": nit,
+                "RAZON_SOCIAL": f"{base} SAS",
+                "CIUDAD": "BOGOTA",
+                "SECTOR": "COMERCIO",
+                "CODIGO": f"A{i:03d}",
+            }
+        )
+        a.append(
+            {
+                "NIT": nit,
+                "RAZON_SOCIAL": f"{base} S.A.S.",
+                "CIUDAD": "BOGOTA",
+                "SECTOR": "COMERCIO",
+                "CODIGO": f"A{i:03d}X",
+            }
+        )
+        b.append(
+            {
+                "NIT": nit,
+                "RAZON_SOCIAL": f"{base} S A S",
+                "CIUDAD": "BOGOTA",
+                "ID_REGISTRO": f"B-{i}",
+                "SECTOR": "COMERCIO",
+            }
+        )
+    for i, nombre in enumerate(_NOMBRES_SIN_NIT):
+        a.append(
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": f"{nombre} LTDA",
+                "CIUDAD": "CALI",
+                "SECTOR": "SERVICIOS",
+                "CODIGO": f"A9{i:02d}",
+            }
+        )
+        b.append(
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": f"{nombre} LIMITADA",
+                "CIUDAD": "CALI",
+                "ID_REGISTRO": f"B-9{i}",
+                "SECTOR": "SERVICIOS",
+            }
+        )
+    for i in range(2):
+        a.append(
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": f"SOLITARIA {i} DEL SUR",
+                "CIUDAD": "PASTO",
+                "SECTOR": "OTRO",
+                "CODIGO": f"A8{i:02d}",
+            }
+        )
+    for i in range(6):
+        b.append(
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": f"UNICA EMPRESA {i} DEL NORTE",
+                "CIUDAD": "CUCUTA",
+                "ID_REGISTRO": f"B-U{i}",
+                "SECTOR": "OTRO",
+            }
+        )
+    return {FUENTE_A: pd.DataFrame(a, dtype=str), FUENTE_B: pd.DataFrame(b, dtype=str)}
+
+
+def _silencio() -> contextlib.AbstractContextManager[Any]:
+    return contextlib.redirect_stdout(io.StringIO())
+
+
+def _correr_linkage(dir_trabajo: Path, **kwargs: Any) -> ResultadoLinkage:
+    fuentes = conjunto_sintetico()
+    with _silencio():
+        return rl.linkage(
+            fuentes,
+            work_dir=str(dir_trabajo),
+            skip_reporting=True,
+            col_ciudad="CIUDAD",
+            col_id="CODIGO",
+            **kwargs,
+        )
+
+
+@pytest.fixture(scope="module")
+def res_linkage(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    return _correr_linkage(tmp_path_factory.mktemp("linkage"))
+
+
+@pytest.fixture(scope="module")
+def res_link(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    fuentes = conjunto_sintetico()
+    with _silencio():
+        return rl.link(
+            fuentes[FUENTE_A],
+            fuentes[FUENTE_B],
+            nombre_a=FUENTE_A,
+            nombre_b=FUENTE_B,
+            work_dir=str(tmp_path_factory.mktemp("link")),
+            skip_reporting=True,
+            col_id="CODIGO",
+        )
+
+
+@pytest.fixture(scope="module")
+def res_dedupe(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkage:
+    fuentes = conjunto_sintetico()
+    df = pd.concat([fuentes[FUENTE_A], fuentes[FUENTE_B]], ignore_index=True)
+    with _silencio():
+        return rl.dedupe(df, output_dir=str(tmp_path_factory.mktemp("dedupe")))
+
+
+@pytest.fixture(params=["linkage", "link", "dedupe"])
+def resultado(request: pytest.FixtureRequest) -> ResultadoLinkage:
+    return request.getfixturevalue(f"res_{request.param}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# contrato.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_contrato_declara_las_tablas_del_estandar() -> None:
+    assert contrato.VERSION_CONTRATO == "1.0"
+    assert contrato.COLUMNAS_CORRELATIVA == (
+        "ID_REGISTRO",
+        "SRC",
+        "ORIGINAL_INDEX",
+        "ID_GRUPO",
+        "ID_ENTIDAD",
+        "NIT_FINAL",
+        "RAZON_SOCIAL_FINAL",
+        "NAME_SIMILARITY_SCORE",
+        "NIT_DISTANCE",
+        "SCORE_PAR",
+        "METODO_UNION",
+        "CONFIANZA",
+    )
+    assert len(contrato.COLUMNAS_GOLDEN) == 14 and contrato.COLUMNAS_GOLDEN[-1] == "ID_ENTIDAD"
+    assert len(contrato.COLUMNAS_ENLACES) == 12
+    assert contrato.COLUMNAS_REVISION == (
+        "TIPO",
+        "FUENTE",
+        "CLAVE_A",
+        "NOMBRE_A",
+        "CLAVE_B",
+        "NOMBRE_B",
+        "DECISION",
+        "AUTOR",
+        "RAZON",
+    )
+    assert set(contrato.METODOS_UNION_F1) == {"identificador", "nombre", "sin_pareja"}
+    assert set(contrato.METODOS_UNION_F1) < set(contrato.METODOS_UNION)
+    for col in contrato.COLUMNAS_TECNICAS:
+        assert col not in contrato.COLUMNAS_CORRELATIVA
+
+
+def test_esquemas_pyarrow() -> None:
+    esq = contrato.esquema_correlativa(["NIT", "RAZON_SOCIAL", "SECTOR"])
+    assert esq.names[:12] == list(contrato.COLUMNAS_CORRELATIVA)
+    assert esq.names[12:] == ["NIT", "RAZON_SOCIAL", "SECTOR"]
+    assert esq.field("ID_GRUPO").type == pa.int64()
+    assert esq.field("SCORE_PAR").type == pa.float64()
+    esq_tipado = contrato.esquema_correlativa({"MONTO": pa.float64()})
+    assert esq_tipado.field("MONTO").type == pa.float64()
+    with pytest.raises(ValueError, match="ID_GRUPO"):
+        contrato.esquema_correlativa(["ID_GRUPO"])
+    golden = contrato.esquema_golden()
+    assert golden.names == list(contrato.COLUMNAS_GOLDEN)
+    assert golden.field("REQUIRES_REVIEW").type == pa.bool_()
+    assert golden.field("RECORD_COUNT").type == pa.int64()
+    assert contrato.esquema_enlaces().names == list(contrato.COLUMNAS_ENLACES)
+    assert contrato.esquema_revision().names == list(contrato.COLUMNAS_REVISION)
+
+
+def test_columnas_finales_se_importan_desde_el_contrato() -> None:
+    from record_linkage.golden import columnas_finales
+
+    assert columnas_finales.COLUMNAS_FINALES == contrato.COLUMNAS_FINALES
+    assert columnas_finales.COLUMNAS_FINALES == (
+        "NIT_FINAL",
+        "RAZON_SOCIAL_FINAL",
+        "NAME_SIMILARITY_SCORE",
+        "NIT_DISTANCE",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Las tres fachadas cumplen el contrato
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_tipo_de_retorno_y_validacion(resultado: ResultadoLinkage) -> None:
+    assert isinstance(resultado, ResultadoLinkage)
+    reporte = resultado.validar()
+    assert isinstance(reporte, ReporteValidacion)
+    assert reporte.ok, reporte.fallos
+    assert resultado.validar(estricto=True).ok
+    assert resultado.manifiesto["contrato"]["version"] == contrato.VERSION_CONTRATO
+    assert resultado.dir_trabajo is not None and Path(resultado.dir_trabajo).is_dir()
+
+
+def test_correlativa_orden_y_tipos(resultado: ResultadoLinkage) -> None:
+    c = resultado.correlativa
+    assert list(c.columns[:12]) == list(contrato.COLUMNAS_CORRELATIVA)
+    assert pd.api.types.is_integer_dtype(c["ORIGINAL_INDEX"])
+    assert pd.api.types.is_integer_dtype(c["ID_GRUPO"])
+    assert pd.api.types.is_integer_dtype(c["NIT_DISTANCE"])
+    assert pd.api.types.is_float_dtype(c["NAME_SIMILARITY_SCORE"])
+    assert pd.api.types.is_float_dtype(c["SCORE_PAR"])
+    for col in ("ID_REGISTRO", "SRC", "ID_ENTIDAD", "METODO_UNION"):
+        assert pd.api.types.is_string_dtype(c[col]) or pd.api.types.is_object_dtype(c[col])
+    # Las técnicas salen del entregable.
+    assert not set(contrato.COLUMNAS_TECNICAS) & set(c.columns)
+    # Las columnas de la fuente se conservan (incluida la extra del usuario).
+    assert "SECTOR" in c.columns and "RAZON_SOCIAL" in c.columns
+
+
+def test_id_registro_unico_y_n_filas(resultado: ResultadoLinkage) -> None:
+    c = resultado.correlativa
+    assert c["ID_REGISTRO"].is_unique and c["ID_REGISTRO"].notna().all()
+    n_entrada = sum(e["filas"] for e in resultado.manifiesto["entradas"].values())
+    assert len(c) == n_entrada == 64
+
+
+def test_id_registro_usa_col_id_cuando_es_unico(res_linkage: ResultadoLinkage) -> None:
+    c = res_linkage.correlativa
+    de_a = c.loc[c["SRC"] == FUENTE_A, "ID_REGISTRO"]
+    assert de_a.str.startswith(f"{FUENTE_A}-A").all()  # <SRC>-<id nativo>
+    de_b = c.loc[c["SRC"] == FUENTE_B, "ID_REGISTRO"]
+    assert de_b.str.fullmatch(rf"{FUENTE_B}-F\d+").all()  # sin col_id → <SRC>-F<fila>
+    regla = res_linkage.manifiesto["completar"]["id_registro"]
+    assert regla[FUENTE_A]["regla"] == "col_id" and regla[FUENTE_B]["regla"] == "fila"
+
+
+def test_colision_con_el_contrato_se_renombra(res_linkage: ResultadoLinkage) -> None:
+    c = res_linkage.correlativa
+    assert "ID_REGISTRO_FUENTE" in c.columns
+    propia = c.loc[c["SRC"] == FUENTE_B, "ID_REGISTRO_FUENTE"]
+    assert propia.str.startswith("B-").all()
+    assert res_linkage.manifiesto["completar"]["renombres"] == {"ID_REGISTRO": "ID_REGISTRO_FUENTE"}
+    dic = res_linkage.diccionario
+    fila = dic[(dic["tabla"] == "correlativa") & (dic["columna"] == "ID_REGISTRO_FUENTE")]
+    assert len(fila) == 1 and fila["origen"].iloc[0] == "fuente"
+    assert "renombrada" in fila["significado"].iloc[0]
+
+
+def test_golden_contrato(res_linkage: ResultadoLinkage, res_link: ResultadoLinkage) -> None:
+    for res in (res_linkage, res_link):
+        g = res.golden
+        assert g is not None
+        assert list(g.columns[:14]) == list(contrato.COLUMNAS_GOLDEN)
+        metricas = ["SOURCES_COUNT", "RECORD_COUNT", "NAME_VARIATIONS", "NIT_VARIATIONS"]
+        assert not g[[*metricas, "CONFIDENCE_SCORE"]].isna().any().any()
+        for col in metricas:
+            assert pd.api.types.is_integer_dtype(g[col]), col
+        assert pd.api.types.is_bool_dtype(g["REQUIRES_REVIEW"])
+        assert g["ID_GRUPO"].is_unique
+        assert set(g["ID_GRUPO"]) == set(res.correlativa["ID_GRUPO"])
+        assert g["ID_ENTIDAD"].notna().all()
+        # Sin columnas de la correlativa pegadas.
+        assert not {"RAZON_SOCIAL", "NIT", "SECTOR", "SRC", "ORIGINAL_INDEX"} & set(g.columns)
+
+
+def test_dedupe_golden_none_documentado(res_dedupe: ResultadoLinkage) -> None:
+    """``dedupe`` no produce golden en memoria: la correlativa cumple igual."""
+    assert res_dedupe.golden is None
+    assert res_dedupe.correlativa["CONFIANZA"].isna().all()
+    assert "golden" in res_dedupe.manifiesto["completar"]["confianza"]["motivo"]
+    assert res_dedupe.manifiesto["completar"]["score_par"]["origen"] is None
+    assert res_dedupe.manifiesto["completar"]["id_grupo"]["recodificado"] is True
+
+
+def test_id_entidad_nit_y_ent(resultado: ResultadoLinkage) -> None:
+    c = resultado.correlativa
+    con_nit = c[c["NIT"].fillna("").astype(str).str.len() > 0]
+    assert con_nit["ID_ENTIDAD"].str.fullmatch(r"NIT-\d{7,}").all()
+    sin_nit = c[c["NIT"].fillna("").astype(str).str.len() == 0]
+    assert sin_nit["ID_ENTIDAD"].str.fullmatch(r"ENT-[0-9a-f]{16}").all()
+    # Un ID_GRUPO ↔ un ID_ENTIDAD.
+    assert (c.groupby("ID_GRUPO")["ID_ENTIDAD"].nunique() == 1).all()
+    assert (c.groupby("ID_ENTIDAD")["ID_GRUPO"].nunique() == 1).all()
+    # NIT-<base sin DV>: la base es la del NIT_FINAL del grupo.
+    fila = con_nit.iloc[0]
+    assert fila["ID_ENTIDAD"] == "NIT-" + str(fila["NIT"]).lstrip("0")
+
+
+def test_ent_es_determinista_por_contenido(res_linkage: ResultadoLinkage, tmp_path: Path) -> None:
+    otra = _correr_linkage(tmp_path / "segunda")
+    a = res_linkage.correlativa.set_index("ID_REGISTRO")["ID_ENTIDAD"].sort_index()
+    b = otra.correlativa.set_index("ID_REGISTRO")["ID_ENTIDAD"].sort_index()
+    pd.testing.assert_series_equal(a, b)
+    # Y es exactamente SHA-256 de los ID_REGISTRO ordenados del grupo.
+    c = res_linkage.correlativa
+    grupo = c[c["ID_ENTIDAD"].str.startswith("ENT-")].groupby("ID_GRUPO")["ID_REGISTRO"]
+    for _, ids in grupo:
+        esperado = "ENT-" + hashlib.sha256("|".join(sorted(ids)).encode()).hexdigest()[:16]
+        assert c.loc[c["ID_REGISTRO"].isin(ids), "ID_ENTIDAD"].eq(esperado).all()
+
+
+def test_metodo_union_coherente(resultado: ResultadoLinkage) -> None:
+    c = resultado.correlativa
+    assert set(c["METODO_UNION"]) <= set(contrato.METODOS_UNION_F1)
+    tam = c.groupby("ID_GRUPO")["ID_REGISTRO"].transform("size")
+    assert (c.loc[tam == 1, "METODO_UNION"] == "sin_pareja").all()
+    assert (c.loc[tam == 1, "SCORE_PAR"].isna()).all()
+    con_nit = c[(c["NIT"].fillna("").astype(str).str.len() > 0) & (tam > 1)]
+    assert len(con_nit) == 36
+    assert (con_nit["METODO_UNION"] == "identificador").all()
+    por_nombre = c[c["METODO_UNION"] == "nombre"]
+    assert len(por_nombre) > 0
+
+
+def test_score_par_positivo_en_union_por_nombre(
+    res_linkage: ResultadoLinkage, res_link: ResultadoLinkage
+) -> None:
+    for res in (res_linkage, res_link):
+        c = res.correlativa
+        por_nombre = c[c["METODO_UNION"] == "nombre"]
+        assert len(por_nombre) >= 2
+        assert (por_nombre["SCORE_PAR"] > 0).all()
+        assert (c["SCORE_PAR"].dropna() <= 1.0).all()
+        assert res.manifiesto["completar"]["score_par"]["origen"].endswith("scored.db")
+
+
+def test_confianza_viene_del_golden(res_linkage: ResultadoLinkage) -> None:
+    c, g = res_linkage.correlativa, res_linkage.golden
+    assert g is not None
+    esperado = c["ID_GRUPO"].map(g.set_index("ID_GRUPO")["CONFIANZA"])
+    assert (c["CONFIANZA"] == esperado).all()
+    assert set(c["CONFIANZA"]) <= set(contrato.NIVELES_CONFIANZA)
+
+
+def test_diccionario_cubre_todas_las_columnas(resultado: ResultadoLinkage) -> None:
+    dic = resultado.diccionario
+    assert list(dic.columns) == ["tabla", "columna", "tipo", "significado", "origen", "alias_es"]
+    cubiertas = set(dic.loc[dic["tabla"] == "correlativa", "columna"])
+    assert set(resultado.correlativa.columns) <= cubiertas
+    if resultado.golden is not None:
+        assert set(resultado.golden.columns) <= set(dic.loc[dic["tabla"] == "golden", "columna"])
+        fila = dic[(dic["tabla"] == "golden") & (dic["columna"] == "PRIMARY_SOURCE")]
+        assert fila["alias_es"].iloc[0] == "FUENTE_PRINCIPAL"
+    else:  # una tabla que no se entrega no se lista
+        assert not (dic["tabla"] == "golden").any()
+    assert set(dic["origen"]) <= {"motor", "fuente", "revision"}
+    assert (dic["significado"].str.len() > 0).all()
+    assert set(dic.loc[dic["tabla"] == "revision", "columna"]) == set(contrato.COLUMNAS_REVISION)
+    assert dic.loc[dic["columna"] == "SRC", "alias_es"].eq("FUENTE").all()
+
+
+def test_revision_y_enlaces(resultado: ResultadoLinkage) -> None:
+    assert resultado.enlaces is None
+    assert list(resultado.revision.columns) == list(contrato.COLUMNAS_REVISION)
+    assert resultado.revision.empty
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# validar() detecta un contrato roto
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _copia(res: ResultadoLinkage) -> ResultadoLinkage:
+    return ResultadoLinkage(
+        correlativa=res.correlativa.copy(),
+        golden=None if res.golden is None else res.golden.copy(),
+        metricas=dict(res.metricas),
+        manifiesto=dict(res.manifiesto),
+        enlaces=res.enlaces,
+        revision=res.revision.copy(),
+        diccionario=res.diccionario.copy(),
+        dir_trabajo=res.dir_trabajo,
+    )
+
+
+def test_validar_detecta_contrato_roto(res_linkage: ResultadoLinkage) -> None:
+    roto = _copia(res_linkage)
+    roto.correlativa.loc[0, "ID_REGISTRO"] = roto.correlativa.loc[1, "ID_REGISTRO"]
+    roto.correlativa.loc[2, "METODO_UNION"] = "magia"
+    roto.correlativa.loc[3, "ID_ENTIDAD"] = None
+    roto.correlativa = roto.correlativa[list(reversed(roto.correlativa.columns))]
+    assert roto.golden is not None
+    roto.golden = roto.golden.iloc[1:]
+    roto.golden.loc[roto.golden.index[0], "RECORD_COUNT"] = np.nan
+    reporte = roto.validar()
+    assert not reporte.ok
+    texto = "\n".join(reporte.fallos)
+    assert "ID_REGISTRO" in texto and "único" in texto
+    assert "METODO_UNION" in texto and "magia" in texto
+    assert "ID_ENTIDAD" in texto
+    assert "orden" in texto
+    assert "golden" in texto and "RECORD_COUNT" in texto
+    with pytest.raises(ContratoSalidaError) as exc:
+        roto.validar(estricto=True)
+    assert exc.value.fallos == reporte.fallos
+    assert "Qué hacer" in str(exc.value)
+
+
+def test_validar_filas_y_consistencia_entidad(res_linkage: ResultadoLinkage) -> None:
+    roto = _copia(res_linkage)
+    roto.correlativa = roto.correlativa.iloc[:-1]
+    primer_grupo = roto.correlativa["ID_GRUPO"].iloc[0]
+    mascara = roto.correlativa["ID_GRUPO"] == primer_grupo
+    roto.correlativa.loc[mascara.idxmax(), "ID_ENTIDAD"] = "ENT-0000000000000000"
+    reporte = roto.validar()
+    assert not reporte.ok
+    texto = "\n".join(reporte.fallos)
+    assert "64" in texto and "63" in texto  # N entrada vs N correlativa
+    assert "ID_ENTIDAD" in texto and "ID_GRUPO" in texto
+
+
+def test_validar_tipos(res_linkage: ResultadoLinkage) -> None:
+    roto = _copia(res_linkage)
+    roto.correlativa["ID_GRUPO"] = roto.correlativa["ID_GRUPO"].astype(str)
+    assert roto.golden is not None
+    roto.golden["REQUIRES_REVIEW"] = roto.golden["REQUIRES_REVIEW"].astype(int)
+    fallos = roto.validar().fallos
+    assert any("ID_GRUPO" in f and "entero" in f for f in fallos)
+    assert any("REQUIRES_REVIEW" in f and "booleano" in f for f in fallos)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Compatibilidad con la API vieja (dict)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_shim_claves_viejas_con_deprecation(res_linkage: ResultadoLinkage) -> None:
+    with pytest.warns(DeprecationWarning, match="correlativa"):
+        assert res_linkage["correlative"] is res_linkage.correlativa
+    with pytest.warns(DeprecationWarning):
+        assert res_linkage["golden"] is res_linkage.golden
+    with pytest.warns(DeprecationWarning):
+        assert res_linkage.get("report_files") is None  # skip_reporting=True
+    with pytest.warns(DeprecationWarning):
+        assert res_linkage.get("preprocessing", "x") == "x"
+    with pytest.warns(DeprecationWarning):
+        assert res_linkage["work_dir"] == res_linkage.dir_trabajo
+    with pytest.warns(DeprecationWarning):
+        assert "correlative" in res_linkage and "golden" in res_linkage
+        assert "preprocessing" not in res_linkage
+    with pytest.warns(DeprecationWarning):
+        assert set(res_linkage.keys()) == {"correlative", "golden"}
+    with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
+        res_linkage["inexistente"]
+    # Los campos nuevos no avisan.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _ = res_linkage.correlativa, res_linkage.golden, res_linkage.metricas
+
+
+def test_col_id_desconocido_falla_rapido(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="col_id"), _silencio():
+        rl.linkage(
+            conjunto_sintetico(),
+            work_dir=str(tmp_path / "w"),
+            skip_reporting=True,
+            col_id="NO_EXISTE",
+        )
+
+
+def test_col_id_no_unico_cae_a_fila_y_lo_dice(tmp_path: Path) -> None:
+    fuentes = conjunto_sintetico()
+    with _silencio():
+        res = rl.linkage(
+            fuentes,
+            work_dir=str(tmp_path / "w"),
+            skip_reporting=True,
+            col_id="SECTOR",  # existe en ambas, no es único
+        )
+    assert res.correlativa["ID_REGISTRO"].str.contains("-F").all()
+    for fuente in (FUENTE_A, FUENTE_B):
+        nota = res.manifiesto["completar"]["id_registro"][fuente]
+        assert nota["regla"] == "fila" and "único" in nota["motivo"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# completar_correlativa como función (sin correr el motor)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_completar_sin_scored_db_deja_score_par_nulo(tmp_path: Path) -> None:
+    correl = pd.DataFrame(
+        {
+            "NIT": ["900123456", "900123456", ""],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME S.A.S.", "GLOBEX"],
+            "SRC": ["X", "X", "X"],
+            "ORIGINAL_INDEX": [0, 1, 2],
+            "NOMBRE_LIMPIO": ["ACME", "ACME", "GLOBEX"],
+            "ID_GRUPO": [0, 0, 2],
+            "NIT_FINAL": ["9001234568", "9001234568", ""],  # 8 = DV DIAN de 900123456
+            "RAZON_SOCIAL_FINAL": ["ACME SAS", "ACME SAS", "GLOBEX"],
+            "NAME_SIMILARITY_SCORE": [1.0, 0.9, 1.0],
+            "NIT_DISTANCE": [0, 0, 0],
+        }
+    )
+    fuentes = {"X": correl[["NIT", "RAZON_SOCIAL"]]}
+    correlativa, golden, reporte = completar_correlativa(
+        correl, None, tmp_path, None, fuentes, col_nit="NIT"
+    )
+    assert golden is None
+    assert list(correlativa.columns) == [
+        *list(contrato.COLUMNAS_CORRELATIVA),
+        "NIT",
+        "RAZON_SOCIAL",
+    ]
+    assert correlativa["SCORE_PAR"].isna().all()
+    assert reporte.score_par["origen"] is None and "scored.db" in reporte.score_par["motivo"]
+    assert list(correlativa["METODO_UNION"]) == ["identificador", "identificador", "sin_pareja"]
+    assert list(correlativa["ID_REGISTRO"]) == ["X-F0", "X-F1", "X-F2"]
+    assert correlativa["ID_ENTIDAD"].iloc[0] == "NIT-900123456"
+    assert reporte.columnas_tecnicas_retiradas == ["NOMBRE_LIMPIO"]
+
+
+def _correl_dos_grupos() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "NIT": ["900123456", "9001234568", "", "900123456"],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME S.A.S.", "GLOBEX", "ACME"],
+            "SRC": ["RUES", "CRM", "CRM", "CRM"],
+            "ORIGINAL_INDEX": [0, 1, 2, 3],
+            "NIT_OK": ["9001234568", "9001234568", "", "9001234568"],
+            "ID_GRUPO": [0, 0, 2, 0],
+            "NIT_FINAL": ["9001234568", "9001234568", "", "9001234568"],
+            "RAZON_SOCIAL_FINAL": ["ACME SAS", "ACME SAS", "GLOBEX", "ACME SAS"],
+            "NAME_SIMILARITY_SCORE": [1.0, 0.9, 1.0, 0.7],
+            "NIT_DISTANCE": [0, 0, 0, 0],
+        }
+    )
+
+
+def test_completar_repara_golden_sin_metricas_y_lo_declara(tmp_path: Path) -> None:
+    """La fila fusionada por NIT llega sin métricas y con columnas pegadas (F1.1)."""
+    correl = _correl_dos_grupos()
+    golden = pd.DataFrame(
+        {
+            "ID_GRUPO": [2, 0],
+            "NIT_FINAL": ["", "9001234568"],
+            "RAZON_SOCIAL_FINAL": ["GLOBEX", "ACME SAS"],
+            "PRIMARY_SOURCE": ["CRM", None],
+            "SOURCES_LIST": ["CRM", None],
+            "SOURCES_COUNT": [1.0, np.nan],
+            "RECORD_COUNT": [1.0, np.nan],
+            "NAME_VARIATIONS": [1.0, np.nan],
+            "NIT_VARIATIONS": [1.0, np.nan],
+            "CONFIDENCE_SCORE": [1.0, np.nan],
+            "CONFIANZA": ["MEDIA", None],
+            "REQUIRES_REVIEW": [0.0, np.nan],
+            "CREATED_AT": ["2026-10-06 00:00:00", None],
+            "RAZON_SOCIAL": ["GLOBEX", "ACME SAS"],  # pegada de la correlativa
+            "SRC": ["CRM", "RUES"],
+        }
+    )
+    fuentes = {"RUES": ["NIT", "RAZON_SOCIAL"], "CRM": ["NIT", "RAZON_SOCIAL"]}
+    _, g, reporte = completar_correlativa(
+        correl, golden, tmp_path, None, fuentes, prioridad_fuentes=["RUES", "CRM"]
+    )
+    assert g is not None
+    assert list(g.columns) == list(contrato.COLUMNAS_GOLDEN)
+    assert not g[list(contrato.COLUMNAS_METRICAS_GOLDEN)].isna().any().any()
+    fila = g.set_index("ID_GRUPO").loc[0]
+    assert fila["RECORD_COUNT"] == 3 and fila["SOURCES_COUNT"] == 2
+    assert fila["SOURCES_LIST"] == "CRM|RUES" and fila["PRIMARY_SOURCE"] == "RUES"
+    assert fila["NAME_VARIATIONS"] == 3 and fila["NIT_VARIATIONS"] == 1
+    assert fila["CONFIANZA"] == "ALTA"  # NIT único y dos fuentes
+    assert fila["CONFIDENCE_SCORE"] == pytest.approx(0.5 + 0.4 / 3 + 0.1 * (2 / 3), abs=1e-4)
+    assert bool(fila["REQUIRES_REVIEW"]) is False
+    assert pd.api.types.is_bool_dtype(g["REQUIRES_REVIEW"])
+    for col in ("SOURCES_COUNT", "RECORD_COUNT", "NAME_VARIATIONS", "NIT_VARIATIONS"):
+        assert pd.api.types.is_integer_dtype(g[col]), col
+    assert reporte.golden["metricas_reparadas"]["n"] == 1
+    assert reporte.golden["metricas_reparadas"]["grupos"] == [0]
+    assert set(reporte.golden["columnas_pegadas_retiradas"]) == {"RAZON_SOCIAL", "SRC"}
+
+
+def test_completar_golden_sin_grupo_de_la_correlativa_falla(tmp_path: Path) -> None:
+    correl = _correl_dos_grupos()
+    golden = pd.DataFrame(
+        {
+            "ID_GRUPO": [2, 99],  # falta el 0; el 99 es huérfana
+            "NIT_FINAL": ["", ""],
+            "RAZON_SOCIAL_FINAL": ["GLOBEX", "NADIE"],
+            "CONFIANZA": ["MEDIA", "MEDIA"],
+        }
+    )
+    with pytest.raises(ContratoSalidaError, match="sin fila en el golden"):
+        completar_correlativa(correl, golden, tmp_path, None, {"RUES": [], "CRM": []})
+
+
+def test_metricas_de_grupo_y_calidad_misma_regla() -> None:
+    """Las funciones puras reproducen la regla del generador (vectorizada y SQL)."""
+    from record_linkage.golden.metricas import metricas_de_calidad, metricas_de_grupo
+
+    correl = _correl_dos_grupos()
+    m = metricas_de_grupo(correl, ["CRM", "RUES"])
+    assert list(m.index) == [0, 2]
+    assert m.loc[0, "PRIMARY_SOURCE"] == "CRM" and m.loc[2, "CONFIANZA"] == "MEDIA"
+    golden = pd.DataFrame(
+        {
+            "NIT_FINAL": ["9001234568", "9001234568", "12345", "9001234568"],
+            "NIT_VARIATIONS": [1, 1, 1, 4],
+            "NAME_VARIATIONS": [1, 3, 1, 1],
+            "SOURCES_COUNT": [2, 1, 1, 2],
+            "RECORD_COUNT": [2, 3, 1, 25],
+        }
+    )
+    calidad = metricas_de_calidad(golden)
+    assert list(calidad["CONFIDENCE_SCORE"]) == [
+        1.0,
+        0.85,
+        1.0,
+        round(0.1 * (2 / 3) + 0.5 / 4 + 0.4, 4),
+    ]
+    assert list(calidad["REQUIRES_REVIEW"]) == [False, False, True, True]

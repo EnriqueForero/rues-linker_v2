@@ -15,12 +15,24 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import contrato
+from .resultado import ReporteValidacion, ResultadoLinkage
+from .salida.completar import ReporteCompletar, anexar_score_par, completar_correlativa
+
 if TYPE_CHECKING:
     import pandas as pd
+
+__all__ = [
+    "ReporteValidacion",
+    "ResultadoLinkage",
+    "dedupe",
+    "dedupe_esquema",
+    "link",
+    "linkage",
+]
 
 
 def _feature_columns(extra_features: Sequence[Any] | None) -> list[str]:
@@ -266,7 +278,8 @@ def linkage(
     skip_reporting: bool | None = None,
     collapse_exact_duplicates: bool = False,
     consume_sources: bool = False,
-) -> dict[str, Any]:
+    col_id: str | None = None,
+) -> ResultadoLinkage:
     """Ejecuta deduplicación + record linkage multi-fuente en una sola llamada.
 
     Esta es la API de alto nivel recomendada. Internamente usa el `Orchestrator`
@@ -326,15 +339,27 @@ def linkage(
             debe ser un ``dict`` mutable y se vacía tras completar L1. Permite
             liberar las últimas referencias del llamador en flujos de gran
             volumen. Default False: nunca muta el diccionario de entrada.
+        col_id: columna de la fuente única por fila (p. ej. su clave
+            primaria). Si existe y es única y no vacía en una fuente,
+            ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
+            None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
+            Un nombre que no existe en ninguna fuente falla de inmediato.
 
     Returns:
-        dict con dos claves base:
-            - "golden": DataFrame con un registro por entidad única (deduplicado).
-            - "correlative": DataFrame que mapea cada registro original a su
-              ID_GRUPO.
-        Si ``return_matcher_audit=True`` y ``matching_profile`` está activo:
-            - "matcher_stats": dict con métricas de la refinación.
-            - "matcher_decisions": DataFrame con decisión por par evaluado.
+        ``ResultadoLinkage`` (contrato 1.0, ``record_linkage.contrato``), ya
+        completado por ``salida.completar`` y validado con
+        ``validar(estricto=True)``:
+            - ``correlativa``: una fila por registro de entrada; las 12
+              columnas fijas primero y después todas las de la fuente.
+            - ``golden``: una fila por entidad (13 de v1 + ``ID_ENTIDAD``).
+            - ``diccionario``, ``manifiesto`` (con ``contrato`` y el reporte
+              de ``completar``), ``metricas``, ``dir_trabajo`` (= work_dir).
+        Si ``return_matcher_audit=True`` y ``matching_profile`` está activo,
+        ``metricas`` trae "matcher_stats" y "matcher_decisions"; con
+        ``collapse_exact_duplicates``, "preprocessing"; con L6 activo,
+        "report_files". Hasta 0.22.x se devolvía un ``dict``: las claves
+        viejas (``res["correlative"]``, ``res.get("report_files")``…) siguen
+        funcionando con ``DeprecationWarning``.
 
     Ejemplo (con matcher):
         >>> from record_linkage import linkage
@@ -346,11 +371,13 @@ def linkage(
         ...     matching_profile="colombia",  # NUEVO: refinamiento multi-variable
         ...     return_matcher_audit=True,
         ... )
-        >>> print(result["matcher_stats"])  # cuántos clusters se separaron
-        >>> result["correlative"].to_parquet("correlativa.parquet")
+        >>> print(result.metricas["matcher_stats"])  # cuántos clusters se separaron
+        >>> result.correlativa.to_parquet("correlativa.parquet")
 
     Ejemplo (sin matcher):
-        >>> result = linkage(sources={"RUES": df})  # mismo comportamiento que antes
+        >>> result = linkage(sources={"RUES": df})  # mismo motor que antes
+        >>> result.validar().ok
+        True
 
     Nota sobre calidad medida (ground truth sintético):
         Las cifras del docstring previas (F1 ≈ 0.875) NO eran trazables.
@@ -378,17 +405,46 @@ def linkage(
     )
 
     source_order = list(sources)
+    # Un ``set`` no tiene orden estable entre procesos. Ordenar por el orden
+    # efectivo de las fuentes mantiene deterministas la configuración y las
+    # huellas de checkpoint sin cambiar la semántica del parámetro.
+    trusted = _ordered_trusted_sources(source_order, trusted_sources)
+
+    # El manifiesto y la lista de columnas de cada fuente se toman ANTES de
+    # colapsar duplicados o ceder la propiedad (consume_sources vacía los
+    # DataFrames tras L1): el contrato se valida contra la entrada real.
+    manifiesto = _manifiesto(
+        "linkage",
+        {
+            "fuentes": source_order,
+            "trusted_sources": trusted,
+            "col_name": col_name,
+            "col_nit": col_nit,
+            "col_ciudad": col_ciudad,
+            "col_id": col_id,
+            "extra_features": extra_features,
+            "profile": profile,
+            "ajustes_perfil": ajustes_perfil,
+            "matching_profile": str(matching_profile) if matching_profile else None,
+            "matcher_max_pairs": matcher_max_pairs,
+            "skip_reporting": skip_reporting,
+            "collapse_exact_duplicates": collapse_exact_duplicates,
+        },
+        sources,
+    )
+    columnas_por_fuente: dict[str, list[str]] = {
+        nombre: [str(c) for c in frame.columns] for nombre, frame in sources.items()
+    }
+    canonicos = {col_name: "RAZON_SOCIAL", col_nit: "NIT"}
+    if col_ciudad:
+        canonicos[col_ciudad] = "CIUDAD"
+
     collapse_plan: dict[str, Any] | None = None
     if collapse_exact_duplicates:
         sources, collapse_plan = _collapse_exact_sources(sources)
 
     if work_dir is None:
         work_dir = tempfile.mkdtemp(prefix="rues_linker_")
-
-    # Un ``set`` no tiene orden estable entre procesos. Ordenar por el orden
-    # efectivo de las fuentes mantiene deterministas la configuración y las
-    # huellas de checkpoint sin cambiar la semántica del parámetro.
-    trusted = _ordered_trusted_sources(source_order, trusted_sources)
 
     # v0.12.0: col_name/col_nit/col_ciudad/extra_features son parámetros de
     # primera clase de crear_config_orchestrator (hasta 0.11.x viajaban como
@@ -514,6 +570,11 @@ def linkage(
             result["matcher_stats"] = postproc.last_stats
             result["matcher_decisions"] = postproc.decisions_log
 
+    # SCORE_PAR se lee de scored.db por posición de L1 (= ORIGINAL_INDEX).
+    # Debe ir ANTES de expandir los duplicados exactos colapsados: después,
+    # ORIGINAL_INDEX ya no es la posición con la que se puntuaron los pares.
+    result["correlative"], info_score_par = anexar_score_par(result["correlative"], Path(work_dir))
+
     if collapse_plan is not None:
         result["correlative"] = _expand_exact_correlative(
             result["correlative"], source_order, collapse_plan
@@ -534,7 +595,69 @@ def linkage(
         report_files, _ = orchestrator._run_L6(result)
         result["report_files"] = report_files
 
-    return result
+    # ── Contrato de salida 1.0 (F1.9) ─────────────────────────────────────
+    correlativa, golden, reporte = completar_correlativa(
+        result["correlative"],
+        result["golden"],
+        Path(work_dir),
+        col_id,
+        columnas_por_fuente,
+        col_nit="NIT",
+        canonicos=canonicos,
+        score_par_previo=info_score_par,
+        prioridad_fuentes=list(orchestrator.profile.get("source_quality_weights", {}).keys())
+        or source_order,
+    )
+    metricas: dict[str, Any] = {
+        "n_registros": len(correlativa),
+        "n_grupos": int(correlativa["ID_GRUPO"].nunique()),
+        "n_fuentes": len(source_order),
+    }
+    for clave in ("report_files", "preprocessing", "ingestion_reports", "matcher_stats"):
+        if clave in result:
+            metricas[clave] = result[clave]
+    if "matcher_decisions" in result:
+        metricas["matcher_decisions"] = result["matcher_decisions"]
+    return _armar_resultado(
+        correlativa, golden, metricas, manifiesto, reporte, Path(work_dir), source_order
+    )
+
+
+def _armar_resultado(
+    correlativa: pd.DataFrame,
+    golden: pd.DataFrame | None,
+    metricas: dict[str, Any],
+    manifiesto: dict[str, Any],
+    reporte: ReporteCompletar,
+    dir_trabajo: Path,
+    fuentes: Sequence[str],
+) -> ResultadoLinkage:
+    """Ensambla el ``ResultadoLinkage`` del contrato y lo valida (estricto)."""
+    manifiesto["contrato"] = {"version": contrato.VERSION_CONTRATO}
+    manifiesto["completar"] = reporte.a_dict()
+    manifiesto["dir_trabajo"] = str(dir_trabajo)
+    manifiesto["columnas_tecnicas"] = {
+        "retiradas_del_entregable": list(reporte.columnas_tecnicas_retiradas),
+        "quedan_en": str(dir_trabajo),
+    }
+    revision = contrato.revision_vacia()
+    diccionario = contrato.diccionario(
+        {"correlativa": correlativa, "golden": golden, "enlaces": None, "revision": revision},
+        columnas_fuente=reporte.columnas_fuente,
+        renombres=reporte.renombres,
+    )
+    resultado = ResultadoLinkage(
+        correlativa=correlativa,
+        golden=golden,
+        metricas=metricas,
+        manifiesto=manifiesto,
+        enlaces=None,
+        revision=revision,
+        diccionario=diccionario,
+        dir_trabajo=dir_trabajo,
+    )
+    resultado.validar(estricto=True)
+    return resultado
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -543,36 +666,6 @@ def linkage(
 
 #: Semilla global del pipeline (determinismo contractual, ver F0.6).
 _SEED_GLOBAL = 42
-
-
-@dataclass
-class ResultadoLinkage:
-    """Resultado tipado de la fachada (F1.5): datos + métricas + trazabilidad.
-
-    Attributes:
-        correlativa: mapeo registro→ID_GRUPO (una fila por registro de entrada).
-        golden: un registro canónico por entidad, o None si la ruta no lo
-            produce en memoria (``dedupe`` los escribe por régimen en
-            ``metricas['output_dir']``).
-        metricas: conteos de la corrida y estadísticas del pipeline.
-        manifiesto: trazabilidad total — función, timestamp UTC, seed,
-            parámetros y su hash, huella de cada insumo, versiones del entorno.
-    """
-
-    correlativa: pd.DataFrame
-    golden: pd.DataFrame | None
-    metricas: dict[str, Any]
-    manifiesto: dict[str, Any]
-
-    def resumen(self) -> str:
-        """Resumen humano de una línea (para logs y actas)."""
-        m, man = self.metricas, self.manifiesto
-        return (
-            f"{man.get('funcion', '?')}: {m.get('n_registros', '?')} registros "
-            f"→ {m.get('n_grupos', '?')} grupos únicos "
-            f"(rues-linker {man.get('versiones', {}).get('rues-linker', '?')}, "
-            f"hash_parametros {man.get('hash_parametros', '?')})"
-        )
 
 
 def _huella_dataset(df: pd.DataFrame) -> str:
@@ -602,28 +695,37 @@ def _versiones_entorno() -> dict[str, str]:
 def _manifiesto(
     funcion: str,
     parametros: dict[str, Any],
-    entradas: dict[str, pd.DataFrame],
+    entradas: Mapping[str, pd.DataFrame],
+    *,
+    entradas_listas: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Manifiesto de corrida (F1.5): qué corrió, con qué parámetros, sobre qué."""
+    """Manifiesto de corrida (F1.5): qué corrió, con qué parámetros, sobre qué.
+
+    ``entradas_listas`` permite reutilizar las huellas ya calculadas por una
+    llamada interna (``link`` → ``linkage``) en vez de volver a leer millones
+    de filas para el mismo hash.
+    """
     from datetime import datetime, timezone
 
     hash_par = hashlib.sha256(
         json.dumps(parametros, sort_keys=True, default=str).encode()
     ).hexdigest()[:16]
-    return {
-        "funcion": funcion,
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "seed": _SEED_GLOBAL,
-        "parametros": parametros,
-        "hash_parametros": hash_par,
-        "entradas": {
+    if entradas_listas is None:
+        entradas_listas = {
             nombre: {
                 "filas": len(d),
                 "columnas": list(d.columns),
                 "huella": _huella_dataset(d),
             }
             for nombre, d in entradas.items()
-        },
+        }
+    return {
+        "funcion": funcion,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "seed": _SEED_GLOBAL,
+        "parametros": parametros,
+        "hash_parametros": hash_par,
+        "entradas": entradas_listas,
         "versiones": _versiones_entorno(),
     }
 
@@ -670,13 +772,19 @@ def dedupe(
     profile_con_nit: str | None = None,
     profile_sin_nit: str | None = None,
     output_dir: str | None = None,
+    col_id: str | None = None,
 ) -> ResultadoLinkage:
     """Deduplica UNA tabla por la ruta canónica de producción (F1.1).
 
     Envuelve `deduplicate_auto` (enrutamiento CON_NIT/SIN_NIT con perfiles
     validados; baseline v0_9_0 y canario de percolación la protegen) sin
-    transformar los datos: la correlativa es bit a bit idéntica a la de la
-    ruta directa (paridad verificada sobre el GT de 12.427, CHANGELOG 0.9.0).
+    transformar las decisiones del motor: la partición (``ID_GRUPO``), la
+    identidad adoptada y las métricas por fila son las de la ruta directa
+    (paridad verificada sobre el GT de 12.427, CHANGELOG 0.9.0). Desde F1.9
+    la correlativa se COMPLETA al contrato 1.0 (``salida.completar``): se
+    añaden ``ID_REGISTRO``, ``ID_ENTIDAD``, ``METODO_UNION`` y las columnas
+    fijas van primero; las técnicas (``NOMBRE_LIMPIO``, ``NIT_OK``…) salen del
+    entregable y quedan en ``output_dir/<regimen>/``.
 
     Args:
         df: tabla con al menos ``col_nit`` y ``col_name``.
@@ -688,10 +796,18 @@ def dedupe(
         profile_sin_nit: ídem para SIN_NIT.
         output_dir: carpeta de salida (reportes y golden por régimen). None →
             temporal; la ruta queda en ``metricas['output_dir']``.
+        col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
 
     Returns:
-        ResultadoLinkage. ``golden`` es None aquí: los golden y reportes por
-        régimen quedan escritos en ``metricas['output_dir']``.
+        ResultadoLinkage (contrato 1.0). ``golden`` es None aquí: esta ruta
+        no lo produce en memoria; los golden y reportes por régimen quedan
+        escritos en ``metricas['output_dir']``. Consecuencias documentadas en
+        el manifiesto (``completar``): ``CONFIANZA`` queda nula (es la del
+        golden), ``SCORE_PAR`` queda nulo (esta ruta no deja
+        ``L3_scoring/scored.db``) e ``ID_GRUPO`` se recodifica de las
+        etiquetas ``C<n>``/``S<n>`` por régimen a entero por orden de primera
+        aparición (determinista por contenido); ``REGIMEN_AUTO`` sigue
+        diciendo por qué ruta pasó cada registro.
 
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué
@@ -742,10 +858,22 @@ def dedupe(
             "mode": mode,
             "profile_con_nit": profile_con_nit,
             "profile_sin_nit": profile_sin_nit,
+            "col_id": col_id,
         },
         {"df": df},
     )
-    return ResultadoLinkage(correlativa=corr, golden=None, metricas=metricas, manifiesto=manifiesto)
+    correlativa, _, reporte = completar_correlativa(
+        corr,
+        None,
+        Path(output_dir),
+        col_id,
+        {"df": [str(c) for c in df.columns]},
+        col_nit=col_nit,
+        canonicos={col_name: "RAZON_SOCIAL", col_nit: "NIT"},
+    )
+    return _armar_resultado(
+        correlativa, None, metricas, manifiesto, reporte, Path(output_dir), ["df"]
+    )
 
 
 def link(
@@ -765,6 +893,7 @@ def link(
     matcher_max_pairs: int | None = 5_000_000,
     skip_reporting: bool | None = None,
     collapse_exact_duplicates: bool = False,
+    col_id: str | None = None,
 ) -> ResultadoLinkage:
     """Cruza DOS tablas (record linkage A↔B) sobre el Orchestrator (F1.1).
 
@@ -781,11 +910,13 @@ def link(
         profile: plantilla del Orchestrator (``PERFILES_BASE``).
         matching_profile: refinamiento multi-variable opcional (ver linkage()).
         work_dir: carpeta de trabajo; None → temporal.
+        col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
 
     Returns:
-        ResultadoLinkage con ``golden`` multi-fuente y, en ``metricas``:
-        ``n_grupos_cruzados`` (entidades presentes en AMBAS tablas) y
-        ``n_pares_a_b`` (pares registro-a-registro implicados).
+        ResultadoLinkage (contrato 1.0, el mismo objeto completado y validado
+        que devuelve ``linkage``) con ``golden`` multi-fuente y, en
+        ``metricas``: ``n_grupos_cruzados`` (entidades presentes en AMBAS
+        tablas) y ``n_pares_a_b`` (pares registro-a-registro implicados).
 
     Ejemplo:
         >>> res = rl.link(df_rues, df_aduanas, nombre_a="RUES",
@@ -817,8 +948,9 @@ def link(
         matcher_max_pairs=matcher_max_pairs,
         skip_reporting=skip_reporting,
         collapse_exact_duplicates=collapse_exact_duplicates,
+        col_id=col_id,
     )
-    corr = res["correlative"]
+    corr = res.correlativa
 
     conteos = (
         corr.groupby(["ID_GRUPO", "SRC"]).size().unstack(fill_value=0)
@@ -839,8 +971,11 @@ def link(
         "n_grupos": int(corr["ID_GRUPO"].nunique()),
         "n_grupos_cruzados": n_cruzados,
         "n_pares_a_b": n_pares,
-        "report_files": res.get("report_files"),
+        "report_files": res.metricas.get("report_files"),
     }
+    for clave in ("preprocessing", "ingestion_reports", "matcher_stats", "matcher_decisions"):
+        if clave in res.metricas:
+            metricas[clave] = res.metricas[clave]
     manifiesto = _manifiesto(
         "link",
         {
@@ -850,19 +985,22 @@ def link(
             "col_nit": col_nit,
             "col_name": col_name,
             "col_ciudad": col_ciudad,
+            "col_id": col_id,
             "extra_features": extra_features,
             "profile": profile,
             "matching_profile": str(matching_profile) if matching_profile else None,
             "collapse_exact_duplicates": collapse_exact_duplicates,
         },
         {nombre_a: df_a, nombre_b: df_b},
+        entradas_listas=res.manifiesto["entradas"],
     )
-    return ResultadoLinkage(
-        correlativa=corr,
-        golden=res.get("golden"),
-        metricas=metricas,
-        manifiesto=manifiesto,
-    )
+    # El contrato ya se completó y validó en linkage(); aquí solo cambian la
+    # función, los parámetros y las métricas de cruce.
+    for clave in ("contrato", "completar", "dir_trabajo", "columnas_tecnicas"):
+        manifiesto[clave] = res.manifiesto[clave]
+    res.metricas = metricas
+    res.manifiesto = manifiesto
+    return res
 
 
 # ═══════════════════════════════════════════════════════════════════════════

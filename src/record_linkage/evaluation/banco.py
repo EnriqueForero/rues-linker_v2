@@ -626,7 +626,7 @@ def correr_banco(espec: EspecificacionBanco, *, silencioso: bool = True) -> Corr
         )
     segundos = time.perf_counter() - t0
 
-    correlativa = salida["correlative"].sort_values("ORIGINAL_INDEX").reset_index(drop=True)
+    correlativa = salida.correlativa.sort_values("ORIGINAL_INDEX").reset_index(drop=True)
     if len(correlativa) != len(referencia):
         raise RuntimeError(
             f"la correlativa trae {len(correlativa):,} filas y la referencia "

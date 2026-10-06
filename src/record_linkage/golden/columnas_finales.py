@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .. import contrato as _contrato
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -66,15 +68,13 @@ __all__ = [
     "garantizar_columnas_finales",
 ]
 
-#: Identidad que el grupo adopta. Es el resultado de negocio del cruce.
-COLUMNAS_IDENTIDAD: tuple[str, ...] = ("NIT_FINAL", "RAZON_SOCIAL_FINAL")
-
-#: Trazabilidad de cada fila frente a la identidad adoptada. Sin esto, una
-#: revisión humana tiene que reconstruir a mano por qué se unió cada fila.
-COLUMNAS_DIAGNOSTICO: tuple[str, ...] = ("NAME_SIMILARITY_SCORE", "NIT_DISTANCE")
-
-#: El contrato completo de salida de la correlativa.
-COLUMNAS_FINALES: tuple[str, ...] = COLUMNAS_IDENTIDAD + COLUMNAS_DIAGNOSTICO
+#: Identidad que el grupo adopta, trazabilidad por fila y su unión. Desde
+#: F1.9 viven en ``record_linkage.contrato`` (una regla escrita una vez; el
+#: contrato no importa de aquí, para no crear ciclos) y este módulo las
+#: re-exporta con sus nombres históricos.
+COLUMNAS_IDENTIDAD: tuple[str, ...] = _contrato.COLUMNAS_IDENTIDAD
+COLUMNAS_DIAGNOSTICO: tuple[str, ...] = _contrato.COLUMNAS_DIAGNOSTICO
+COLUMNAS_FINALES: tuple[str, ...] = _contrato.COLUMNAS_FINALES
 
 
 @dataclass(frozen=True)

@@ -304,10 +304,145 @@
     }
   },
   "resultado": {
+    "tipo": "ResultadoLinkage",
     "claves": [
       "correlative",
       "golden",
       "report_files"
-    ]
+    ],
+    "correlativa": {
+      "filas": 28,
+      "columnas": [
+        {
+          "nombre": "ID_REGISTRO",
+          "tipo": "str"
+        },
+        {
+          "nombre": "SRC",
+          "tipo": "str"
+        },
+        {
+          "nombre": "ORIGINAL_INDEX",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "ID_GRUPO",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "ID_ENTIDAD",
+          "tipo": "str"
+        },
+        {
+          "nombre": "NIT_FINAL",
+          "tipo": "str"
+        },
+        {
+          "nombre": "RAZON_SOCIAL_FINAL",
+          "tipo": "str"
+        },
+        {
+          "nombre": "NAME_SIMILARITY_SCORE",
+          "tipo": "float64"
+        },
+        {
+          "nombre": "NIT_DISTANCE",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "SCORE_PAR",
+          "tipo": "float64"
+        },
+        {
+          "nombre": "METODO_UNION",
+          "tipo": "str"
+        },
+        {
+          "nombre": "CONFIANZA",
+          "tipo": "str"
+        },
+        {
+          "nombre": "NIT",
+          "tipo": "str"
+        },
+        {
+          "nombre": "RAZON_SOCIAL",
+          "tipo": "str"
+        },
+        {
+          "nombre": "CIUDAD",
+          "tipo": "str"
+        },
+        {
+          "nombre": "TELEFONO",
+          "tipo": "str"
+        },
+        {
+          "nombre": "ID_GROUP",
+          "tipo": "str"
+        }
+      ]
+    },
+    "golden": {
+      "filas": 17,
+      "columnas": [
+        {
+          "nombre": "ID_GRUPO",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "NIT_FINAL",
+          "tipo": "str"
+        },
+        {
+          "nombre": "RAZON_SOCIAL_FINAL",
+          "tipo": "str"
+        },
+        {
+          "nombre": "PRIMARY_SOURCE",
+          "tipo": "str"
+        },
+        {
+          "nombre": "SOURCES_LIST",
+          "tipo": "str"
+        },
+        {
+          "nombre": "SOURCES_COUNT",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "RECORD_COUNT",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "NAME_VARIATIONS",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "NIT_VARIATIONS",
+          "tipo": "int64"
+        },
+        {
+          "nombre": "CONFIDENCE_SCORE",
+          "tipo": "float64"
+        },
+        {
+          "nombre": "CONFIANZA",
+          "tipo": "str"
+        },
+        {
+          "nombre": "REQUIRES_REVIEW",
+          "tipo": "bool"
+        },
+        {
+          "nombre": "CREATED_AT",
+          "tipo": "str"
+        },
+        {
+          "nombre": "ID_ENTIDAD",
+          "tipo": "str"
+        }
+      ]
+    }
   }
 }
