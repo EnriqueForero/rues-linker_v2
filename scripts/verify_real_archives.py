@@ -5,6 +5,12 @@ La prueba usa únicamente disco local, proyecta las dos columnas necesarias,
 colapsa filas exactas antes del enlace y restaura una fila correlativa por
 registro de entrada. Las métricas de NIT son *proxies de consistencia*, no una
 estimación de precision/recall: los archivos no incluyen etiquetas humanas.
+
+Desde F1.9 ``linkage()`` devuelve ``ResultadoLinkage`` y la correlativa
+entregada no trae ``NIT_BASE``: se recupera de
+``<dir_trabajo>/L5_golden/correlative.parquet`` con
+``salida.tecnicas.adjuntar_tecnicas`` (alineada por contenido, porque el
+colapso renumera ``ORIGINAL_INDEX``); el JSON dice de dónde salió.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ import pandas as pd
 import psutil
 
 from record_linkage import ColumnType, SourceSpec, linkage, load_source
+from record_linkage.salida.tecnicas import adjuntar_tecnicas
 from record_linkage.utils.memory import get_process_rss_bytes
 
 
@@ -127,11 +134,15 @@ def _correlative_with_expected_nit(
 def _nit_consistency_proxies(mapped: pd.DataFrame) -> dict[str, Any]:
     # RUES entrega principalmente la base de 9 dígitos, mientras la fuente de
     # exportaciones incluye el DV como décimo dígito. Comparar las cadenas de
-    # entrada marcaría como conflicto cada coincidencia correcta. El pipeline
-    # conserva NIT_BASE ya normalizado por AdvancedNitProcessor; ese es el
-    # dominio comparable entre fuentes.
+    # entrada marcaría como conflicto cada coincidencia correcta. NIT_BASE es
+    # la base normalizada por AdvancedNitProcessor (L1); ese es el dominio
+    # comparable entre fuentes. Desde F1.9 no viaja en el entregable: hay que
+    # pegarla antes (verify() lo hace con adjuntar_tecnicas).
     if "NIT_BASE" not in mapped.columns:
-        raise AssertionError("La correlativa no contiene NIT_BASE canónico.")
+        raise AssertionError(
+            "La correlativa no trae NIT_BASE: péguela desde el dir_trabajo con "
+            "salida.tecnicas.adjuntar_tecnicas antes de calcular los proxies."
+        )
     valid = mapped.dropna(subset=["NIT_BASE"]).copy()
     valid["CANONICAL_NIT_BASE"] = valid["NIT_BASE"].astype("string")
     valid = valid.loc[valid["CANONICAL_NIT_BASE"].str.len().fillna(0) > 0]
@@ -225,8 +236,11 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         )
         linkage_seconds = time.perf_counter() - linkage_started
 
-        correlative = result["correlative"]
-        golden = result["golden"]
+        golden = result.golden
+        # NIT_BASE salió del entregable (F1.9); vuelve del checkpoint de L5.
+        correlative, tecnicas = adjuntar_tecnicas(
+            result.correlativa, result.dir_trabajo, ("NIT_BASE",)
+        )
         expected_rows = sum(len(frame) for frame in frames.values())
         if len(correlative) != expected_rows:
             raise AssertionError(
@@ -248,8 +262,9 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
 
         mapped = _correlative_with_expected_nit(frames, correlative)
         proxies = _nit_consistency_proxies(mapped)
+        proxies["canonical_nit_source"] = tecnicas.a_dict()
 
-    collapse = result["preprocessing"]["exact_duplicate_collapse"]
+    collapse = result.metricas["preprocessing"]["exact_duplicate_collapse"]
     reports = {
         name: {
             "rows": report.rows,
@@ -268,7 +283,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
             "processed_rows": collapse[name]["processed_rows"],
             "collapsed_rows": collapse[name]["collapsed_rows"],
         }
-        for name, report in (item for item in result["ingestion_reports"].items())
+        for name, report in result.metricas["ingestion_reports"].items()
     }
     return {
         "status": "PASS",

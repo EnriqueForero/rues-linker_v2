@@ -15,6 +15,12 @@ Metodología (idéntica al smoke E2E previo):
 
 NO usa pre-filtrado de pares. NO mide sobre subsets. Es el flujo completo
 que un usuario de producción usaría.
+
+Desde F1.9 ``linkage()`` devuelve ``ResultadoLinkage`` (``.golden``,
+``.correlativa``, ``.metricas``) y escribe su propio ``ID_REGISTRO``
+(``<SRC>-…``): el ``ID_REGISTRO`` del ground truth, que viaja como columna de
+la fuente, queda en la correlativa como ``ID_REGISTRO_FUENTE`` y es por esa
+columna por la que se cruza.
 """
 
 from __future__ import annotations
@@ -32,6 +38,8 @@ import pandas as pd
 GT_CSV = Path("/mnt/user-data/uploads/1779568140371_2026-05-23_B04_-_ground_truth_grande.csv")
 WORK_BASELINE = Path("/tmp/bench_baseline")
 WORK_MATCHER = Path("/tmp/bench_matcher")
+#: Nombre con el que el contrato conserva el ``ID_REGISTRO`` de la fuente.
+COLUMNA_ID_FUENTE = "ID_REGISTRO_FUENTE"
 
 
 def load_sources() -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
@@ -56,6 +64,28 @@ def build_pairs_from_clusters(merged: pd.DataFrame, group_col: str) -> set[froze
             for a, b in combinations(sorted(ids), 2):
                 pairs.add(frozenset((a, b)))
     return pairs
+
+
+def pares_predichos(gt: pd.DataFrame, correlativa: pd.DataFrame) -> set[frozenset[str]]:
+    """Pares intra-grupo predichos, cruzando el GT con la correlativa del contrato.
+
+    Raises:
+        KeyError: si la correlativa no trae ``ID_REGISTRO_FUENTE`` (la fuente
+            no llevaba ``ID_REGISTRO``, o el renombre del contrato cambió).
+    """
+    if COLUMNA_ID_FUENTE not in correlativa.columns:
+        raise KeyError(
+            f"Qué pasó: la correlativa no trae {COLUMNA_ID_FUENTE}. Por qué importa: "
+            f"ID_REGISTRO es el del contrato (<SRC>-…) y no cruza con el GT; sin la "
+            f"columna de la fuente las métricas serían 0 en silencio. Qué hacer: pase "
+            f"ID_REGISTRO en las fuentes y revise manifiesto['completar']['renombres']."
+        )
+    grupos = correlativa[[COLUMNA_ID_FUENTE, "ID_GRUPO"]].rename(
+        columns={COLUMNA_ID_FUENTE: "ID_REGISTRO"}
+    )
+    merged = gt.merge(grupos, on="ID_REGISTRO", how="left").dropna(subset=["ID_GRUPO"])
+    merged["ID_GRUPO"] = merged["ID_GRUPO"].astype(int)
+    return build_pairs_from_clusters(merged, "ID_GRUPO")
 
 
 def metrics(truth: set, pred: set) -> dict[str, float]:
@@ -121,9 +151,9 @@ def run_benchmark() -> dict:
     t_baseline = time.time() - t0
     print(f"      Completado en {t_baseline:.1f}s")
     print(
-        f"      Golden: {len(result_baseline['golden']):,} | "
-        f"Correlativa: {len(result_baseline['correlative']):,} | "
-        f"Clusters: {result_baseline['correlative']['ID_GRUPO'].nunique():,}"
+        f"      Golden: {len(result_baseline.golden):,} | "
+        f"Correlativa: {len(result_baseline.correlativa):,} | "
+        f"Clusters: {result_baseline.correlativa['ID_GRUPO'].nunique():,}"
     )
     print()
 
@@ -149,12 +179,13 @@ def run_benchmark() -> dict:
     t_matcher = time.time() - t0
     print(f"      Completado en {t_matcher:.1f}s")
     print(
-        f"      Golden: {len(result_matcher['golden']):,} | "
-        f"Correlativa: {len(result_matcher['correlative']):,} | "
-        f"Clusters: {result_matcher['correlative']['ID_GRUPO'].nunique():,}"
+        f"      Golden: {len(result_matcher.golden):,} | "
+        f"Correlativa: {len(result_matcher.correlativa):,} | "
+        f"Clusters: {result_matcher.correlativa['ID_GRUPO'].nunique():,}"
     )
-    if "matcher_stats" in result_matcher:
-        s = result_matcher["matcher_stats"]
+    matcher_stats = result_matcher.metricas.get("matcher_stats")
+    if matcher_stats is not None:
+        s = matcher_stats
         print(
             f"      Matcher: {s['n_pairs_evaluated']:,} pares evaluados → "
             f"{s['n_separated']:,} separados, {s['n_kept']:,} mantenidos"
@@ -171,22 +202,9 @@ def run_benchmark() -> dict:
             for a, b in combinations(sorted(ids), 2):
                 truth_pairs.add(frozenset((a, b)))
 
-    # Predicted pairs (baseline y matcher)
-    merged_b = gt.merge(
-        result_baseline["correlative"][["ID_REGISTRO", "ID_GRUPO"]],
-        on="ID_REGISTRO",
-        how="left",
-    ).dropna(subset=["ID_GRUPO"])
-    merged_b["ID_GRUPO"] = merged_b["ID_GRUPO"].astype(int)
-    pred_baseline = build_pairs_from_clusters(merged_b, "ID_GRUPO")
-
-    merged_m = gt.merge(
-        result_matcher["correlative"][["ID_REGISTRO", "ID_GRUPO"]],
-        on="ID_REGISTRO",
-        how="left",
-    ).dropna(subset=["ID_GRUPO"])
-    merged_m["ID_GRUPO"] = merged_m["ID_GRUPO"].astype(int)
-    pred_matcher = build_pairs_from_clusters(merged_m, "ID_GRUPO")
+    # Predicted pairs (baseline y matcher), por el ID_REGISTRO de la fuente.
+    pred_baseline = pares_predichos(gt, result_baseline.correlativa)
+    pred_matcher = pares_predichos(gt, result_matcher.correlativa)
 
     print("=" * 80)
     print("MÉTRICAS PAIRWISE (E2E real)")
@@ -242,7 +260,7 @@ def run_benchmark() -> dict:
             "tiempo_seg": round(t_matcher, 1),
             "metricas_global": m_m,
             "metricas_por_regimen": reg_m,
-            "matcher_stats": result_matcher.get("matcher_stats"),
+            "matcher_stats": matcher_stats,
         },
     }
     out_path = Path(__file__).parent.parent / "benchmark_e2e_report.json"

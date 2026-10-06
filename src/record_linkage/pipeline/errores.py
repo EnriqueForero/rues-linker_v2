@@ -444,3 +444,14 @@ class ContratoSalidaError(ErrorPipeline):
                 "corrija las columnas que se listan.",
             )
         )
+
+
+class ColumnasTecnicasError(ErrorPipeline):
+    """No se pudieron recuperar las columnas técnicas que el contrato retiró.
+
+    Desde F1.9 ``NIT_BASE``, ``NIT_VALID``, ``NIT_OK``, ``NOMBRE_LIMPIO``… no
+    viajan en la correlativa entregada: quedan en el checkpoint de L5 del
+    ``dir_trabajo``. :mod:`record_linkage.salida.tecnicas` las vuelve a pegar
+    y levanta esto cuando no hay de dónde (sin ``dir_trabajo``, sin parquet,
+    sin la columna pedida) o cuando no puede alinearlas sin adivinar.
+    """
