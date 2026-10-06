@@ -161,7 +161,7 @@
       },
       {
         "nombre": "REQUIRES_REVIEW",
-        "tipo": "int64"
+        "tipo": "bool"
       },
       {
         "nombre": "CREATED_AT",

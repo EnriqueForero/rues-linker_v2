@@ -150,3 +150,12 @@ class MuestreoReportesError(ErrorPipeline):
                 ),
             )
         )
+
+
+class GoldenSinTiparError(ErrorPipeline):
+    """Una métrica del golden no admite el tipo del contrato (nulos o valores ajenos).
+
+    Lo levanta :func:`record_linkage.golden.tipos.tipar_golden` en modo
+    estricto: un conteo con nulos o un ``REQUIRES_REVIEW`` que no es 0/1 no se
+    puede convertir a ``int64``/``bool`` sin inventar un valor.
+    """

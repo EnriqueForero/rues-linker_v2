@@ -33,6 +33,7 @@ from ..evaluation.banco import _contar_filas_sqlite
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
 from ..golden.metricas import verificar_golden
+from ..golden.tipos import tipar_golden
 from ..processing.dtypes import optimizar_dtypes_categoricos
 from ..reporting.strategies import (
     BaseReportingStrategy,
@@ -1824,6 +1825,13 @@ class Orchestrator:
         # un golden con métricas nulas o columnas de la correlativa no se
         # degrada a «resultados directos», detiene la corrida.
         verificar_golden(golden_final, correl_final.columns)
+
+        # F1.14: el golden sale del generador ya tipado, pero la consolidación
+        # por NIT reconstruye filas y puede devolver 0/1 u object donde el
+        # contrato promete bool, o float donde promete int64. Tolerante a
+        # propósito: una métrica con nulos (las filas huérfanas que cierra
+        # F1.1) se deja como viene y se advierte; no se inventa un valor.
+        golden_final = tipar_golden(golden_final, estricto=False, registrador=self.log)
 
         # Guardar resultados
         golden_final.to_parquet(out_gold, index=False)
