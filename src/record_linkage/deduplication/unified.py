@@ -3,6 +3,7 @@ deduplication.unified — record_linkage_pipeline
 
 Componentes:
     - function deduplicate_unified  (origen: notebook celda [153])
+    - function rutas_salida  (F2.10)
     - function _build_deduplication_config  (origen: notebook celda [153])
     - function _prepare_for_deduplication  (origen: notebook celda [153])
     - function _generate_non_trivial_connections  (origen: notebook celda [153])
@@ -10,22 +11,103 @@ Componentes:
 NOTA: Lógica de negocio preservada exactamente como en el notebook
 fuente. Solo se agregan imports, docstring de módulo y se eliminan
 directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+
+F2.10 — contrato corregido y salidas por el escritor único
+----------------------------------------------------------
+* El retorno es ``(correlativa, conexiones)``: dos DataFrames. El docstring
+  decía ``(tabla_correlativa, estadisticas)`` y ``deduplicate_auto`` se lo
+  creyó hasta F1.13 (expandía el DataFrame de conexiones como si fuera un
+  dict de estadísticas). ``deduplicate_unified`` se conserva mientras
+  ``dedupe()`` sea la ruta por régimen (17 archivos de prueba, 8 scripts).
+* Las salidas en ``output_dir`` ya no las escribe ``SmartExporter`` con los
+  nombres de v1 (``correlativa_unificada.parquet``,
+  ``conexiones_no_triviales.parquet``): las escribe la primitiva del escritor
+  único (``exporters.escritor.escribir_parquet``, determinista) como
+  ``correlativa.parquet`` + ``conexiones.parquet`` (``rutas_salida``).
+  ``conexiones`` es tabla del contrato (``contrato.CONEXIONES``) y su parquet
+  lleva los tipos y el metadato ``contrato``; ``correlativa.parquet`` es la
+  tabla de TRABAJO del motor (antes de ``salida.completar``: sin
+  ``ID_REGISTRO``, ``ID_ENTIDAD``…, con las técnicas) y por eso NO lleva el
+  metadato: no tiene la forma del estándar. La correlativa del estándar la
+  entrega ``dedupe()`` y la escribe ``escribir_resultado``.
 """
 
 from __future__ import annotations
 
-import os
 import time
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from ..exporters.smart import SmartExporter
+from .. import contrato
+from ..exporters.escritor import escribir_parquet
 from ..pipeline._internal import DEDUPLICATION_PROFILES
+from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ..pipeline.linkage_pipeline import RecordLinkagePipeline
 from ..processing.nit import AdvancedNitProcessor
 from ..processing.text import EnhancedTextProcessor
 from ..utils.logger import setup_logger
+
+#: Nombres de las dos salidas que ``deduplicate_unified`` deja en ``output_dir``
+#: (los del estándar; antes ``correlativa_unificada`` y ``conexiones_no_triviales``).
+NOMBRE_CORRELATIVA = "correlativa.parquet"
+NOMBRE_CONEXIONES = "conexiones.parquet"
+
+
+def rutas_salida(output_dir: Path | str) -> dict[str, Path]:
+    """Dónde deja ``deduplicate_unified`` sus dos tablas en ``output_dir``.
+
+    Es la única definición de esas rutas: ``deduplicate_auto`` las publica en
+    sus estadísticas (y por él ``dedupe()`` en el manifiesto) y
+    ``salida.tecnicas`` las nombra en sus mensajes.
+    """
+    base = Path(output_dir)
+    return {"correlativa": base / NOMBRE_CORRELATIVA, "conexiones": base / NOMBRE_CONEXIONES}
+
+
+MOTORES_LSH = ("default", "disk_based")
+
+
+@dataclass(frozen=True)
+class AjustesDeduplicacion:
+    """Ajustes puntuales sobre la configuración que arma ``deduplicate_unified``.
+
+    F2.9: los scripts de calibración (``medir_con_ground_truth``,
+    ``replicar_v2_8_0``) y la prueba del camino en disco construían
+    ``RecordLinkagePipeline`` a mano solo para forzar el motor o una perilla
+    del perfil. Esta clase es esa perilla, en la función que se conserva.
+
+    Attributes:
+        motor: ``"default"`` (en memoria) o ``"disk_based"``; ``None`` deja
+            la decisión por tamaño (> 1M registros → disco).
+        perfil: claves que sobreescriben el perfil activo después de que
+            ``_build_deduplication_config`` lo eligió (p. ej.
+            ``{"score_threshold": 0.0}``). Se aplican antes de la preparación,
+            así que ``remove_top_words`` también cuenta.
+    """
+
+    motor: str | None = None
+    perfil: dict[str, Any] = field(default_factory=dict)
+
+    def aplicar(self, config: dict[str, Any]) -> None:
+        """Escribe los ajustes en ``config`` (en el sitio). Falla si el motor no existe."""
+        if self.motor is not None:
+            if self.motor not in MOTORES_LSH:
+                raise ValueError(
+                    mensaje_accionable(
+                        f"AjustesDeduplicacion.motor = {self.motor!r} no es un motor LSH.",
+                        "un motor desconocido se ignoraría o fallaría a mitad de L2 sin "
+                        "decir por qué.",
+                        f"use uno de {list(MOTORES_LSH)} o deje motor=None para que se "
+                        "decida por tamaño.",
+                    )
+                )
+            config["linkage_engine_class"] = self.motor
+        if self.perfil:
+            config["profiles"][config["profile"]].update(self.perfil)
 
 
 def deduplicate_unified(
@@ -37,6 +119,7 @@ def deduplicate_unified(
     output_dir: str = "resultados_deduplicacion",
     validate_against_legacy: bool = False,
     extra_features: list[dict[str, Any]] | None = None,
+    ajustes: AjustesDeduplicacion | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Función principal unificada que encapsula toda la complejidad
@@ -83,7 +166,10 @@ def deduplicate_unified(
         mode: modo de limpieza ("BALANCEADO", "CONSERVADOR", "AGRESIVO").
         profile: perfil de deduplicación. Default "deduplication_standard".
         output_dir: directorio de salida.
-        validate_against_legacy: si True, valida contra el motor legacy.
+        validate_against_legacy: debe ser False. El motor heredado contra el
+            que validaba ya no existe; ``True`` falla con ``ValueError`` en vez
+            de prometer en silencio una validación que no ocurre. Los
+            llamadores existentes pasan ``False`` o nada.
         extra_features: lista opcional de variables adicionales a incorporar al
             scoring. Cada elemento es un dict con claves:
             ``{"column": str, "weight": float, "type": str}``. Los tipos
@@ -99,15 +185,49 @@ def deduplicate_unified(
 
             Si es None o lista vacía, el comportamiento es idéntico a v2.6.0
             (paridad bit-a-bit). Default None.
+        ajustes: ``AjustesDeduplicacion`` para forzar el motor LSH o
+            sobreescribir perillas del perfil activo (F2.9). ``None`` = sin
+            ajustes, comportamiento idéntico.
 
     Returns:
-        Tupla ``(tabla_correlativa, estadisticas)``.
+        Tupla ``(correlativa, conexiones)``, dos DataFrames:
+
+        * ``correlativa``: la tabla de TRABAJO del motor, una fila por registro
+          de entrada, con las columnas de ``df_input`` (``col_nit``/``col_name``
+          copiadas a ``NIT``/``RAZON_SOCIAL`` si se llaman distinto), las
+          técnicas de L1 (``NOMBRE_LIMPIO``, ``NIT_BASE``, ``NIT_OK``,
+          ``NIT_VALID``, ``DV_ORIGEN``, ``PHONETIC_KEY1``/``2``), ``SRC``,
+          ``ORIGINAL_INDEX``, ``ID_GRUPO`` y la identidad adoptada
+          (``NIT_FINAL``, ``RAZON_SOCIAL_FINAL``, ``NAME_SIMILARITY_SCORE``,
+          ``NIT_DISTANCE``). No es la correlativa del contrato 1.0: esa la
+          completa ``dedupe()`` (``salida.completar``).
+        * ``conexiones``: la tabla ``contrato.CONEXIONES``: las filas de la
+          correlativa cuyo grupo tiene más de un registro, con las columnas
+          fijas primero (``ID_GRUPO``, ``RECORD_COUNT``, ``ORIGINAL_INDEX``,
+          ``SRC``, ``NIT_FINAL``, ``RAZON_SOCIAL_FINAL``,
+          ``NAME_SIMILARITY_SCORE``, ``NIT_DISTANCE``) y después las demás,
+          ordenada por ``ID_GRUPO`` y ``ORIGINAL_INDEX``.
+
+        Las dos quedan también en ``output_dir`` como ``correlativa.parquet``
+        y ``conexiones.parquet`` (``rutas_salida``), escritas por la primitiva
+        del escritor único.
+
+        Hasta F2.10 el docstring decía ``(tabla_correlativa, estadisticas)`` y
+        nunca fue cierto: ``deduplicate_auto`` lo desempaquetaba como ``stats``
+        y expandía el DataFrame (corregido en F1.13). Las estadísticas de la
+        corrida las arma ``deduplicate_auto`` a partir de estas dos tablas.
 
     Raises:
-        ValueError: si el DataFrame está vacío o faltan columnas requeridas.
+        ValueError: si el DataFrame está vacío o faltan columnas requeridas,
+            o si ``validate_against_legacy`` es True.
         ValueError: si alguna columna referida en ``extra_features`` no existe
             en ``df_input`` (fail-fast: mejor un error claro que un feature
             silenciosamente inerte).
+        EscrituraSalidaError: si una columna de ``df_input`` mezcla tipos y
+            parquet no la acepta al escribir las dos tablas en ``output_dir``
+            (hasta F2.10 ``SmartExporter`` se degradaba a CSV.gz en silencio).
+            El mensaje nombra la tabla y cita la causa de pyarrow, que dice la
+            columna; el remedio es convertirla a texto en ``df_input``.
     """
     logger = setup_logger("deduplicate_unified")
     start_time = time.time()
@@ -118,6 +238,16 @@ def deduplicate_unified(
         raise ValueError("DataFrame de entrada está vacío")
     if col_nit not in df_input.columns or col_name not in df_input.columns:
         raise ValueError(f"Columnas requeridas {col_nit}, {col_name} no encontradas")
+    if validate_against_legacy:
+        raise ValueError(
+            mensaje_accionable(
+                "se pidió validate_against_legacy=True.",
+                "el motor heredado contra el que validaba ya no existe y aceptarlo en "
+                "silencio prometería una validación que no ocurre.",
+                "quite el parámetro (o pase False); para medir calidad use "
+                "scripts/banco.py o scripts/conformidad.py.",
+            )
+        )
 
     # v0.7.4 (cierre de deuda): advertir sobre uso en mezcla CON_NIT/SIN_NIT.
     # Evidencia medida: en datos mixtos este método da F1 global 0.563 por
@@ -148,6 +278,8 @@ def deduplicate_unified(
         _validate_extra_features(extra_features, df_input.columns)
 
     config = _build_deduplication_config(profile, mode, len(df_input))
+    if ajustes is not None:
+        ajustes.aplicar(config)
 
     # Inyectar extra_features en el perfil activo para que el VectorizedScorer
     # las lea. El scorer busca profile["extra_features"]; lo propagamos al
@@ -282,7 +414,9 @@ def deduplicate_unified(
     # ahora retorna un PipelineResult con carga lazy desde checkpoints parquet,
     # así que la tabla correlativa siempre está disponible vía `result.get(...)`
     # sin requerir que el pipeline retenga DataFrames en memoria.
-    pipeline = RecordLinkagePipeline(config, profile=profile)
+    # F2.9: construcción interna, sin el DeprecationWarning que sí recibe quien
+    # instancia RecordLinkagePipeline por su cuenta.
+    pipeline = RecordLinkagePipeline(config, profile=profile, _uso_interno=True)
     result = pipeline.run(
         sources={"DEDUP_SOURCE": df_prepared},
         output_dir=output_dir,
@@ -307,20 +441,50 @@ def deduplicate_unified(
     # 5. Generar conexiones no triviales a partir de la tabla final
     conexiones_no_triviales = _generate_non_trivial_connections(correlativa_df)
 
-    # 6. Exportación automática (sin cambios)
-    exporter = SmartExporter(config)
-    correlativa_path = exporter.export(correlativa_df, "correlativa_unificada", format="parquet")
-    conexiones_path = exporter.export(
-        conexiones_no_triviales, "conexiones_no_triviales", format="parquet"
-    )
+    # 6. Las dos tablas a output_dir por la primitiva del escritor único (F2.10).
+    # La correlativa de trabajo va sin columnas del contrato: no tiene su forma
+    # (sin ID_REGISTRO, ID_ENTIDAD…) y no debe decir que la tiene; las
+    # conexiones sí son tabla del contrato y llevan sus tipos y el metadato.
+    rutas = rutas_salida(output_dir)
+    rutas["correlativa"].parent.mkdir(parents=True, exist_ok=True)
+    _escribir_salida(correlativa_df, rutas["correlativa"])
+    _escribir_salida(conexiones_no_triviales, rutas["conexiones"], contrato.CONEXIONES)
 
     elapsed_time = time.time() - start_time
     logger.info(
         f"Deduplicación completada en {elapsed_time:.1f}s. "
-        f"Archivos guardados: {os.path.basename(correlativa_path)}, {os.path.basename(conexiones_path)}"
+        f"Archivos guardados: {rutas['correlativa'].name}, {rutas['conexiones'].name}"
     )
 
     return correlativa_df, conexiones_no_triviales
+
+
+def _escribir_salida(
+    df: pd.DataFrame, ruta: Path, columnas: Sequence[contrato.ColumnaContrato] = ()
+) -> None:
+    """``escribir_parquet`` relanzado con el remedio de ESTE camino.
+
+    La primitiva falla con ``EscrituraSalidaError`` cuyo «Qué hacer» habla de
+    ``linkage()`` y de ``validar()``; aquí la tabla es la de trabajo de
+    ``dedupe()``/``deduplicate_unified`` y el remedio es sobre ``df_input``.
+    Se cita la causa de pyarrow (``__cause__``), que nombra la columna.
+    """
+    try:
+        escribir_parquet(df, ruta, columnas)
+    except EscrituraSalidaError as exc:
+        causa = exc.__cause__
+        detalle = f"{type(causa).__name__}: {causa}" if causa is not None else str(exc)
+        raise EscrituraSalidaError(
+            mensaje_accionable(
+                f"deduplicate_unified no pudo escribir {ruta.name} en {ruta.parent} ({detalle}).",
+                "sin esa tabla en output_dir dedupe() no tiene la salida de trabajo que "
+                "publica en su manifiesto (rutas_salida); hasta F2.10 este fallo se "
+                "degradaba a CSV.gz en silencio.",
+                "convierta a texto en df_input la columna que cita la causa "
+                "(df[col] = df[col].astype('string')) y vuelva a llamar a "
+                "dedupe()/deduplicate_unified.",
+            )
+        ) from exc
 
 
 def _tipos_de_comparador_validos() -> frozenset[str]:
@@ -498,17 +662,42 @@ def _prepare_for_deduplication(
 
 
 def _generate_non_trivial_connections(correlativa_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Genera DataFrame solo con conexiones no triviales (grupos > 1)
-    a partir de la tabla correlativa final.
-    """
-    if "RECORD_COUNT" not in correlativa_df.columns:
-        # Calcular si no está presente
-        group_sizes = correlativa_df.groupby("ID_GRUPO")["ID_GRUPO"].transform("size")
-        non_trivial_mask = group_sizes > 1
-    else:
-        non_trivial_mask = correlativa_df["RECORD_COUNT"] > 1
+    """La tabla ``conexiones`` del contrato a partir de la correlativa de trabajo.
 
-    conexiones = correlativa_df[non_trivial_mask].copy()
-    conexiones = conexiones.sort_values(["ID_GRUPO", "NIT_OK"])
-    return conexiones
+    Solo las filas cuyo grupo tiene más de un registro (``RECORD_COUNT`` > 1;
+    se calcula si la correlativa no lo trae), con las columnas fijas de
+    ``contrato.CONEXIONES`` primero y después las demás del registro, en su
+    orden. Ordenada por ``ID_GRUPO`` y ``ORIGINAL_INDEX`` (clave total y
+    determinista; hasta F2.10 era ``ID_GRUPO``, ``NIT_OK``, que empataba
+    dentro del grupo y exigía una técnica).
+
+    Raises:
+        ValueError: si falta alguna columna fija del contrato (una correlativa
+            que no viene del motor); el mensaje dice cuáles.
+    """
+    faltan = [c for c in contrato.COLUMNAS_CONEXIONES if c not in correlativa_df.columns]
+    faltan = [c for c in faltan if c != "RECORD_COUNT"]
+    if faltan:
+        raise ValueError(
+            mensaje_accionable(
+                f"la correlativa no trae {faltan}.",
+                "son columnas fijas de la tabla conexiones (contrato.CONEXIONES) y sin "
+                "ellas no se puede armar.",
+                "pase la correlativa tal como la devuelve el motor (RecordLinkagePipeline / "
+                f"deduplicate_unified); trae {list(correlativa_df.columns)}.",
+            )
+        )
+    if "RECORD_COUNT" in correlativa_df.columns:
+        tamanos = correlativa_df["RECORD_COUNT"]
+    else:
+        tamanos = correlativa_df.groupby("ID_GRUPO")["ID_GRUPO"].transform("size")
+
+    conexiones = correlativa_df[tamanos > 1].copy()
+    conexiones["RECORD_COUNT"] = tamanos[tamanos > 1].astype("int64")
+    fijas = list(contrato.COLUMNAS_CONEXIONES)
+    resto = [c for c in conexiones.columns if c not in fijas]
+    return (
+        conexiones[fijas + resto]
+        .sort_values(["ID_GRUPO", "ORIGINAL_INDEX"], kind="stable")
+        .reset_index(drop=True)
+    )

@@ -263,11 +263,14 @@ def anexar_score_par(
     ruta = None if dir_trabajo is None else Path(dir_trabajo) / RUTA_SCORED_DB
     if ruta is None or not ruta.is_file():
         correl["SCORE_PAR"] = np.nan
-        donde = "sin dir_trabajo" if ruta is None else str(ruta)
+        # Sin la ruta absoluta: con carpeta_salida el dir_trabajo se renombra al
+        # publicar (F2.7) y una frase no se reubica; manifiesto['dir_trabajo']
+        # ya dice dónde se buscó.
+        donde = "sin dir_trabajo" if ruta is None else "en dir_trabajo"
         return correl, {
             "origen": None,
-            "motivo": f"no existe {RUTA_SCORED_DB} ({donde}): SCORE_PAR queda nulo. "
-            "La ruta dedupe() no puntúa pares en scored.db; linkage()/link() sí.",
+            "motivo": f"no existe {RUTA_SCORED_DB.as_posix()} ({donde}): SCORE_PAR queda "
+            "nulo. La ruta dedupe() no puntúa pares en scored.db; linkage()/link() sí.",
         }
     try:
         valores, info = score_par_desde_scored_db(correl, ruta)

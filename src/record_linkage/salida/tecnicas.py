@@ -34,9 +34,10 @@ Alineación (la parte que no es obvia)
   antes de usarla; si no se cumple, o alguna fila entregada no encuentra
   pareja, se falla con mensaje accionable: no se adivina.
 * ``dedupe()`` no pasa por el Orchestrator: sus técnicas quedan en
-  ``correlativa_unificada.parquet`` de ``metricas["output_dir"]`` (por
-  régimen, ``con_nit/`` y ``sin_nit/``). Ese camino no se cubre aquí; el
-  error lo dice.
+  ``correlativa.parquet`` de ``metricas["output_dir"]`` (por régimen,
+  ``con_nit/`` y ``sin_nit/`` si el dataset es mixto; F2.10: lo escribe la
+  primitiva del escritor único y ``metricas["stats_pipeline"]`` trae las
+  rutas). Ese camino no se cubre aquí; el error lo dice.
 
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.23.0
 """
@@ -125,8 +126,9 @@ def ruta_tecnicas(dir_trabajo: Path | str | None) -> Path:
                 "que el contrato de salida retiró del entregable.",
                 "conserve el dir_trabajo de la corrida (no lo borre antes de verificar) y "
                 "use un resultado de linkage()/link()/ejecutar_cruce(); dedupe() no pasa "
-                "por el Orchestrator y deja las técnicas en correlativa_unificada.parquet "
-                "de metricas['output_dir'], que este módulo no lee.",
+                "por el Orchestrator y deja las técnicas en correlativa.parquet de "
+                "metricas['output_dir'] (por régimen; rutas en "
+                "metricas['stats_pipeline']), que este módulo no lee.",
             )
         )
     return ruta

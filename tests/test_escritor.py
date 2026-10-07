@@ -975,25 +975,22 @@ _ESCRITORES = {
 #: que F2 lleva al estándar, o herramientas que no producen el entregable.
 #: Lo que se encontró de más respecto a la lista de la especificación
 #: (``golden/generator.py`` y ``engine/`` NO escriben; ``reporting/suite.py``,
-#: ``flujo/``, ``deduplication/colab.py``, ``exporters/smart.py``,
-#: ``evaluation/``, ``optimization/`` y ``classifier/`` sí) se lista con su
-#: motivo. Quitar una entrada exige quitar primero la llamada.
+#: ``flujo/``, ``exporters/smart.py``, ``evaluation/banco.py`` y ``classifier/``
+#: sí) se lista con su motivo. Quitar una entrada exige quitar primero la
+#: llamada (F2.8 retiró ``deduplication/colab.py`` como escritor,
+#: ``evaluation/ground_truth.py`` y ``optimization/engine.py``).
 ESCRITORES_PERMITIDOS: dict[str, str] = {
     "exporters/escritor.py": "el escritor único del estándar (F1.10).",
     "exporters/excel.py": "la primitiva xlsx del escritor (F1.11): completo en flujo o LEEME.",
     "pipeline/orchestrator.py": "checkpoints L1…L5 en _trabajo/.",
     "pipeline/linkage_pipeline.py": "checkpoints del pipeline heredado en _trabajo/.",
-    "pipeline/result.py": "PipelineResult.to_excel/to_csv heredados (lo pide el usuario).",
     "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); pendiente unificarlos en "
     "informe_cruce.xlsx a través del escritor.",
     "exporters/smart.py": "SmartExporter: utilidad genérica de exportación, no el estándar.",
     "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",
     "flujo/insumos.py": "camino cruce: caché de insumos en parquet.",
     "flujo/resultados_disco.py": "camino cruce: resultados en disco; F2 lo lleva al estándar.",
-    "deduplication/colab.py": "camino dedupe por lotes en Colab; F2 lo lleva al estándar.",
     "evaluation/banco.py": "el banco (medición), no el entregable.",
-    "evaluation/ground_truth.py": "ground truth (medición), no el entregable.",
-    "optimization/engine.py": "reportes de Optuna, no el entregable.",
     "classifier/data_loader.py": "datos de entrenamiento del clasificador.",
 }
 

@@ -31,11 +31,10 @@ import pandas as pd
 import pytest
 
 from record_linkage.deduplication.unified import (
-    _build_deduplication_config,
-    _prepare_for_deduplication,
+    AjustesDeduplicacion,
+    deduplicate_unified,
 )
 from record_linkage.evaluation.pairwise import evaluar_pares
-from record_linkage.pipeline.linkage_pipeline import RecordLinkagePipeline
 
 DATASET = Path(__file__).parent / "data" / "golden_truth_sintetico_robusto.csv"
 
@@ -50,29 +49,20 @@ def truth() -> pd.DataFrame:
 
 
 def _correr_con_motor(truth: pd.DataFrame, engine: str) -> pd.DataFrame:
-    config = _build_deduplication_config("deduplication_standard", "BALANCEADO", len(truth))
-    config["linkage_engine_class"] = engine
-    df_prep = _prepare_for_deduplication(
-        truth[["NIT", "RAZON_SOCIAL"]].copy(),
-        "NIT",
-        "RAZON_SOCIAL",
-        "BALANCEADO",
-        remove_top_words=20,
-    )
-    pipeline = RecordLinkagePipeline(config, profile="deduplication_standard")
+    """F2.9: el motor se fuerza con ``AjustesDeduplicacion`` en lugar de
+    construir ``RecordLinkagePipeline`` a mano (misma partición, medido)."""
     logging.disable(logging.CRITICAL)
     try:
         with open(os.devnull, "w") as dn, redirect_stdout(dn), redirect_stderr(dn):
             with tempfile.TemporaryDirectory() as tmp:
-                result = pipeline.run(
-                    sources={"DEDUP_SOURCE": df_prep},
+                corr, _ = deduplicate_unified(
+                    truth[["NIT", "RAZON_SOCIAL"]].copy(),
+                    "NIT",
+                    "RAZON_SOCIAL",
+                    "BALANCEADO",
                     output_dir=tmp,
-                    source_priority=["DEDUP_SOURCE"],
-                    validate_data=False,
-                    generate_visualizations=False,
-                    show_progress=False,
+                    ajustes=AjustesDeduplicacion(motor=engine),
                 )
-                corr = result.get("correlative_table").copy()
     finally:
         logging.disable(logging.NOTSET)
     return corr.sort_values("ORIGINAL_INDEX").reset_index(drop=True)

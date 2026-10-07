@@ -1,18 +1,23 @@
 """
-deduplication.colab — record_linkage_pipeline
+deduplication.colab — utilidades de almacenamiento temporal para Google Colab.
 
 Componentes:
-    - class ColabOptimizedManager  (origen: notebook celda [155])
-    - function deduplicate_large_dataset_colab  (origen: notebook celda [155])
+    - class SQLiteJSONCache: mapping en disco con valores JSON (sin pickle).
+    - class ColabOptimizedManager: raíz temporal propia, cachés en disco y
+      reducción de memoria de un DataFrame (origen: notebook celda [155]).
 
-NOTA: Lógica de negocio preservada exactamente como en el notebook
-fuente. Solo se agregan imports, docstring de módulo y se eliminan
-directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+Retirado en F2.8 (6 de octubre de 2026): ``deduplicate_large_dataset_colab``.
+Nadie la importaba desde src/, scripts/ ni notebooks/ y deduplicaba por
+chunks sin enlazar entidades entre chunks, así que dos duplicados en chunks
+distintos quedaban en grupos distintos. El camino soportado para bases
+grandes es ``api.dedupe``/``deduplicate_unified`` sobre la base completa.
+``ColabOptimizedManager`` y ``SQLiteJSONCache`` se conservan: no tienen
+llamadores en src/ (solo pruebas de seguridad de rutas y caché), y su retiro
+no está declarado en el plan.
 """
 
 from __future__ import annotations
 
-import gc
 import hmac
 import inspect
 import json
@@ -21,7 +26,6 @@ import secrets
 import shutil
 import sqlite3
 import tempfile
-import warnings
 from collections.abc import Iterator, MutableMapping
 from pathlib import Path
 from typing import Any
@@ -30,14 +34,6 @@ import pandas as pd
 
 from ..utils.logger import setup_logger
 from ..utils.memory import MemoryManager
-from ..utils.output import safe_print as print
-from .unified import _generate_non_trivial_connections, deduplicate_unified
-
-_COLAB_STREAMING_MIN_ROWS = 1_000_000
-
-
-class CrossChunkDeduplicationWarning(UserWarning):
-    """El modo streaming conserva filas pero no enlaza entidades entre chunks."""
 
 
 class SQLiteJSONCache(MutableMapping[str, Any]):
@@ -437,189 +433,3 @@ class ColabOptimizedManager:
             os.close(root_fd)
 
         self._create_owned_temp_storage()
-
-
-def deduplicate_large_dataset_colab(
-    df: pd.DataFrame,
-    nit_column: str = "NIT",
-    name_column: str = "RAZON_SOCIAL",
-    chunk_size: int | None = None,
-    temp_dir: str | Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Versión optimizada de deduplicación para datasets grandes en Google Colab.
-
-    Procesa el dataset en chunks para mantener el uso de memoria bajo control.
-
-    En modo streaming cada tabla correlativa parcial se persiste primero en
-    Parquet y solo se materializa la tabla completa al construir el valor de
-    retorno. Los identificadores de grupo e índices originales se vuelven
-    globales antes de consolidar, evitando tanto pérdida de filas como
-    colisiones accidentales entre chunks.
-
-    Nota:
-        La deduplicación se ejecuta de forma independiente dentro de cada
-        chunk. Por tanto, dos duplicados ubicados en chunks distintos quedan en
-        grupos distintos. Esta limitación conserva precisión y cobertura de
-        filas, pero puede reducir recall respecto de una corrida global.
-    """
-
-    # Mantiene compatibilidad con managers personalizados/subclases cuyo
-    # constructor histórico no recibe argumentos. Solo se propaga la ruta
-    # cuando el caller la configuró explícitamente.
-    colab_manager = (
-        ColabOptimizedManager()
-        if temp_dir is None
-        else ColabOptimizedManager(temp_storage=temp_dir)
-    )
-    n_records = len(df)
-
-    # Configurar automáticamente
-    config = colab_manager.auto_configure_for_dataset(n_records)
-
-    if chunk_size is None:
-        chunk_size = config["batch_size"] * 10
-    if chunk_size <= 0:
-        raise ValueError("chunk_size debe ser un entero positivo")
-
-    print("🚀 Deduplicación optimizada para Colab")
-    print(f"   • Registros: {n_records:,}")
-    print(f"   • Estrategia: {config}")
-    print(f"   • Procesamiento en chunks de: {chunk_size:,}")
-
-    # Optimizar memoria del DataFrame
-    # Las conversiones de dtype reemplazan columnas completas. Una copia
-    # superficial preserva el DataFrame del caller sin duplicar de entrada
-    # todos sus buffers (pandas CoW separa solo las columnas modificadas).
-    df_optimized = colab_manager.optimize_dataframe_memory(df.copy(deep=False))
-
-    # Si el dataset es muy grande, procesar por chunks
-    if n_records > _COLAB_STREAMING_MIN_ROWS and config.get("streaming_mode"):
-        print("   • Modo streaming activado")
-        warnings.warn(
-            "El modo streaming deduplica dentro de cada chunk y consolida todas "
-            "las filas, pero no enlaza duplicados ubicados en chunks distintos.",
-            CrossChunkDeduplicationWarning,
-            stacklevel=2,
-        )
-
-        # Dividir en chunks y persistir cada resultado. Retener la lista de
-        # DataFrames duplicaba el pico de RAM y, peor aún, el código anterior
-        # devolvía únicamente results[0].
-        next_group_id = 0
-        rows_written = 0
-        position_column = "__RUES_COLAB_GLOBAL_POSITION__"
-        while position_column in df_optimized.columns:
-            position_column = "_" + position_column
-        with tempfile.TemporaryDirectory(
-            prefix="colab_consolidation_", dir=colab_manager.temp_storage
-        ) as temp_name:
-            parts_dir = Path(temp_name)
-            for chunk_number, i in enumerate(range(0, n_records, chunk_size)):
-                chunk_end = min(i + chunk_size, n_records)
-                print(f"\n📦 Procesando chunk {chunk_number + 1}: registros {i:,} a {chunk_end:,}")
-
-                chunk_df = df_optimized.iloc[i:chunk_end].copy()
-                # El pipeline reinicia ORIGINAL_INDEX y puede reordenar la
-                # correlativa. Esta columna viaja como dato normal y permite
-                # reconstruir la posición global sin depender de ese detalle.
-                chunk_df[position_column] = range(i, chunk_end)
-                correlativa_chunk, conexiones_chunk = deduplicate_unified(
-                    chunk_df,
-                    col_nit=nit_column,
-                    col_name=name_column,
-                    mode="BALANCEADO",
-                    profile="deduplication_colab_1M",
-                    output_dir=f"{colab_manager.temp_storage}/chunk_{i}",
-                    validate_against_legacy=False,
-                )
-
-                if len(correlativa_chunk) != len(chunk_df):
-                    raise RuntimeError(
-                        "La deduplicación de un chunk cambió su número de filas: "
-                        f"entrada={len(chunk_df):,}, salida={len(correlativa_chunk):,}."
-                    )
-                if "ID_GRUPO" not in correlativa_chunk.columns:
-                    raise RuntimeError("La tabla correlativa del chunk no contiene ID_GRUPO")
-                if position_column not in correlativa_chunk.columns:
-                    raise RuntimeError(
-                        "La tabla correlativa no preservó el marcador de posición global"
-                    )
-
-                # Los motores reinician ID_GRUPO y ORIGINAL_INDEX en cada
-                # llamada. Remapearlos evita que grupos no relacionados de dos
-                # chunks parezcan la misma entidad al concatenar.
-                correlativa_chunk = correlativa_chunk.copy()
-                group_codes, local_groups = pd.factorize(correlativa_chunk["ID_GRUPO"], sort=False)
-                if (group_codes < 0).any():
-                    raise RuntimeError("La tabla correlativa contiene ID_GRUPO nulo")
-                correlativa_chunk["ID_GRUPO"] = group_codes + next_group_id
-                next_group_id += len(local_groups)
-
-                global_positions = pd.to_numeric(
-                    correlativa_chunk[position_column], errors="raise"
-                ).astype("int64")
-                positions_are_complete = (
-                    len(global_positions) == chunk_end - i
-                    and global_positions.nunique(dropna=False) == len(global_positions)
-                    and int(global_positions.min()) == i
-                    and int(global_positions.max()) == chunk_end - 1
-                )
-                if not positions_are_complete:
-                    raise RuntimeError(
-                        "El chunk no preservó exactamente sus posiciones globales: "
-                        f"esperadas={i:,}..{chunk_end - 1:,}."
-                    )
-                correlativa_chunk["ORIGINAL_INDEX"] = global_positions
-
-                correlativa_chunk.to_parquet(
-                    parts_dir / f"correlativa_{chunk_number:06d}.parquet", index=False
-                )
-                rows_written += len(correlativa_chunk)
-
-                del chunk_df, correlativa_chunk, conexiones_chunk
-                gc.collect()
-
-            if rows_written != n_records:
-                raise RuntimeError(
-                    "La consolidación por chunks quedó incompleta: "
-                    f"entrada={n_records:,}, persistidas={rows_written:,}."
-                )
-
-            print("\n🔄 Consolidando resultados de chunks...")
-            correlativa = pd.read_parquet(parts_dir)
-
-        if len(correlativa) != n_records:
-            raise RuntimeError(
-                "La tabla correlativa consolidada quedó incompleta: "
-                f"entrada={n_records:,}, salida={len(correlativa):,}."
-            )
-
-        correlativa = correlativa.sort_values("ORIGINAL_INDEX", kind="stable").reset_index(
-            drop=True
-        )
-        correlativa = correlativa.drop(columns=[position_column])
-        if "RECORD_COUNT" in correlativa.columns:
-            correlativa["RECORD_COUNT"] = correlativa.groupby("ID_GRUPO")["ID_GRUPO"].transform(
-                "size"
-            )
-        conexiones = _generate_non_trivial_connections(correlativa)
-        scope = {
-            "deduplication_scope": "within_chunk",
-            "cross_chunk_linkage": False,
-            "rows_consolidated": n_records,
-        }
-        correlativa.attrs.update(scope)
-        conexiones.attrs.update(scope)
-        return correlativa, conexiones
-
-    else:
-        # Procesar normalmente
-        return deduplicate_unified(
-            df_optimized,
-            col_nit=nit_column,
-            col_name=name_column,
-            mode="BALANCEADO",
-            profile="deduplication_colab_1M" if n_records > 500_000 else "deduplication_standard",
-            output_dir=colab_manager.temp_storage,
-        )

@@ -87,7 +87,7 @@ import pandas as pd
 
 from .. import contrato
 from ..config.auditoria import ParametrosMotor
-from ..engine.cobertura import cobertura_estrella
+from ..engine.cobertura import ReglaLider, cobertura_estrella
 from ..golden.metricas import metricas_de_calidad, metricas_de_grupo
 from ..matching.campos import CampoSpec, EsquemaCampos, PoliticaFaltante, TipoCampo
 from ..matching.genericos import (
@@ -415,7 +415,7 @@ class ConfigImportadores:
 
     # ── Postproceso ─────────────────────────────────────────────────────
     refinar_cohesion: bool = True
-    regla_nombre_final: str = "cobertura"
+    regla_nombre_final: ReglaLider = "cobertura"
 
     # ── Control de calidad ──────────────────────────────────────────────
     paises_auditoria_bloqueo: tuple[str, ...] = ()
@@ -1084,6 +1084,10 @@ def construir_entregables(
     Deja en ``corrida["regla_id_registro"]`` el reporte de
     ``salida.completar._asignar_id_registro`` (``{fuente: {regla, columna,
     motivo}}``): el manifiesto lo publica tal cual, sin recomputar la regla.
+    ``CONFIANZA`` (F2.12) sale UNA vez por grupo en ``GOLDEN`` de la regla única
+    de ``golden.metricas`` (``_golden_estandar`` → ``metricas_de_grupo`` →
+    ``confianza_de_grupo``) y la correlativa lleva la de su grupo: no hay una
+    segunda llamada a la regla en este flujo.
     """
     rep = corrida["representantes"]
     lideres = rep.loc[rep.ES_LIDER, ["ID_IMPORTADOR", "NOMBRE_NORM"]].rename(
@@ -1560,6 +1564,20 @@ def verificar_invariantes(
             ResultadoLinkage(correlativa=correlativa, golden=golden, revision=tablas["REVISION"])
             .validar()
             .ok,
+        ),
+        # F2.12: la CONFIANZA es la del estándar (una regla, un vocabulario) y
+        # la correlativa lleva exactamente la de su importador en GOLDEN.
+        (
+            "CONFIANZA en el vocabulario del contrato y la de su grupo",
+            bool(golden["CONFIANZA"].isin(contrato.NIVELES_CONFIANZA).all())
+            and bool(
+                (
+                    correlativa["CONFIANZA"]
+                    == correlativa["ID_IMPORTADOR"].map(
+                        golden.set_index("ID_IMPORTADOR")["CONFIANZA"]
+                    )
+                ).all()
+            ),
         ),
     ]
     if peso:

@@ -36,54 +36,20 @@ import argparse
 import logging
 import os
 import sys
-import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from record_linkage.deduplication.unified import (
-    _build_deduplication_config,
-    _prepare_for_deduplication,
-)
+from record_linkage.deduplication.unified import _prepare_for_deduplication
 from record_linkage.engine.scorer import VectorizedScorer
-from record_linkage.pipeline.linkage_pipeline import RecordLinkagePipeline
 
-
-def correr_pipeline_y_capturar_pares(
-    df: pd.DataFrame, col_nit: str, col_name: str, mode: str
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Corre el pipeline y devuelve (df_prepared, pares_con_score).
-
-    `pares_con_score` es un DataFrame con TODOS los pares candidatos que
-    el LSH emitió, con su score calculado (incluso los que cayeron bajo
-    el threshold). Esto permite estratificar por score.
-    """
-    config = _build_deduplication_config("deduplication_standard", mode, len(df))
-    active = config["profile"]
-    # Bajar score_threshold a 0.0 para capturar TODOS los pares scoreados.
-    config["profiles"][active]["score_threshold"] = 0.0
-    # Mantener filtros normales para no explotar memoria.
-
-    df_prep = _prepare_for_deduplication(df, col_nit, col_name, mode, remove_top_words=20)
-
-    pipeline = RecordLinkagePipeline(config, profile="deduplication_standard")
-    with tempfile.TemporaryDirectory() as tmp:
-        result = pipeline.run(
-            sources={"DEDUP_SOURCE": df_prep},
-            output_dir=tmp,
-            source_priority=["DEDUP_SOURCE"],
-            validate_data=False,
-            generate_visualizations=False,
-            show_progress=False,
-        )
-        # Recuperar scored_pairs si existe; sino, devolver correlativa
-        scored = result.get("scored_pairs")
-        if scored is None or len(scored) == 0:
-            # Fallback: no exponer scored_pairs.
-            scored = pd.DataFrame()
-        return df_prep, scored
+# F2.9: había aquí una función `correr_pipeline_y_capturar_pares` que
+# construía `RecordLinkagePipeline` con score_threshold=0.0 para recuperar
+# `scored_pairs`; `PipelineResult` nunca expuso esa clave, así que devolvía
+# un DataFrame vacío y `main()` no la llamaba. Se retiró con la deprecación
+# del pipeline heredado; los pares se generan con `_generar_pares_inline`.
 
 
 def _generar_pares_inline(
