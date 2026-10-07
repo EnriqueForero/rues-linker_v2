@@ -978,7 +978,8 @@ _ESCRITORES = {
 #: ``flujo/``, ``exporters/smart.py``, ``evaluation/banco.py`` y ``classifier/``
 #: sí) se lista con su motivo. Quitar una entrada exige quitar primero la
 #: llamada (F2.8 retiró ``deduplication/colab.py`` como escritor,
-#: ``evaluation/ground_truth.py`` y ``optimization/engine.py``).
+#: ``evaluation/ground_truth.py`` y ``optimization/engine.py``; F2.14 restauró
+#: ``evaluation/ground_truth.py`` por decisión de Enrique).
 ESCRITORES_PERMITIDOS: dict[str, str] = {
     "exporters/escritor.py": "el escritor único del estándar (F1.10).",
     "exporters/excel.py": "la primitiva xlsx del escritor (F1.11): completo en flujo o LEEME.",
@@ -991,6 +992,8 @@ ESCRITORES_PERMITIDOS: dict[str, str] = {
     "flujo/insumos.py": "camino cruce: caché de insumos en parquet.",
     "flujo/resultados_disco.py": "camino cruce: resultados en disco; F2 lo lleva al estándar.",
     "evaluation/banco.py": "el banco (medición), no el entregable.",
+    "evaluation/ground_truth.py": "archivo de pares para revisión humana (medición), no el "
+    "entregable (F2.14).",
     "classifier/data_loader.py": "datos de entrenamiento del clasificador.",
 }
 

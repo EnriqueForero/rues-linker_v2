@@ -15,10 +15,18 @@ notebooks/ y docs/) antes de retirar:
   antes en ``evaluation/evaluador_verdad.py`` (sin ``cross_validate``, que
   dependía del motor retirado).
 
-Esta prueba fija el retiro: los módulos no existen, los símbolos no se
-usan en el código vivo (src/, scripts/, tests/; docstrings y comentarios pueden
-nombrarlos para dejar constancia) y lo que se conservó
-sigue importable desde su sitio nuevo.
+F2.14 (2026-10-07, decisión de Enrique: «no porque no se use seguido se debe
+eliminar»): se MANTIENEN los dos primeros retiros y el de ``optimization/``
+(su reemplazo declarado desde v3.2.7 es ``evaluation.OrchestratorOptimizer``,
+que ahora cubre también la validación cruzada y el espacio por parámetro).
+``GroundTruthGenerator`` VUELVE a ``evaluation/ground_truth.py`` sin depender
+de ``optimization/``; ``GroundTruthEvaluator`` sigue teniendo UNA sola
+implementación (``evaluador_verdad.py``) y ``ground_truth.py`` la re-exporta.
+
+Esta prueba fija lo que queda: los módulos retirados no existen, sus símbolos
+no se usan en el código vivo (src/, scripts/, tests/; docstrings y comentarios
+pueden nombrarlos para dejar constancia), lo conservado sigue importable y hay
+UN solo optimizador y UN solo evaluador en src (AST).
 """
 
 from __future__ import annotations
@@ -35,7 +43,6 @@ ESTE_ARCHIVO = Path(__file__).resolve()
 
 MODULOS_RETIRADOS = [
     "record_linkage.deduplication.dataframe",
-    "record_linkage.evaluation.ground_truth",
     "record_linkage.optimization",
     "record_linkage.optimization.engine",
     "record_linkage.optimization.optuna_integration",
@@ -51,7 +58,7 @@ SIMBOLOS_RETIRADOS = [
     "OptunaIntegration",
     "OptimizationVisualizerLite",
     "ParameterSpace",
-    "GroundTruthGenerator",
+    # ``GroundTruthGenerator`` no está: F2.14 lo restauró (ver docstring).
     # ``cross_validate`` no está: es el nombre de sklearn.model_selection y un
     # uso legítimo futuro haría fallar la prueba sin que nada retirado volviera.
     # Su retiro lo fija ``test_evaluador_separado_sigue_disponible`` (hasattr).
@@ -88,7 +95,45 @@ def test_evaluador_separado_sigue_disponible() -> None:
     )
 
     assert GroundTruthEvaluator is DesdeModulo
+    # La validación cruzada vive en el optimizador (F2.14), no en el evaluador.
     assert not hasattr(GroundTruthEvaluator, "cross_validate")
+
+
+def test_generador_restaurado_sin_optimization() -> None:
+    """F2.14: el generador vuelve y re-exporta el ÚNICO evaluador."""
+    from record_linkage.evaluation import (
+        GroundTruthEvaluator,
+        GroundTruthGenerator,
+        ground_truth,
+    )
+
+    assert ground_truth.GroundTruthGenerator is GroundTruthGenerator
+    assert ground_truth.GroundTruthEvaluator is GroundTruthEvaluator
+    assert "optimization" not in ground_truth.__file__.replace("\\", "/").split("/")
+
+
+def _clases_definidas(ruta: Path) -> list[str]:
+    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+    return [n.name for n in ast.walk(arbol) if isinstance(n, ast.ClassDef)]
+
+
+def test_un_solo_optimizador_y_un_solo_evaluador_en_src() -> None:
+    """Regla 3 (una regla una vez): ``OptimizationEngine`` no vuelve y
+    ``GroundTruthEvaluator`` se define exactamente una vez en ``src/``."""
+    definiciones: dict[str, list[str]] = {}
+    for ruta in sorted((RAIZ / "src").rglob("*.py")):
+        for clase in _clases_definidas(ruta):
+            definiciones.setdefault(clase, []).append(ruta.relative_to(RAIZ).as_posix())
+    assert "OptimizationEngine" not in definiciones, definiciones.get("OptimizationEngine")
+    assert definiciones.get("GroundTruthEvaluator") == [
+        "src/record_linkage/evaluation/evaluador_verdad.py"
+    ]
+    assert definiciones.get("GroundTruthGenerator") == [
+        "src/record_linkage/evaluation/ground_truth.py"
+    ]
+    assert definiciones.get("OrchestratorOptimizer") == [
+        "src/record_linkage/evaluation/orchestrator_hyperparameters.py"
+    ]
 
 
 def _archivos_vivos() -> list[Path]:

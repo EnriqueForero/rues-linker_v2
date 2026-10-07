@@ -260,3 +260,169 @@ class TestOptimizationTarget:
         )
         with pytest.raises(ValueError, match="optimization_target"):
             opt.optimize(n_trials=1, optimization_target="invalid")
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  Tests 6 (F2.14): lo que el notebook de F2.15 necesita del ÚNICO optimizador
+# ─────────────────────────────────────────────────────────────────────
+from record_linkage.evaluation.orchestrator_hyperparameters import (  # noqa: E402
+    OBJETIVOS_VALIDOS,
+    espacio_de_busqueda,
+)
+
+
+class TestEspacioDeBusqueda:
+    """``espacio_de_busqueda`` arma un espacio propio por parámetro sin que el
+    usuario escriba ``trial.suggest_*`` (lo que ``ParameterSpace`` daba)."""
+
+    def test_rangos_por_tipo(self):
+        espacio = espacio_de_busqueda(
+            {
+                "score_threshold": (0.5, 0.9, 0.1),  # float con paso
+                "lsh_threshold": (0.55, 0.75),  # float continuo
+                "max_nit_distance": (0, 3),  # int
+                "nit_empty_passes_filter": [True, False],  # categórico
+                "cleaning_mode": "AGRESIVO",  # fijo
+                "weight_name": (0.3, 0.7, 0.1),
+            }
+        )
+        study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=1))
+        for _ in range(5):
+            params = espacio(study.ask())
+            assert 0.5 <= params["score_threshold"] <= 0.9
+            assert 0.55 <= params["lsh_threshold"] <= 0.75
+            assert isinstance(params["max_nit_distance"], int)
+            assert 0 <= params["max_nit_distance"] <= 3
+            assert params["nit_empty_passes_filter"] in (True, False)
+            assert params["cleaning_mode"] == "AGRESIVO"
+            # weight_nit se deriva como en default_search_space
+            assert abs(params["weight_name"] + params["weight_nit"] - 1.0) < 1e-9
+
+    def test_rango_invalido_falla_rapido(self):
+        with pytest.raises(ValueError, match="score_threshold"):
+            espacio_de_busqueda({"score_threshold": (0.9, 0.5)})
+        with pytest.raises(ValueError, match="vacía"):
+            espacio_de_busqueda({"cleaning_mode": []})
+        with pytest.raises(ValueError, match="perfil"):
+            espacio_de_busqueda({"parametro_inexistente": (0, 1)})
+
+    def test_se_usa_en_el_optimizador(self, base_cfg):
+        truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
+        espacio = espacio_de_busqueda({"score_threshold": (0.6, 0.8, 0.1)})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth, search_space=espacio)
+        assert opt.search_space is espacio
+
+
+class TestAjustesPerfil:
+    def test_params_del_trial_como_ajustes_para_linkage(self, base_cfg):
+        """``best_config`` sirve al Orchestrator; ``ajustes_perfil()`` sirve a
+        ``linkage(ajustes_perfil=...)``: el mismo mapeo, escrito una vez."""
+        truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        params = {"score_threshold": 0.7, "weight_name": 0.6, "weight_nit": 0.4}
+        ajustes = opt.ajustes_perfil(params)
+        assert ajustes == {
+            "score_threshold": 0.7,
+            "weights": {"name": 0.6, "nit": 0.4, "phonetic": 0.0},
+        }
+        cfg = opt._build_config_for_trial(params)
+        prof = cfg["profiles"][cfg["profile"]]
+        assert {k: prof[k] for k in ajustes} == ajustes
+
+    def test_sin_optimizar_falla_rapido(self, base_cfg):
+        truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        with pytest.raises(ValueError, match="optimize"):
+            opt.ajustes_perfil()
+
+    def test_ajustes_los_acepta_crear_config_orchestrator(self, base_cfg):
+        """Las claves que devuelve son las del perfil: ``linkage`` las valida
+        con ``crear_config_orchestrator`` y una desconocida fallaría aquí."""
+        truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        ajustes = opt.ajustes_perfil({"score_threshold": 0.7, "max_nit_distance": 2})
+        cfg = crear_config_orchestrator(perfil="produccion_calibrada", validate=False, **ajustes)
+        assert cfg["profiles"]["produccion_calibrada"]["score_threshold"] == 0.7
+
+
+class TestObjetivoMacroF1:
+    """``macro_f1`` reutiliza ``evaluation.banco.evaluar_calidad`` (F1 por
+    ESTRATO promediado): la misma regla que lee el banco, escrita una vez."""
+
+    @staticmethod
+    def _truth_estratificada():
+        return pd.DataFrame(
+            {
+                "ID_REGISTRO": ["a1", "a2", "b1", "b2", "c1", "c2", "n1", "n2"],
+                "ID_GROUP": ["A", "A", "B", "B", "C", "C", "N1", "N2"],
+                "ESTRATO": ["REAL", "REAL", "REAL", "REAL", "RUIDO", "RUIDO", "RUIDO", "RUIDO"],
+                "REGIMEN": ["CON_ID"] * 8,
+                "CASO": ["positivo"] * 6 + ["negativo_unico"] * 2,
+            }
+        )
+
+    def test_macro_f1_en_objetivos_validos(self):
+        assert "macro_f1" in OBJETIVOS_VALIDOS
+
+    def test_evaluate_calcula_macro_f1_y_fp_negativos(self, base_cfg):
+        truth = self._truth_estratificada()
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        # REAL perfecto; en RUIDO se parte C y se une n1 con n2 (FP sobre negativos).
+        correlativa = pd.DataFrame(
+            {
+                "ID_REGISTRO": truth["ID_REGISTRO"],
+                "ID_GRUPO": ["g1", "g1", "g2", "g2", "g3", "g4", "g5", "g5"],
+            }
+        )
+        score, metricas = opt._evaluate(correlativa, "macro_f1")
+        assert metricas["f1_estrato_REAL"] == 1.0
+        assert metricas["f1_estrato_RUIDO"] == 0.0
+        assert score == metricas["macro_f1"] == 0.5
+        assert metricas["fp_que_tocan_negativo"] == 1
+        # El F1 global sigue estando para quien lo pida.
+        assert 0 < metricas["f1"] < 1
+
+    def test_macro_f1_sin_estrato_falla_rapido(self, base_cfg):
+        truth = pd.DataFrame({"ID_REGISTRO": ["1", "2"], "ID_GROUP": ["a", "a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        with pytest.raises(ValueError, match="ESTRATO"):
+            opt.optimize(n_trials=1, optimization_target="macro_f1", show_progress_bar=False)
+
+    def test_sin_estrato_no_hay_metricas_del_banco(self, base_cfg):
+        truth = pd.DataFrame({"ID_REGISTRO": ["1", "2"], "ID_GROUP": ["a", "a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        correlativa = pd.DataFrame({"ID_REGISTRO": ["1", "2"], "ID_GRUPO": ["x", "x"]})
+        score, metricas = opt._evaluate(correlativa, "f1")
+        assert score == 1.0
+        assert "macro_f1" not in metricas
+
+
+class TestValidacionCruzada:
+    """``cross_validate`` vuelve UNA vez, sobre el optimizador, con los pliegues
+    por GRUPO de ``evaluation.banco`` (partir por fila rompe grupos)."""
+
+    def test_evaluar_config_devuelve_metricas(self, gt_micro, base_cfg):
+        opt = OrchestratorOptimizer(base_cfg, gt_micro["sources"], gt_micro["truth"], silent=True)
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            metricas = opt.evaluar_config({"score_threshold": 0.7})
+        assert {"score", "f1", "precision", "recall", "elapsed_s"} <= set(metricas)
+        assert metricas["score"] == metricas["f1"]
+
+    def test_validacion_cruzada_por_grupo(self, gt_micro, base_cfg):
+        opt = OrchestratorOptimizer(base_cfg, gt_micro["sources"], gt_micro["truth"], silent=True)
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            resultado = opt.validacion_cruzada({"score_threshold": 0.7}, pliegues=2)
+        assert resultado["pliegues"] == 2
+        assert len(resultado["por_pliegue"]) == 2
+        assert all(0.0 <= s <= 1.0 for s in resultado["por_pliegue"])
+        assert resultado["media"] == pytest.approx(sum(resultado["por_pliegue"]) / 2)
+        assert resultado["desviacion"] >= 0.0
+        # Cada pliegue evaluó un subconjunto de GRUPOS completos.
+        registros = sum(m["n_records"] for m in resultado["metricas_por_pliegue"])
+        assert registros == len(gt_micro["truth"])
+
+    def test_pliegues_invalidos_falla_rapido(self, base_cfg):
+        truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        with pytest.raises(ValueError, match="pliegues"):
+            opt.validacion_cruzada({}, pliegues=1)

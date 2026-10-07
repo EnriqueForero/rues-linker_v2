@@ -11,7 +11,8 @@ Componentes principales:
     - processing:    Limpieza de texto y NIT
     - engine:        Motor de record linkage (LSH + scoring + clustering)
     - golden:        Generación de golden records
-    - evaluation:    banco, conformidad, métricas y Optuna (OrchestratorOptimizer)
+    - evaluation:    banco, conformidad, métricas, ground truth (generador y
+                     evaluador) y Optuna (OrchestratorOptimizer, el único optimizador)
     - reporting:     Reportes, visualizaciones, dashboards
     - pipeline:      Orchestrator de producción
     - deduplication: Modo deduplicación específico

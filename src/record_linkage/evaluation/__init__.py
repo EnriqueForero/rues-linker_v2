@@ -4,8 +4,16 @@ Componentes principales:
     - evaluar_pares: cálculo de Precision/Recall/F1 a nivel de pares.
     - PairwiseMetrics: dataclass con los resultados.
     - GroundTruthEvaluator: grupos predichos contra una verdad con nulos
-      (antes en evaluation/ground_truth.py; separado en F2.8).
-    - OrchestratorOptimizer (v3.2.6): Optuna sobre Orchestrator.run().
+      (ÚNICA implementación en evaluador_verdad.py; separado en F2.8).
+    - GroundTruthGenerator / ConfigGroundTruth: muestra estratificada de pares
+      para revisión humana (ground_truth.py; restaurado en F2.14 sin
+      optimization/).
+    - OrchestratorOptimizer (v3.2.6; ampliado en F2.14): el ÚNICO optimizador
+      Optuna, sobre Orchestrator.run(): default_search_space /
+      espacio_de_busqueda, objetivos f1·f2·precision·recall·macro_f1,
+      validacion_cruzada, ajustes_perfil para linkage().
+    - graficar_convergencia / graficar_importancia: figuras matplotlib de una
+      optimización (graficas_optimizacion.py).
     - HyperparameterOptimizer: Optuna sobre linkage_pipeline.run() (legacy).
 """
 
@@ -13,25 +21,35 @@ from __future__ import annotations
 
 from ._flags import OPTUNA_AVAILABLE
 from .evaluador_verdad import GroundTruthEvaluator
+from .graficas_optimizacion import graficar_convergencia, graficar_importancia
+from .ground_truth import ConfigGroundTruth, GroundTruthGenerator
 from .pairwise import PairwiseMetrics, evaluar_pares
 
 __all__ = [
     "OPTUNA_AVAILABLE",
+    "ConfigGroundTruth",
     "GroundTruthEvaluator",
+    "GroundTruthGenerator",
     "PairwiseMetrics",
     "evaluar_pares",
+    "graficar_convergencia",
+    "graficar_importancia",
 ]
 
 # Imports opt-in (requieren optuna)
 if OPTUNA_AVAILABLE:
     from .hyperparameters import HyperparameterOptimizer
     from .orchestrator_hyperparameters import (
+        OBJETIVOS_VALIDOS,
         OrchestratorOptimizer,
         default_search_space,
+        espacio_de_busqueda,
     )
 
     __all__ += [
+        "OBJETIVOS_VALIDOS",
         "HyperparameterOptimizer",
         "OrchestratorOptimizer",
         "default_search_space",
+        "espacio_de_busqueda",
     ]

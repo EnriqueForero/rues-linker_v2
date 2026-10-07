@@ -3,6 +3,8 @@
 Apunta a los gaps detectados en la auditoría del Sprint 0.9.0:
     - evaluation/evaluador_verdad.py    — 0% → ~70% (antes ground_truth.py; F2.8)
     - evaluation/metrics.py             — 0% → ~70%
+    - evaluation/ground_truth.py        — humo del generador (restaurado en F2.14;
+      el detalle está en tests/test_ground_truth_generator.py)
 
 Diseño: cada test cubre UN comportamiento concreto del evaluador con un
 DataFrame mínimo determinista. No depende del pipeline ni del GT grande.
@@ -15,6 +17,7 @@ import pandas as pd
 import pytest
 
 from record_linkage.evaluation.evaluador_verdad import GroundTruthEvaluator
+from record_linkage.evaluation.ground_truth import ConfigGroundTruth, GroundTruthGenerator
 from record_linkage.evaluation.metrics import (
     EntityMetricsEvaluator,
     PerformanceAnalyzer,
@@ -348,3 +351,32 @@ def test_performance_analyzer_history_se_acumula():
     pa.analyze_run({"metrics": {"total_time": 100.0}}, run_name="run_a")
     pa.analyze_run({"metrics": {"total_time": 90.0}}, run_name="run_b")
     assert len(pa.metrics_history) == 2
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GroundTruthGenerator (humo; restaurado en F2.14 sin optimization/)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def test_ground_truth_generator_instanciable():
+    """El generador se instancia con o sin configuración."""
+    assert GroundTruthGenerator() is not None
+    assert GroundTruthGenerator(ConfigGroundTruth(semilla=42)) is not None
+
+
+def test_ground_truth_generator_create_sample_no_falla():
+    """`create_intelligent_sample` corre sobre un DataFrame mínimo sin lanzar.
+
+    Con 20 nombres distintos y NIT únicos solo pueden salir negativos; no se
+    asertan clases aquí (eso lo fija test_ground_truth_generator.py).
+    """
+    df = pd.DataFrame(
+        {
+            "NIT": [str(i).zfill(9) for i in range(20)],
+            "RAZON_SOCIAL": [f"EMPRESA TEST {i}" for i in range(20)],
+            "NOMBRE_LIMPIO": [f"EMPRESA TEST {i}" for i in range(20)],
+        }
+    )
+    sample = GroundTruthGenerator().create_intelligent_sample(df, n_samples=8)
+    assert isinstance(sample, pd.DataFrame)
+    assert len(sample) <= 8
