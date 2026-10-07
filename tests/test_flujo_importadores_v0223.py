@@ -175,7 +175,11 @@ def test_sin_grafias_sin_clasificar_el_modo_no_cambia_nada():
     b = deduplicar_importadores(_base_limpia(), _cfg(paises_sin_clasificar="aislar"))
     assert a.todo_ok and b.todo_ok
     pd.testing.assert_frame_equal(a.correlativa, b.correlativa)
-    pd.testing.assert_frame_equal(a.golden, b.golden)
+    # CREATED_AT es la marca de reloj de cada corrida (una por corrida, F2.6):
+    # dos corridas consecutivas pueden cruzar un segundo y no es una regresión.
+    pd.testing.assert_frame_equal(
+        a.golden.drop(columns="CREATED_AT"), b.golden.drop(columns="CREATED_AT")
+    )
 
 
 def test_hay_doce_invariantes():

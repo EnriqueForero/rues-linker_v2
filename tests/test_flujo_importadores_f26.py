@@ -191,17 +191,36 @@ def test_revision_tiene_la_forma_del_archivo_de_decisiones(resultado) -> None:
     assert len(resultado.revision_grupos) >= 2, "los dos '0' siguen marcados como grupo"
 
 
+def _base_cohesion_baja() -> pd.DataFrame:
+    """Un grupo de tres grafías con una arista ≈ 0,80 (bajo umbral 0,78 + 0,03 → cohesion_baja)."""
+    filas = [
+        ("ACME TRADING LLC", "PERU", 1.0, "r1"),
+        ("ACME TRADING LLC A", "PERU", 1.0, "r2"),
+        ("ACME TRADIN", "PERU", 1.0, "r3"),
+        ("BETA INC", "PERU", 1.0, "r4"),
+    ]
+    return pd.DataFrame(filas, columns=["RAZON_SOCIAL", "PAIS", "FOB", "REF"])
+
+
+def _base_grupo_grande_de_un_solo_nombre() -> pd.DataFrame:
+    """16 grafías (una letra en minúscula distinta cada vez) que normalizan al MISMO nombre."""
+    letras = [i for i, ch in enumerate("ACME TRADING COMPANY LLC") if ch != " "]
+    grafias = [
+        "".join(
+            ch.lower() if i == letras[k] else ch for i, ch in enumerate("ACME TRADING COMPANY LLC")
+        )
+        for k in range(16)
+    ]
+    assert len(set(grafias)) == 16
+    return pd.DataFrame(
+        [(g, "PERU", 1.0) for g in grafias] + [("BETA INC", "PERU", 1.0)],
+        columns=["RAZON_SOCIAL", "PAIS", "FOB"],
+    )
+
+
 def test_revision_emite_un_par_lider_miembro_por_estrella_marcada() -> None:
     """Un grupo con cohesión baja produce un par por miembro, con claves de la correlativa."""
-    filas = [
-        ("ACME TRADING LLC", "PERU", 1.0),
-        ("ACME TRADING LLC A", "PERU", 1.0),
-        ("ACME TRADIN", "PERU", 1.0),  # similitud ≈ 0,80: bajo umbral + 0,03 → cohesion_baja
-        ("BETA INC", "PERU", 1.0),
-    ]
-    r = deduplicar_importadores(
-        pd.DataFrame(filas, columns=["RAZON_SOCIAL", "PAIS", "FOB"]), _cfg(umbral_nombre=0.78)
-    )
+    r = deduplicar_importadores(_base_cohesion_baja(), _cfg(umbral_nombre=0.78))
     assert r.todo_ok, r.invariantes.to_string(index=False)
     c = r.correlativa
     grupo = c[c.RAZON_SOCIAL.str.startswith("ACME")]
@@ -221,6 +240,66 @@ def test_revision_emite_un_par_lider_miembro_por_estrella_marcada() -> None:
     assert set(rev["NOMBRE_B"]) == set(grupo.loc[grupo.SIM_AL_FINAL < 1.0, "RAZON_SOCIAL"])
     assert rev["DECISION"].isna().all() and rev["AUTOR"].isna().all()
     assert rev["RAZON"].str.startswith("cohesion_baja · similitud al líder 0.").all()
+
+
+def test_grupo_marcado_sin_segundo_nombre_normalizado_no_genera_par_y_se_cuenta() -> None:
+    """16 grafías de un mismo NOMBRE_NORM: grupo_grande con líder y cero miembros.
+
+    revision.csv solo lleva pares entre representantes (país, NOMBRE_NORM) y
+    aquí hay uno solo: la marca sobrevive en ``revision_grupos`` y la métrica
+    «grupos marcados sin par en revision.csv» la hace visible.
+    """
+    r = deduplicar_importadores(_base_grupo_grande_de_un_solo_nombre(), _cfg())
+    assert r.todo_ok, r.invariantes.to_string(index=False)
+    assert r.correlativa["ID_GRUPO"].nunique() == 2
+    assert r.revision_grupos["MOTIVO_REVISION"].tolist() == ["grupo_grande;"]
+    assert len(r.revision) == 0 and list(r.revision.columns) == list(contrato.COLUMNAS_REVISION)
+    m = r.metricas.set_index("indicador")["valor"]
+    assert m["grupos marcados para revisión"] == "1"
+    assert m["pares (líder, miembro) en revision.csv"] == "0"
+    assert m["grupos marcados sin par en revision.csv"] == "1"
+    assert r.manifiesto["flujo"]["grupos_marcados_sin_par"] == 1
+    assert "no generan par" in r.manifiesto["completar"]["revision"]["regla"]
+
+
+def test_los_grupos_marcados_con_par_no_se_cuentan_como_sin_par() -> None:
+    r = deduplicar_importadores(_base_cohesion_baja(), _cfg(umbral_nombre=0.78))
+    m = r.metricas.set_index("indicador")["valor"]
+    assert m["grupos marcados para revisión"] == "1"
+    assert m["grupos marcados sin par en revision.csv"] == "0"
+
+
+# ── Hoja REVISION de tablas(): nombre de v1 → contenido de v1 ─────────────
+
+
+def test_tablas_conserva_revision_de_v1_y_publica_los_pares_aparte(resultado) -> None:
+    """docs/CONSUMIDORES.md 3.8.i.5: MOTIVO_REVISION y compañía son nombres de v1
+    que terceros recibieron en la hoja REVISION del 07; el archivo de decisiones
+    del estándar (``.revision`` / ``revision.csv``) va como hoja REVISION_PARES."""
+    tablas = resultado.tablas()
+    assert "MOTIVO_REVISION" in tablas["REVISION"].columns
+    assert tablas["REVISION"] is resultado.revision_grupos
+    assert list(tablas["REVISION_PARES"].columns) == list(contrato.COLUMNAS_REVISION)
+    assert tablas["REVISION_PARES"] is resultado.revision
+    assert "REVISION_GRUPOS" not in tablas
+
+
+# ── CREATED_AT: una marca por corrida, inyectable ─────────────────────────
+
+
+def test_created_at_es_una_marca_por_corrida_e_inyectable() -> None:
+    from record_linkage.flujo.importadores import construir_entregables, ejecutar, preparar
+
+    cfg = _cfg()
+    prep = preparar(_base(), cfg)
+    corrida = ejecutar(prep, cfg)
+    assert corrida["creado_en"], "ejecutar fija la marca una sola vez por corrida"
+    corrida["creado_en"] = "2026-10-06 15:00:00"
+    golden = construir_entregables(prep, corrida, cfg)["GOLDEN"]
+    assert golden["CREATED_AT"].eq("2026-10-06 15:00:00").all()
+    r = deduplicar_importadores(_base(), cfg)
+    assert r.golden["CREATED_AT"].nunique() == 1
+    datetime.strptime(r.golden["CREATED_AT"].iloc[0], "%Y-%m-%d %H:%M:%S")
 
 
 # ── Contrato, escritura y lectura ─────────────────────────────────────────
@@ -282,6 +361,10 @@ def test_diccionario_explica_las_columnas_adicionales(resultado, tmp_path: Path)
     assert "exacta" in correl.loc["ID_EMPRESA_GLOBAL", "significado"].lower()
     assert correl.loc["REF", "significado"] == "Columna de la fuente, sin cambios."
     assert correl.loc["REF", "origen"] == "fuente"
+    # cols_metricas NO llegan «sin cambios»: preparar las convierte a numérico (NaN → 0).
+    assert "numérica" in correl.loc["FOB", "significado"]
+    assert "0" in correl.loc["FOB", "significado"]
+    assert correl.loc["FOB", "origen"] == "fuente"
     assert "suma" in golden.loc["FOB", "significado"].lower()
     assert "fuera del contrato" not in golden.loc["ID_IMPORTADOR", "significado"]
 
@@ -296,7 +379,16 @@ def test_col_id_da_el_id_registro_nativo() -> None:
     r = deduplicar_importadores(_base(), _cfg(col_id="REF", nombre_fuente="DIAN"))
     assert r.correlativa["ID_REGISTRO"].tolist() == [f"DIAN-{x}" for x in _base()["REF"]]
     assert r.correlativa["SRC"].eq("DIAN").all()
-    assert r.revision.empty or (r.revision["FUENTE"] == "DIAN").all()
+
+
+def test_revision_lleva_el_nombre_de_la_fuente_y_sus_claves() -> None:
+    """Con una base que SÍ produce pares (cohesión baja): FUENTE y las claves son de la fuente."""
+    r = deduplicar_importadores(
+        _base_cohesion_baja(), _cfg(umbral_nombre=0.78, col_id="REF", nombre_fuente="DIAN")
+    )
+    assert len(r.revision) == 2 and (r.revision["FUENTE"] == "DIAN").all()
+    assert r.revision["CLAVE_A"].str.startswith("DIAN-r").all()
+    assert r.revision["CLAVE_B"].str.startswith("DIAN-r").all()
 
 
 def test_col_id_repetido_cae_a_la_fila_y_lo_declara() -> None:

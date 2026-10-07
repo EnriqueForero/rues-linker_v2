@@ -63,8 +63,14 @@ escritor del estándar), igual que ``linkage()``:
   del primer registro de cada representante y ``RAZON`` con el motivo y la
   similitud. La tabla de grupos de v0.22 (con ``MOTIVO_REVISION``, incluidos
   los ``sin_nombre_utilizable``, que no forman par) sigue en
-  ``revision_grupos``. ``paises`` sigue en memoria (es un agrupado de la
-  correlativa; no es un artefacto del estándar).
+  ``revision_grupos``. Un grupo marcado cuyas grafías normalizan a UN solo
+  ``NOMBRE_NORM`` tiene líder y cero miembros: no genera par y queda solo en
+  ``revision_grupos`` (la métrica «grupos marcados sin par en revision.csv»
+  y ``manifiesto.flujo.grupos_marcados_sin_par`` lo cuentan). En
+  ``ResultadoImportadores.tablas()`` la hoja ``REVISION`` conserva el
+  contenido de v1 (los grupos) y los pares van en ``REVISION_PARES``
+  (``docs/CONSUMIDORES.md`` 3.8.i.5). ``paises`` sigue en memoria (es un
+  agrupado de la correlativa; no es un artefacto del estándar).
 * Una columna de la fuente que choca con una columna del contrato, de las
   propias o de las de trabajo del merge (``_COLUMNAS_INTERNAS``) se conserva
   renombrada ``<col>_FUENTE`` (``renombres_por_colision``; el sufijo es el de
@@ -574,13 +580,23 @@ class ResultadoImportadores:
         return bool(self.invariantes["cumple"].all())
 
     def tablas(self) -> dict[str, pd.DataFrame]:
-        """Las tablas exportables, en orden de utilidad."""
+        """Las tablas exportables (hojas del libro del 07), en orden de utilidad.
+
+        Los nombres de hoja son los de v1 y conservan su contenido de v1
+        (``docs/CONSUMIDORES.md`` 3.8.i.5): ``REVISION`` sigue siendo la tabla
+        de GRUPOS marcados (``MOTIVO_REVISION``, ``N_VARIANTES_NOMBRE``,
+        ``SIM_MINIMA``…, hoy ``.revision_grupos``), que es lo que terceros
+        recibieron. El archivo de decisiones del estándar (``.revision``,
+        ``revision.csv``, un par líder–miembro por estrella marcada) se publica
+        como hoja NUEVA, ``REVISION_PARES``. Los atributos ``.revision`` y
+        ``.revision_grupos`` no cambian: solo el nombre de hoja.
+        """
         return {
             "CORRELATIVA": self.correlativa,
             "GOLDEN": self.golden,
             "PAISES": self.paises,
-            "REVISION": self.revision,
-            "REVISION_GRUPOS": self.revision_grupos,
+            "REVISION": self.revision_grupos,
+            "REVISION_PARES": self.revision,
             "MUESTRA_REVISION": self.muestra,
             "METRICAS": self.metricas,
             "INVARIANTES": self.invariantes,
@@ -613,6 +629,7 @@ class ResultadoImportadores:
                 self.golden,
                 self.revision,
                 renombres=(self.manifiesto.get("completar") or {}).get("renombres"),
+                cols_metricas=(self.manifiesto.get("parametros") or {}).get("cols_metricas") or (),
             )
         metricas_escalares: dict[str, Any] = {
             "n_registros": len(self.correlativa),
@@ -1073,7 +1090,16 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
         "n_candidatos": n_candidatos,
         "n_cortes": n_cortes,
         "segundos": segundos,
+        # CREATED_AT del golden: UNA marca por corrida, fijada aquí y no en
+        # cada llamada a construir_entregables (que puede repetirse y compararse).
+        "creado_en": _marca_de_corrida(),
     }
+
+
+def _marca_de_corrida() -> str:
+    """``CREATED_AT`` del golden: la hora UTC en que se fijó la corrida, en el
+    formato del contrato (``AAAA-MM-DD HH:MM:SS``)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def construir_entregables(
@@ -1088,7 +1114,13 @@ def construir_entregables(
     de ``golden.metricas`` (``_golden_estandar`` → ``metricas_de_grupo`` →
     ``confianza_de_grupo``) y la correlativa lleva la de su grupo: no hay una
     segunda llamada a la regla en este flujo.
+
+    ``CREATED_AT`` del golden es ``corrida["creado_en"]`` (la fija
+    :func:`ejecutar` una sola vez por corrida; si la corrida no la trae, se
+    fija aquí y queda en ella): dos llamadas sobre la misma corrida dan el
+    mismo golden.
     """
+    creado_en = corrida.setdefault("creado_en", _marca_de_corrida())
     rep = corrida["representantes"]
     lideres = rep.loc[rep.ES_LIDER, ["ID_IMPORTADOR", "NOMBRE_NORM"]].rename(
         columns={"NOMBRE_NORM": "NOMBRE_NORM_FINAL"}
@@ -1230,7 +1262,7 @@ def construir_entregables(
     corr["METODO_UNION"] = np.where(tamano == 1, "sin_pareja", "nombre")
     corr["SCORE_PAR"] = _score_par(corr, tamano)
 
-    golden = _golden_estandar(corr, cfg)
+    golden = _golden_estandar(corr, cfg, creado_en)
     confianza = golden.set_index("ID_GRUPO")["CONFIANZA"]
     corr["CONFIANZA"] = corr["ID_GRUPO"].map(confianza).astype("string")
 
@@ -1285,8 +1317,11 @@ def _score_par(corr: pd.DataFrame, tamano: np.ndarray) -> pd.Series:
     return score.mask(tamano == 1, np.nan).astype("float64")
 
 
-def _golden_estandar(corr: pd.DataFrame, cfg: ConfigImportadores) -> pd.DataFrame:
+def _golden_estandar(corr: pd.DataFrame, cfg: ConfigImportadores, creado_en: str) -> pd.DataFrame:
     """Golden del contrato (13 de v1 + ``ID_ENTIDAD``) más las columnas propias.
+
+    ``creado_en`` es la marca ÚNICA de la corrida (``corrida["creado_en"]``);
+    aquí no se consulta el reloj.
 
     Las métricas salen de la regla ÚNICA de ``golden.metricas``
     (``metricas_de_grupo`` sobre ``ID_GRUPO``/``SRC``/``RAZON_SOCIAL``/``NIT``
@@ -1315,7 +1350,7 @@ def _golden_estandar(corr: pd.DataFrame, cfg: ConfigImportadores) -> pd.DataFram
     golden["CONFIDENCE_SCORE"] = calidad["CONFIDENCE_SCORE"].astype("float64")
     golden["CONFIANZA"] = grupo["CONFIANZA"]
     golden["REQUIRES_REVIEW"] = calidad["REQUIRES_REVIEW"].to_numpy() != 0
-    golden["CREATED_AT"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    golden["CREATED_AT"] = creado_en
     golden["ID_ENTIDAD"] = primeros["ID_ENTIDAD"].reindex(grupo.index)
     golden = golden.reset_index()[list(contrato.COLUMNAS_GOLDEN)]
 
@@ -1354,6 +1389,14 @@ def _revision_pares(
     normalizado) y ``NOMBRE_*`` la grafía original de ese mismo registro.
     Los ``sin_nombre_utilizable`` no forman par (son grupos de un registro):
     quedan en ``revision_grupos`` y en la correlativa (``SINNOMBRE-``).
+
+    Tampoco forma par un grupo marcado cuyas grafías normalizan a UN solo
+    ``NOMBRE_NORM`` (p. ej. ``grupo_grande`` con 16 grafías de un mismo
+    nombre: tiene líder y cero miembros, no hay arista que confirmar). Ese
+    grupo queda solo en ``revision_grupos``; :func:`_grupos_marcados_sin_par`
+    lo cuenta en ``metricas()`` («grupos marcados sin par en revision.csv») y
+    en el manifiesto (``flujo.grupos_marcados_sin_par``) para que la marca no
+    sea invisible fuera de la memoria.
     """
     marcados = revision_grupos.loc[
         revision_grupos["MOTIVO_REVISION"].str.contains("grupo_grande|cohesion_baja"),
@@ -1407,6 +1450,25 @@ def _revision_pares(
     return revision[list(contrato.COLUMNAS_REVISION)].reset_index(drop=True)
 
 
+def _grupos_marcados_sin_par(tablas: dict) -> int:
+    """Grupos de ``REVISION_GRUPOS`` sin ningún par en ``REVISION`` (ver ``_revision_pares``).
+
+    ``CLAVE_A`` es el ``ID_REGISTRO`` del líder: se resuelve a ``ID_GRUPO`` por
+    la correlativa. Incluye los ``sin_nombre_utilizable`` (nunca forman par) y
+    los marcados con un solo ``NOMBRE_NORM``.
+    """
+    correlativa, revision, grupos = (
+        tablas["CORRELATIVA"],
+        tablas["REVISION"],
+        tablas["REVISION_GRUPOS"],
+    )
+    if grupos.empty:
+        return 0
+    grupo_de = correlativa.set_index("ID_REGISTRO")["ID_GRUPO"]
+    con_par = revision["CLAVE_A"].astype(str).map(grupo_de).dropna().unique()
+    return int((~grupos["ID_GRUPO"].isin(con_par)).sum())
+
+
 def metricas(
     prep: pd.DataFrame, tablas: dict, corrida: dict, cfg: ConfigImportadores
 ) -> pd.DataFrame:
@@ -1457,6 +1519,7 @@ def metricas(
         ("segundos de ejecución", round(corrida["segundos"])),
         ("grupos marcados para revisión", len(tablas["REVISION_GRUPOS"])),
         ("pares (líder, miembro) en revision.csv", len(tablas["REVISION"])),
+        ("grupos marcados sin par en revision.csv", _grupos_marcados_sin_par(tablas)),
     ]
     if peso:
         total = float(correlativa[peso].sum())
@@ -1763,6 +1826,7 @@ def diccionario_importadores(
     revision: pd.DataFrame,
     *,
     renombres: Mapping[str, str] | None = None,
+    cols_metricas: Iterable[str] = (),
 ) -> pd.DataFrame:
     """``diccionario.csv`` del estándar con las columnas propias de este flujo explicadas.
 
@@ -1771,8 +1835,10 @@ def diccionario_importadores(
     (``_SIGNIFICADOS_PROPIOS``), añade el matiz de este flujo a las fijas que
     lo tienen (``_MATICES_CONTRATO``) y describe las sumas de ``cols_metricas``
     del golden, que llevan el nombre de la columna de entrada y NO son «la
-    columna de la fuente sin cambios». Ninguna columna entregada queda como
-    «fuera del contrato».
+    columna de la fuente sin cambios». En la correlativa, las ``cols_metricas``
+    tampoco llegan «sin cambios»: :func:`preparar` las convierte a numérico
+    (texto no numérico y vacíos → 0) y así se declara, con ``origen = fuente``.
+    Ninguna columna entregada queda como «fuera del contrato».
     """
     fijas = set(contrato.COLUMNAS_CORRELATIVA)
     columnas_fuente = [
@@ -1791,6 +1857,12 @@ def diccionario_importadores(
     matiz = base["columna"].map(_MATICES_CONTRATO)
     con_matiz = es_tabla & matiz.notna()
     base.loc[con_matiz, "significado"] = base.loc[con_matiz, "significado"] + " " + matiz[con_matiz]
+    metricas_en_correlativa = (base["tabla"] == "correlativa") & base["columna"].isin(
+        set(cols_metricas)
+    )
+    base.loc[metricas_en_correlativa, "significado"] = (
+        "Columna de la fuente convertida a numérica (texto no numérico y vacíos → 0, ver preparar)."
+    )
     if golden is not None:
         sumas = (base["tabla"] == "golden") & base["columna"].isin(columnas_fuente)
         base.loc[sumas, "significado"] = (
@@ -1871,6 +1943,12 @@ def _manifiesto_importadores(
             "igualdad exacta del nombre normalizado; nulo en sin_pareja"
         },
         "confianza": {"origen": "golden.CONFIANZA (la del grupo; golden.metricas)"},
+        "revision": {
+            "regla": "un par (líder, miembro) por representante (país, NOMBRE_NORM) no líder "
+            "de cada grupo marcado grupo_grande o cohesion_baja; los grupos marcados sin "
+            "segundo NOMBRE_NORM y los sin_nombre_utilizable no generan par y quedan solo "
+            "en revision_grupos (flujo.grupos_marcados_sin_par los cuenta)"
+        },
         "columnas_propias": [c for c in COLUMNAS_PROPIAS if c in correl.columns],
     }
     manifiesto["flujo"] = {
@@ -1880,6 +1958,7 @@ def _manifiesto_importadores(
         "n_importadores": int(correl["ID_IMPORTADOR"].nunique()),
         "n_empresas_globales": int(correl["ID_EMPRESA_GLOBAL"].nunique()),
         "grupos_en_revision": len(tablas["REVISION_GRUPOS"]),
+        "grupos_marcados_sin_par": _grupos_marcados_sin_par(tablas),
     }
     return manifiesto
 
@@ -1980,6 +2059,7 @@ def deduplicar_importadores(
             tablas["GOLDEN"],
             tablas["REVISION"],
             renombres=manifiesto["completar"]["renombres"],
+            cols_metricas=cfg.cols_metricas,
         ),
         manifiesto=manifiesto,
     )
