@@ -1099,6 +1099,12 @@ def _escribir_en(
         omitidos.append({"artefacto": "rss_por_fase", "motivo": motivo})
     reporte = res.validar()
     parametros = _parametros(res, omitidos)
+    metricas = _metricas(res, tiempos, rss)
+    if dir_trabajo_relativo:
+        # F2.7: dedupe() deja ``metricas['output_dir']`` (una cadena escalar que
+        # _metricas copia) apuntando a _trabajo/ de la pendiente; en el JSON va
+        # relativa, como las rutas de ``corrida``.
+        metricas = _relativizar_rutas(metricas, carpeta)
     manifiesto = Manifiesto(
         contrato=contrato.VERSION_CONTRATO,
         version=_version_paquete(),
@@ -1110,7 +1116,7 @@ def _escribir_en(
         parametros=parametros,
         conteos=_conteos(res),
         invariantes={"ok": reporte.ok, "fallos": list(reporte.fallos)},
-        metricas=_metricas(res, tiempos, rss),
+        metricas=metricas,
         tiempos_por_fase=tiempos,
         rss_por_fase=rss,
         omitidos=omitidos,

@@ -284,6 +284,45 @@ def _expand_exact_correlative(
     return expanded
 
 
+def _trabajo_en_pendiente(
+    carpeta_salida: Path | None, nombre: str, dir_trabajo: str | None
+) -> str | None:
+    """Tramo común de ``linkage``/``dedupe``/``link`` ANTES de correr (F2.7).
+
+    Con ``carpeta_salida`` valida ``nombre`` ya (falla antes de L1, no después
+    de L1…L5) y, si no se pidió un directorio de trabajo, lo pone en
+    ``_trabajo/`` DENTRO de la pendiente ``<carpeta_salida>/.<nombre>.pendiente/``
+    para que el ``rename`` final del escritor lo deje en su sitio. Sin
+    ``carpeta_salida`` devuelve ``dir_trabajo`` tal cual.
+    """
+    from .exporters.escritor import carpeta_pendiente
+
+    if carpeta_salida is None:
+        return dir_trabajo
+    pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
+    if dir_trabajo is None:
+        return str(pendiente / "_trabajo")
+    return dir_trabajo
+
+
+def _publicar(res: ResultadoLinkage, carpeta_salida: Path | None, nombre: str) -> None:
+    """Tramo común DESPUÉS de correr (F2.7): escribe la carpeta del estándar.
+
+    Única puerta de ``api`` al escritor (``exporters.escritor.escribir_resultado``).
+    Las PNG de L6 (dashboard, visualizaciones) van a ``figuras/``; los
+    reportes y alias de v1 se quedan en ``_trabajo/L6_reporting``. Sin
+    ``carpeta_salida`` no hace nada.
+    """
+    from .exporters.escritor import escribir_resultado
+
+    if carpeta_salida is None:
+        return
+    figuras = [
+        Path(f) for f in (res.metricas.get("report_files") or ()) if str(f).lower().endswith(".png")
+    ]
+    escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
+
+
 def linkage(
     sources: Any,
     *,
@@ -434,16 +473,11 @@ def linkage(
 
     from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
-    from .exporters.escritor import carpeta_pendiente, escribir_resultado
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
         raise TypeError("consume_sources=True requiere sources como dict mutable")
-    if carpeta_salida is not None:
-        # Falla AHORA si el nombre no sirve, no después de L1…L5.
-        pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
-        if work_dir is None:
-            work_dir = str(pendiente / "_trabajo")
+    work_dir = _trabajo_en_pendiente(carpeta_salida, nombre, work_dir)
     owned_sources = sources if consume_sources else None
 
     sources, ingestion_reports = _prepare_sources(
@@ -652,13 +686,7 @@ def linkage(
     res = _armar_resultado(
         correlativa, golden, metricas, manifiesto, reporte, Path(work_dir), source_order
     )
-    if carpeta_salida is not None:
-        # Las PNG de L6 (dashboard, visualizaciones) van a figuras/; los
-        # reportes y alias de v1 se quedan en _trabajo/L6_reporting.
-        figuras = [
-            Path(f) for f in (metricas.get("report_files") or ()) if str(f).lower().endswith(".png")
-        ]
-        escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
+    _publicar(res, carpeta_salida, nombre)
     return res
 
 
@@ -864,6 +892,8 @@ def dedupe(
     profile_sin_nit: str | None = None,
     output_dir: str | None = None,
     col_id: str | None = None,
+    carpeta_salida: Path | None = None,
+    nombre: str = "dedupe",
 ) -> ResultadoLinkage:
     """Deduplica UNA tabla por la ruta canónica de producción (F1.1).
 
@@ -889,8 +919,20 @@ def dedupe(
             validado de la ruta auto. Ver ``get_profile``/``REGISTRO_PERFILES``.
         profile_sin_nit: ídem para SIN_NIT.
         output_dir: carpeta de salida (reportes y golden por régimen). None →
-            temporal; la ruta queda en ``metricas['output_dir']``.
+            temporal; la ruta queda en ``metricas['output_dir']``. Con
+            ``carpeta_salida`` y ``output_dir=None`` va a ``_trabajo/`` DENTRO
+            de la carpeta publicada (como ``work_dir`` en ``linkage``).
         col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
+        carpeta_salida: si se da, al terminar se escribe la carpeta del
+            estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/`` con el
+            escritor único (``exporters.escritor.escribir_resultado``), de
+            forma atómica, igual que ``linkage()`` (F2.7). ``golden.parquet``
+            se omite y el manifiesto lo declara (esta ruta no lo produce);
+            los perfiles por régimen (``profile_con_nit``/``profile_sin_nit``)
+            se conservan y quedan en ``parametros.llamada`` del manifiesto.
+            Un ``nombre`` inválido falla ANTES de deduplicar.
+        nombre: cierra el nombre de la carpeta del estándar; un nombre simple
+            (sin separadores). Default ``"dedupe"``.
 
     Returns:
         ResultadoLinkage (contrato 1.0). ``golden`` es None aquí: esta ruta
@@ -901,11 +943,14 @@ def dedupe(
         ``L3_scoring/scored.db``) e ``ID_GRUPO`` se recodifica de las
         etiquetas ``C<n>``/``S<n>`` por régimen a entero por orden de primera
         aparición (determinista por contenido); ``REGIMEN_AUTO`` sigue
-        diciendo por qué ruta pasó cada registro.
+        diciendo por qué ruta pasó cada registro. Con ``carpeta_salida``,
+        ``manifiesto['carpeta_salida']`` es la carpeta escrita y
+        ``dir_trabajo``/``metricas['output_dir']`` apuntan a su ``_trabajo/``.
 
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué
-            importa / qué hacer).
+            importa / qué hacer); ``ValueError`` también si ``nombre`` no es
+            un nombre simple.
 
     Ejemplo:
         >>> import pandas as pd, record_linkage as rl
@@ -919,6 +964,7 @@ def dedupe(
     from .deduplication.auto import deduplicate_auto
 
     _preflight(df, [col_nit, col_name], "df")
+    output_dir = _trabajo_en_pendiente(carpeta_salida, nombre, output_dir)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="rues_linker_dedupe_")
 
@@ -969,9 +1015,11 @@ def dedupe(
         # _SIGNIFICADOS_MOTOR_EXTRA para las copias).
         canonicos=None,
     )
-    return _armar_resultado(
+    res = _armar_resultado(
         correlativa, None, metricas, manifiesto, reporte, Path(output_dir), ["df"]
     )
+    _publicar(res, carpeta_salida, nombre)
+    return res
 
 
 def _conteos_cruce(corr: pd.DataFrame, nombre_a: str, nombre_b: str) -> tuple[int, int]:
@@ -1026,6 +1074,8 @@ def link(
     skip_reporting: bool | None = None,
     collapse_exact_duplicates: bool = False,
     col_id: str | None = None,
+    carpeta_salida: Path | None = None,
+    nombre: str = "link",
 ) -> ResultadoLinkage:
     """Cruza DOS tablas (record linkage A↔B) sobre el Orchestrator (F1.1).
 
@@ -1041,8 +1091,16 @@ def link(
         extra_features: columnas adicionales para el scoring.
         profile: plantilla del Orchestrator (``PERFILES_BASE``).
         matching_profile: refinamiento multi-variable opcional (ver linkage()).
-        work_dir: carpeta de trabajo; None → temporal.
+        work_dir: carpeta de trabajo; None → temporal (con ``carpeta_salida``,
+            ``_trabajo/`` dentro de la carpeta publicada, como en ``linkage``).
         col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
+        carpeta_salida: si se da, al terminar se escribe la carpeta del
+            estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/`` con el
+            escritor único, de forma atómica (F2.7). Se escribe DESPUÉS de
+            poner las métricas de cruce y el manifiesto de ``link`` (no se
+            delega a ``linkage(carpeta_salida=...)``: su manifiesto diría
+            ``funcion='linkage'`` y no traería ``n_grupos_cruzados``).
+        nombre: cierra el nombre de la carpeta del estándar. Default ``"link"``.
 
     Returns:
         ResultadoLinkage (contrato 1.0, el mismo objeto completado y validado
@@ -1069,6 +1127,7 @@ def link(
             f"Qué hacer: use etiquetas distintas, p. ej. nombre_a='RUES', "
             f"nombre_b='ADUANAS'."
         )
+    work_dir = _trabajo_en_pendiente(carpeta_salida, nombre, work_dir)
 
     res = linkage(
         sources={nombre_a: df_a, nombre_b: df_b},
@@ -1125,6 +1184,7 @@ def link(
     metricas["segundos_manifiesto"] = res.metricas.get("segundos_manifiesto", 0.0)
     res.metricas = metricas
     res.manifiesto = manifiesto
+    _publicar(res, carpeta_salida, nombre)
     return res
 
 

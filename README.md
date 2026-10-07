@@ -291,10 +291,15 @@ import pandas as pd
 import record_linkage as rl
 
 df = pd.read_parquet("empresas.parquet")   # necesita columnas NIT y RAZON_SOCIAL
-res = rl.dedupe(df)                        # ruta de producción validada (auto)
+res = rl.dedupe(df, carpeta_salida="salidas")  # ruta de producción validada (auto)
 print(res.resumen())
-res.correlativa.to_parquet("correlativa.parquet")
+print(res.manifiesto["carpeta_salida"])    # salidas/<AAAA-MM-DD_HHMM>_dedupe/: parquet, Excel, manifest
 ```
+
+`carpeta_salida=` escribe la carpeta del estándar de salida con el escritor
+único (atómica, con `manifest.json` y `diccionario.csv`); vale igual para
+`rl.link(...)` y `rl.linkage(...)`. Sin ella, nada se escribe fuera del
+directorio de trabajo.
 
 ### Un cruce completo, con preflight y evidencia (v0.17.3)
 
