@@ -144,6 +144,39 @@ def test_cada_clase_cumple_su_definicion(base: pd.DataFrame) -> None:
     assert (negativos["NIT_1"] != negativos["NIT_2"]).all()
 
 
+def test_negativos_claros_usan_el_nit_canonico() -> None:
+    """Hallazgo de revisión (ronda 1): los negativos verificaban el NIT crudo.
+
+    Con NIT crudo distinto (DV, guion) pero el mismo ``NIT_OK`` el par es la
+    misma empresa según el identificador canónico y NO puede ser un negativo
+    claro. Nombres sin parecido para que la banda de similitud no lo filtre.
+    """
+    filas = [
+        ("900100001-5", "900100001", "ZAPATERIA QUINTA AVENIDA", "RUES"),
+        ("900100001", "900100001", "HELADOS POLAR NORTE", "CRM"),
+        ("900100002-3", "900100002", "VIDRIOS TEMPLADOS OCCIDENTE", "RUES"),
+        ("900100002", "900100002", "JARDINERIA BOSQUE ENCANTADO", "CRM"),
+        ("900100003-1", "900100003", "RELOJERIA TIEMPO EXACTO", "RUES"),
+        ("900100003", "900100003", "PESCADERIA MAR ADENTRO", "CRM"),
+    ]
+    marco = pd.DataFrame(filas, columns=["NIT", "NIT_OK", "RAZON_SOCIAL", "SRC"])
+    marco["NOMBRE_LIMPIO"] = marco["RAZON_SOCIAL"]
+    config = ConfigGroundTruth(
+        proporciones={
+            "easy_positive": 0.0,
+            "difficult_positive": 0.0,
+            "ambiguous": 0.0,
+            "easy_negative": 1.0,
+        }
+    )
+    muestra = GroundTruthGenerator(config).create_intelligent_sample(marco, n_samples=6)
+    negativos = muestra.loc[muestra["CASE_TYPE"] == "easy_negative"]
+    assert not negativos.empty, "hay pares con NIT canónico distinto de sobra"
+    assert (negativos["NIT_SIMILARITY"] < 1.0).all(), negativos[
+        ["NIT_1", "NIT_2", "NIT_SIMILARITY"]
+    ]
+
+
 def test_reproducible_por_semilla(base: pd.DataFrame) -> None:
     a = GroundTruthGenerator(ConfigGroundTruth(semilla=7)).create_intelligent_sample(base, 20)
     b = GroundTruthGenerator(ConfigGroundTruth(semilla=7)).create_intelligent_sample(base, 20)

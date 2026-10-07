@@ -305,6 +305,12 @@ class TestEspacioDeBusqueda:
             espacio_de_busqueda({"cleaning_mode": []})
         with pytest.raises(ValueError, match="perfil"):
             espacio_de_busqueda({"parametro_inexistente": (0, 1)})
+        # Hallazgo de revisión (ronda 1): una tupla de cadenas pasaba la
+        # construcción y reventaba en ``suggest_float`` del trial 1.
+        with pytest.raises(ValueError, match=r"tupla.*lista"):
+            espacio_de_busqueda({"cleaning_mode": ("AGRESIVO", "SUAVE")})
+        with pytest.raises(ValueError, match=r"tupla.*lista"):
+            espacio_de_busqueda({"max_nit_distance": (0, "a")})
 
     def test_se_usa_en_el_optimizador(self, base_cfg):
         truth = pd.DataFrame({"ID_REGISTRO": ["1"], "ID_GROUP": ["a"]})
@@ -387,6 +393,26 @@ class TestObjetivoMacroF1:
         opt = OrchestratorOptimizer(base_cfg, {}, truth)
         with pytest.raises(ValueError, match="ESTRATO"):
             opt.optimize(n_trials=1, optimization_target="macro_f1", show_progress_bar=False)
+
+    def test_macro_f1_sin_estratos_con_pares_da_cero_no_nan(self, base_cfg):
+        """Hallazgo de revisión (ronda 1): ``evaluar_calidad`` devuelve NaN
+        cuando ningún estrato tiene pares (grupos de un solo registro) y el
+        NaN llegaba a Optuna como trial «completed»."""
+        truth = pd.DataFrame(
+            {
+                "ID_REGISTRO": ["a", "b", "c"],
+                "ID_GROUP": ["A", "B", "C"],
+                "ESTRATO": ["REAL", "REAL", "RUIDO"],
+            }
+        )
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        correlativa = pd.DataFrame({"ID_REGISTRO": ["a", "b", "c"], "ID_GRUPO": ["x", "y", "z"]})
+        score, metricas = opt._evaluate(correlativa, "macro_f1")
+        assert score == 0.0 and score == score, f"score debe ser 0.0, no {score!r}"
+        assert "advertencia" in metricas and "estratos" in metricas["advertencia"]
+        # Con objetivo f1 la verdad sigue evaluándose igual que antes.
+        score_f1, metricas_f1 = opt._evaluate(correlativa, "f1")
+        assert score_f1 == score_f1 and "advertencia" not in metricas_f1
 
     def test_sin_estrato_no_hay_metricas_del_banco(self, base_cfg):
         truth = pd.DataFrame({"ID_REGISTRO": ["1", "2"], "ID_GROUP": ["a", "a"]})

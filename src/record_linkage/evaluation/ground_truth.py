@@ -28,8 +28,8 @@ aquí. Lo que cambia respecto a 4dccfaf:
 * Reproducible: toda la aleatoriedad sale de ``ConfigGroundTruth.semilla``
   (la versión original muestreaba los negativos sin semilla).
 * Los negativos «claros» se verifican (similitud de nombre por debajo del
-  umbral ambiguo y NIT distinto); antes solo se suponía que dos fuentes al
-  azar no coincidían.
+  umbral ambiguo y NIT canónico distinto o ausente); antes solo se suponía
+  que dos fuentes al azar no coincidían.
 
 Las columnas de salida (``ID_1``, ``ID_2``, ``IS_MATCH``, ``CASE_TYPE``…) se
 conservan en inglés porque son el contrato que ``QualityEvaluator`` lee.
@@ -347,7 +347,7 @@ class GroundTruthGenerator:
         return self.config.umbral_ambiguo, self.config.umbral_dificil
 
     def _negativos_claros(self, marco: pd.DataFrame, n: int) -> pd.DataFrame:
-        """Pares que no se parecen (nombre < umbral_ambiguo) con NIT distinto.
+        """Pares que no se parecen (nombre < umbral_ambiguo) con NIT canónico distinto o ausente.
 
         Primero se emparejan registros de las dos fuentes más pobladas; si no
         alcanza, se completan con pares al azar. Se sobremuestrea ×3 porque la
@@ -377,8 +377,11 @@ class GroundTruthGenerator:
         pares = self._construir_pares(pd.concat(izq_partes), pd.concat(der_partes), "easy_negative")
         if pares.empty:
             return pares
+        # NIT_SIMILARITY sale del NIT canónico (NIT_OK) y vale 0 si falta
+        # alguno de los dos; comparar el crudo (NIT_1/NIT_2, con DV o guiones)
+        # dejaba entrar pares de la misma empresa como negativos.
         claros = (pares["NAME_SIMILARITY"] < self.config.umbral_ambiguo) & (
-            (pares["NIT_1"] != pares["NIT_2"]) | (pares["NIT_1"] == "")
+            pares["NIT_SIMILARITY"] < 1.0
         )
         pares = pares.loc[claros]
         llave = pd.DataFrame(

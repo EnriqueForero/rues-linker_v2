@@ -56,6 +56,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import io
+import math
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -145,8 +146,8 @@ def espacio_de_busqueda(rangos: Mapping[str, Any]) -> Callable[[Any], dict[str, 
         ``(trial) -> dict`` listo para ``OrchestratorOptimizer``.
 
     Raises:
-        ValueError: parámetro que ningún perfil conoce, rango invertido,
-            lista vacía o especificación con otra forma. Se valida al
+        ValueError: parámetro que ningún perfil conoce, rango invertido o
+            no numérico, lista vacía o especificación con otra forma. Se valida al
             construir, no en el trial 1 después de minutos de cómputo.
     """
     conocidas = _claves_de_perfil()
@@ -162,6 +163,11 @@ def espacio_de_busqueda(rangos: Mapping[str, Any]) -> Callable[[Any], dict[str, 
         if isinstance(espec, tuple):
             if len(espec) not in (2, 3):
                 raise ValueError(f"{nombre}: una tupla debe ser (mín, máx) o (mín, máx, paso).")
+            if any(not isinstance(v, int | float) or isinstance(v, bool) for v in espec):
+                raise ValueError(
+                    f"{nombre}: una tupla define un rango numérico (mín, máx[, paso]); "
+                    "para opciones discretas use una lista."
+                )
             minimo, maximo = espec[0], espec[1]
             if minimo > maximo:
                 raise ValueError(f"{nombre}: rango invertido ({minimo} > {maximo}).")
@@ -427,8 +433,14 @@ class OrchestratorOptimizer:
         if "ESTRATO" in df.columns:
             metrics.update(self._metricas_banco(df))
 
-        score = metrics.get(optimization_target, m.f1)
-        return float(score), metrics
+        score = float(metrics.get(optimization_target, m.f1))
+        if optimization_target == "macro_f1" and not math.isfinite(score):
+            # evaluar_calidad da NaN cuando ningún estrato tiene pares (grupos
+            # de un registro, pliegue minúsculo). Un NaN entra a Optuna como
+            # trial «completed» que el mejor-hasta-ahora ignora en silencio.
+            metrics["advertencia"] = "macro_f1 sin estratos con pares"
+            score = 0.0
+        return score, metrics
 
     @staticmethod
     def _metricas_banco(df: pd.DataFrame) -> dict[str, Any]:
