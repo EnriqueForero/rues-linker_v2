@@ -246,3 +246,43 @@ def test_salida_la_consume_quality_evaluator(base: pd.DataFrame, tmp_path: Path)
 
     evaluador = QualityEvaluator(str(ruta))
     assert len(evaluador.true_matches) + len(evaluador.true_non_matches) == len(muestra)
+
+
+# ── Ronda 2 de revisión (hallazgos 1 y 4) ──────────────────────────────────
+
+
+def test_sin_oferta_devuelve_vacio_con_columnas_sin_lanzar() -> None:
+    """Hallazgo 1: si ninguna clase produce pares, ``pd.concat([])`` lanzaba
+    ``ValueError: No objects to concatenate`` y la guarda ``if salida.empty``
+    nunca corría. Dos registros con NIT distinto y nombres que no se parecen,
+    con ``n_samples=4``: fáciles y negativos piden 0 pares; difíciles y
+    ambiguos no encuentran ninguno."""
+    marco = pd.DataFrame(
+        {
+            "NIT": ["1", "2"],
+            "NIT_OK": ["1", "2"],
+            "RAZON_SOCIAL": ["ALFA", "OMEGA"],
+            "NOMBRE_LIMPIO": ["ALFA", "OMEGA"],
+        }
+    )
+    muestra = GroundTruthGenerator().create_intelligent_sample(marco, n_samples=4)
+    assert muestra.empty
+    assert list(muestra.columns) == list(COLUMNAS_SALIDA)
+
+
+def test_sin_col_nombre_falla_rapido() -> None:
+    """Hallazgo 1: sin la columna de nombre toda similitud es 0 y solo saldrían
+    negativos; el generador debe decirlo en vez de muestrear a ciegas."""
+    marco = pd.DataFrame({"RAZON_SOCIAL": ["A", "B"], "NIT": ["1", "2"]})
+    with pytest.raises(ValueError, match="col_nombre"):
+        GroundTruthGenerator().create_intelligent_sample(marco, n_samples=4)
+    # Con otra columna declarada como nombre sí corre.
+    muestra = GroundTruthGenerator(ConfigGroundTruth(col_nombre="RAZON_SOCIAL"))
+    assert isinstance(muestra.create_intelligent_sample(marco, n_samples=10), pd.DataFrame)
+
+
+def test_guardar_exige_las_columnas_de_salida(tmp_path: Path) -> None:
+    """Hallazgo 4: ``guardar`` lanzaba el ``KeyError`` crudo de pandas."""
+    with pytest.raises(ValueError, match="Faltan columnas"):
+        GroundTruthGenerator().guardar(pd.DataFrame({"ID_1": [1]}), tmp_path / "x.csv")
+    assert not (tmp_path / "x.csv").exists()

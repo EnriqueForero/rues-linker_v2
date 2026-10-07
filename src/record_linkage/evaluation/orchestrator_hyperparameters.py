@@ -413,7 +413,7 @@ class OrchestratorOptimizer:
         except Exception as exc:
             return 0.0, {"error": f"evaluar_pares falló: {exc}"}
 
-        metrics = {
+        metrics: dict[str, Any] = {
             "precision": m.precision,
             "recall": m.recall,
             "f1": m.f1,
@@ -433,7 +433,15 @@ class OrchestratorOptimizer:
         if "ESTRATO" in df.columns:
             metrics.update(self._metricas_banco(df))
 
-        score = float(metrics.get(optimization_target, m.f1))
+        if optimization_target not in metrics:
+            # Sin esto, un objetivo que no se pudo calcular (macro_f1 con una
+            # verdad explícita sin ESTRATO) devolvía el F1 global en silencio.
+            raise ValueError(
+                f"La verdad evaluada no permite calcular '{optimization_target}' "
+                "(falta ESTRATO): se devolvería otra métrica como si fuera el objetivo. "
+                "Pase una verdad con ESTRATO o use 'f1'."
+            )
+        score = float(metrics[optimization_target])
         if optimization_target == "macro_f1" and not math.isfinite(score):
             # evaluar_calidad da NaN cuando ningún estrato tiene pares (grupos
             # de un registro, pliegue minúsculo). Un NaN entra a Optuna como
@@ -447,8 +455,10 @@ class OrchestratorOptimizer:
         """Métricas estratificadas con la regla del banco (escrita una vez allí).
 
         ``evaluar_calidad`` exige ``REGIMEN`` y ``CASO``; si la verdad no los
-        trae se rellenan con un marcador explícito (ningún caso empieza por
-        ``negativo``, así que ``fp_que_tocan_negativo`` será 0 y se dice).
+        trae se rellenan con un marcador explícito. Sin ``CASO`` ningún caso
+        empieza por ``negativo``, así que ``fp_que_tocan_negativo`` vale 0 por
+        construcción: se añade ``nota_fp_negativos`` para que no llegue al
+        notebook como si se hubiera medido.
         """
         referencia = df.copy()
         for columna in ("REGIMEN", "CASO"):
@@ -460,18 +470,31 @@ class OrchestratorOptimizer:
             "b3_f1": calidad.b3_f1,
             "fp_que_tocan_negativo": calidad.fp_que_tocan_negativo,
         }
+        if "CASO" not in df.columns:
+            resultado["nota_fp_negativos"] = (
+                "CASO ausente en la verdad: fp_que_tocan_negativo no medido (0 por construcción)"
+            )
         for estrato, metricas in calidad.calidad_por_estrato.items():
             resultado[f"f1_estrato_{estrato}"] = metricas["f1"]
         return resultado
 
-    def _validar_objetivo(self, optimization_target: str) -> None:
-        """Fail-fast: objetivo conocido y, para ``macro_f1``, verdad con ``ESTRATO``."""
+    def _validar_objetivo(
+        self, optimization_target: str, verdad: pd.DataFrame | None = None
+    ) -> None:
+        """Fail-fast: objetivo conocido y, para ``macro_f1``, verdad con ``ESTRATO``.
+
+        Args:
+            optimization_target: clave de ``OBJETIVOS_VALIDOS``.
+            verdad: la verdad que de veras se va a evaluar; por defecto
+                ``self.truth``. ``evaluar_config(truth=otra)`` valida ``otra``.
+        """
+        verdad = self.truth if verdad is None else verdad
         if optimization_target not in OBJETIVOS_VALIDOS:
             raise ValueError(
                 f"optimization_target debe ser uno de {sorted(OBJETIVOS_VALIDOS)}, "
                 f"recibido: '{optimization_target}'"
             )
-        if optimization_target == "macro_f1" and "ESTRATO" not in self.truth.columns:
+        if optimization_target == "macro_f1" and "ESTRATO" not in verdad.columns:
             raise ValueError(
                 "optimization_target='macro_f1' exige la columna ESTRATO en truth: el "
                 "macro-F1 es el promedio del F1 por estrato (evaluation.banco). Añada "
@@ -661,7 +684,7 @@ class OrchestratorOptimizer:
             Métricas de ``_evaluate`` más ``score`` (la del objetivo) y
             ``elapsed_s``. Si el run falla: ``{"error": ..., "score": 0.0}``.
         """
-        self._validar_objetivo(optimization_target)
+        self._validar_objetivo(optimization_target, truth)
         cfg = self._build_config_for_trial(params)
         fuentes_previas = self.sources
         if sources is not None:

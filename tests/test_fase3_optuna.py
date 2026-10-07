@@ -422,6 +422,46 @@ class TestObjetivoMacroF1:
         assert score == 1.0
         assert "macro_f1" not in metricas
 
+    def test_evaluate_macro_f1_con_verdad_sin_estrato_falla_rapido(self, base_cfg):
+        """Hallazgo de revisión (ronda 2): ``_validar_objetivo`` miraba solo
+        ``self.truth``; una verdad explícita sin ESTRATO devolvía el F1 global
+        en silencio como si fuera macro_f1."""
+        truth = self._truth_estratificada()
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        correlativa = pd.DataFrame(
+            {"ID_REGISTRO": truth["ID_REGISTRO"], "ID_GRUPO": ["g1"] * 4 + ["g2"] * 4}
+        )
+        with pytest.raises(ValueError, match="ESTRATO"):
+            opt._evaluate(correlativa, "macro_f1", truth.drop(columns="ESTRATO"))
+        # Con la verdad estratificada sigue funcionando.
+        score, metricas = opt._evaluate(correlativa, "macro_f1")
+        assert score == metricas["macro_f1"]
+
+    def test_evaluar_config_valida_la_verdad_que_evalua(self, base_cfg):
+        """``evaluar_config(..., truth=otra)`` falla ANTES de correr el
+        Orchestrator si ``otra`` no permite el objetivo (no devuelve el dict
+        de error del run)."""
+        truth = self._truth_estratificada()
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        with pytest.raises(ValueError, match="ESTRATO"):
+            opt.evaluar_config({}, "macro_f1", truth=truth.drop(columns="ESTRATO"))
+
+    def test_sin_caso_se_dice_que_fp_negativos_no_se_midio(self, base_cfg):
+        """Hallazgo de revisión (ronda 2): sin CASO, ``fp_que_tocan_negativo``
+        vale 0 por construcción y debe llegar con una nota, no como medido."""
+        truth = self._truth_estratificada()
+        correlativa = pd.DataFrame(
+            {"ID_REGISTRO": truth["ID_REGISTRO"], "ID_GRUPO": ["g1"] * 4 + ["g2"] * 4}
+        )
+        _, con_caso = OrchestratorOptimizer(base_cfg, {}, truth)._evaluate(correlativa, "macro_f1")
+        assert "nota_fp_negativos" not in con_caso
+        sin_caso = truth.drop(columns="CASO")
+        _, metricas = OrchestratorOptimizer(base_cfg, {}, sin_caso)._evaluate(
+            correlativa, "macro_f1"
+        )
+        assert metricas["fp_que_tocan_negativo"] == 0
+        assert "CASO" in metricas["nota_fp_negativos"]
+
 
 class TestValidacionCruzada:
     """``cross_validate`` vuelve UNA vez, sobre el optimizador, con los pliegues

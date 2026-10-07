@@ -111,9 +111,11 @@ class ConfigGroundTruth:
         tamano_grupo_max: los grupos por identificador más grandes que esto no
             aportan positivos fáciles (suelen ser identificadores basura).
         col_nombre, col_nit_canonico, col_nit, col_razon_social, col_fuente:
-            columnas del DataFrame preprocesado. Las que falten se tratan como
-            vacías (sin identificador no hay positivos fáciles; sin fuente los
-            negativos salen de pares al azar).
+            columnas del DataFrame preprocesado. ``col_nombre`` es obligatoria
+            (sin ella toda similitud sería 0 y solo saldrían negativos: el
+            generador falla en vez de muestrear a ciegas). Las demás, si
+            faltan, se tratan como vacías (sin identificador no hay positivos
+            fáciles; sin fuente los negativos salen de pares al azar).
     """
 
     semilla: int = 42
@@ -193,12 +195,21 @@ class GroundTruthGenerator:
             columnas de revisión vacías.
 
         Raises:
-            ValueError: si ``n_samples`` < 1 o ``df`` está vacío.
+            ValueError: si ``n_samples`` < 1, ``df`` está vacío o no trae la
+                columna ``config.col_nombre``.
         """
         if n_samples < 1:
             raise ValueError(f"n_samples debe ser >= 1; recibido {n_samples}.")
         if df.empty:
             raise ValueError("df está vacío: no hay registros de los que muestrear pares.")
+        if self.config.col_nombre not in df.columns:
+            raise ValueError(
+                f"df no trae la columna de nombre '{self.config.col_nombre}' (col_nombre). "
+                "Sin nombre toda similitud es 0 y solo saldrían negativos: la muestra no "
+                "serviría para revisar nada. Pase ConfigGroundTruth(col_nombre=...) con la "
+                "columna que sí tiene (p. ej. 'RAZON_SOCIAL') o preprocese antes "
+                f"(columnas disponibles: {list(df.columns)})."
+            )
 
         marco = df.copy()
         marco[_COLUMNA_ID] = marco.index
@@ -223,10 +234,17 @@ class GroundTruthGenerator:
                 )
             partes.append(pares)
 
-        salida = pd.concat([p for p in partes if not p.empty], ignore_index=True)
-        if salida.empty:
+        # pd.concat([]) lanza «No objects to concatenate»: la lista vacía se
+        # resuelve antes, no después (la guarda posterior nunca corría).
+        no_vacias = [p for p in partes if not p.empty]
+        if not no_vacias:
+            self.logger.warning(
+                "Ninguna clase produjo pares: la muestra sale vacía. Revise que los "
+                "datos tengan nombres parecidos o identificadores repetidos, o suba n_samples."
+            )
             salida = pd.DataFrame(columns=list(COLUMNAS_SALIDA))
         else:
+            salida = pd.concat(no_vacias, ignore_index=True)
             for columna in _COLUMNAS_REVISION:
                 salida[columna] = None
             salida = salida.sample(frac=1, random_state=self.config.semilla).reset_index(drop=True)
@@ -238,8 +256,20 @@ class GroundTruthGenerator:
         return salida
 
     def guardar(self, ground_truth: pd.DataFrame, ruta: str | Path) -> Path:
-        """Escribe el archivo de revisión (``.xlsx`` o CSV) con las columnas en orden."""
+        """Escribe el archivo de revisión (``.xlsx`` o CSV) con las columnas en orden.
+
+        Raises:
+            ValueError: si faltan columnas de ``COLUMNAS_SALIDA`` (antes salía
+                el ``KeyError`` crudo de pandas).
+        """
         ruta = Path(ruta)
+        faltan = set(COLUMNAS_SALIDA) - set(ground_truth.columns)
+        if faltan:
+            raise ValueError(
+                f"Faltan columnas {sorted(faltan)}: guardar espera la salida de "
+                "create_intelligent_sample (COLUMNAS_SALIDA); no recorte columnas antes "
+                "de guardar."
+            )
         seguro = prepare_spreadsheet_data(ground_truth[list(COLUMNAS_SALIDA)])
         if ruta.suffix.lower() == ".xlsx":
             seguro.to_excel(ruta, index=False)
