@@ -29,9 +29,14 @@ vacío y ``col_ciudad="CIUDAD"``— y compara contra el fixture
    fase (``L1_prep`` … ``L6_reporting``), las claves de la fase y de su
    ``meta``;
 4. el número de filas de la correlativa (= filas del dataset) y del golden;
-5. (adicional) las claves del ``dict`` que devuelve ``linkage()``: F1.9 lo
-   reemplaza por ``ResultadoLinkage`` y conviene que ese cambio también
-   quede declarado aquí;
+5. (adicional) lo que devuelve ``linkage()``: desde F1.9 es un
+   ``ResultadoLinkage`` (contrato 1.0) y la foto registra su tipo, las
+   claves del ``dict`` viejo que el shim de compatibilidad sigue sirviendo
+   (``res["correlative"]``…) y las columnas, con tipo y orden, de
+   ``resultado.correlativa`` y ``resultado.golden`` en memoria — que ya no
+   son las de los parquet de ``L5_golden/`` (esos quedan como ``_trabajo/``,
+   con las columnas técnicas; el entregable las retira y añade las del
+   contrato);
 6. (adicional) el ``_meta`` del fixture (dataset, filas de entrada,
    parámetros de la llamada y patrones de normalización) se compara con lo
    que el código produce hoy, para que no documente algo rancio si alguien
@@ -61,20 +66,19 @@ El plan de ejecución (F0.4) cita 30 columnas de correlativa, 40 de golden y
 Sobre este dataset sintético de 5 columnas (NIT, RAZON_SOCIAL, CIUDAD,
 TELEFONO, ID_GROUP) la foto es: 18 columnas de correlativa (5 de entrada +
 SRC, ORIGINAL_INDEX, 6 derivadas de L1, ID_GRUPO y 4 de L5), 13 de golden y
-29 archivos de L1…L6 más ``manifest.json`` (30 en total). Las diferencias
+30 archivos de L1…L6 más ``manifest.json`` (31 en total). Las diferencias
 tienen explicación:
 
 * columnas: la correlativa arrastra todas las columnas de entrada (18 en el
   banco, 5 aquí) y el golden de F1.1 pega columnas de la correlativa al
   consolidar por NIT, cosa que no ocurre en este dataset;
-* archivos: faltan dos de los 31 del plan y en ambos casos es por diseño
-  actual, no por azar: ``L6_reporting/visualizaciones/performance_timeline.png``
-  no se genera nunca (el visualizador busca ``load_validate``… y el
-  orquestador entrega ``L1_prep``…; es la tarea F1.6) y
+* archivos: falta uno de los 31 del plan, por diseño actual:
   ``L6_reporting/casos_problematicos_detallado.xlsx`` solo se escribe cuando
-  la suite detecta casos problemáticos (aquí no hay). Ambas ausencias quedan
-  congeladas tal cual: cuando F1 las corrija, el fixture cambiará y el diff
-  lo mostrará.
+  la suite detecta casos problemáticos (aquí no hay). La ausencia queda
+  congelada tal cual: cuando se corrija, el fixture cambiará y el diff lo
+  mostrará. ``L6_reporting/visualizaciones/performance_timeline.png`` faltaba
+  hasta F1.6 (el visualizador buscaba ``load_validate``… y el orquestador
+  entrega ``L1_prep``…); desde F1.6 se genera y el fixture lo incluye.
 
 El dataset tiene 28 filas de datos (29 líneas contadas con el encabezado): la
 prueba no fija «29» a mano sino que exige correlativa == filas leídas, y el
@@ -102,6 +106,7 @@ import importlib.util
 import json
 import os
 import re
+import warnings
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -110,7 +115,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from record_linkage.api import linkage
+from record_linkage.api import ResultadoLinkage, linkage
 
 RAIZ = Path(__file__).resolve().parent
 RUTA_DATASET = RAIZ / "data_sintetica" / "dataset_sintetico_p2_extra_features.csv"
@@ -214,7 +219,28 @@ def _claves_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def tomar_foto(work_dir: Path, resultado: dict[str, Any], filas_entrada: int) -> dict[str, Any]:
+def _foto_resultado(resultado: ResultadoLinkage) -> dict[str, Any]:
+    """Lo que ``linkage()`` devuelve en memoria: tipo, claves viejas del shim y columnas."""
+    with warnings.catch_warnings():
+        # El shim avisa con DeprecationWarning; aquí se consulta a propósito.
+        warnings.simplefilter("ignore", DeprecationWarning)
+        claves_compatibles = sorted(resultado.keys())
+    golden = resultado.golden
+    return {
+        "tipo": type(resultado).__name__,
+        "claves": claves_compatibles,
+        "correlativa": {
+            "filas": len(resultado.correlativa),
+            "columnas": _columnas(resultado.correlativa),
+        },
+        "golden": {
+            "filas": 0 if golden is None else len(golden),
+            "columnas": [] if golden is None else _columnas(golden),
+        },
+    }
+
+
+def tomar_foto(work_dir: Path, resultado: ResultadoLinkage, filas_entrada: int) -> dict[str, Any]:
     """Construye la foto del esquema a partir de una corrida ya hecha en ``work_dir``."""
     correlativa = pd.read_parquet(work_dir / "L5_golden" / "correlative.parquet")
     golden = pd.read_parquet(work_dir / "L5_golden" / "golden.parquet")
@@ -237,7 +263,7 @@ def tomar_foto(work_dir: Path, resultado: dict[str, Any], filas_entrada: int) ->
         "golden": {"filas": len(golden), "columnas": _columnas(golden)},
         "archivos": _archivos_relativos(work_dir),
         "manifest": _claves_manifest(manifest),
-        "resultado": {"claves": sorted(resultado)},
+        "resultado": _foto_resultado(resultado),
     }
 
 
@@ -459,13 +485,42 @@ def test_conteo_filas(foto_esperada: dict[str, Any], foto_actual: dict[str, Any]
 
 
 def test_claves_resultado(foto_esperada: dict[str, Any], foto_actual: dict[str, Any]) -> None:
-    _fallar_si_hay(
-        diferencias_listas(
-            foto_esperada["resultado"]["claves"],
-            foto_actual["resultado"]["claves"],
-            "clave del dict que devuelve linkage()",
-        )
+    mensajes = diferencias_listas(
+        foto_esperada["resultado"]["claves"],
+        foto_actual["resultado"]["claves"],
+        "clave vieja del dict que el shim de linkage() sigue sirviendo",
     )
+    if foto_esperada["resultado"].get("tipo") != foto_actual["resultado"]["tipo"]:
+        mensajes.append(
+            f"linkage() devuelve {foto_actual['resultado']['tipo']!r}; el fixture esperaba "
+            f"{foto_esperada['resultado'].get('tipo')!r}"
+        )
+    _fallar_si_hay(mensajes)
+
+
+def test_columnas_del_resultado_en_memoria(
+    foto_esperada: dict[str, Any], foto_actual: dict[str, Any]
+) -> None:
+    """Las columnas de ``resultado.correlativa`` / ``resultado.golden`` (contrato 1.0)."""
+    mensajes = diferencias_columnas(
+        foto_esperada["resultado"]["correlativa"]["columnas"],
+        foto_actual["resultado"]["correlativa"]["columnas"],
+        "resultado.correlativa",
+    )
+    mensajes += diferencias_columnas(
+        foto_esperada["resultado"]["golden"]["columnas"],
+        foto_actual["resultado"]["golden"]["columnas"],
+        "resultado.golden",
+    )
+    mensajes += diferencias_filas(
+        foto_esperada["resultado"]["correlativa"]["filas"],
+        foto_actual["resultado"]["correlativa"]["filas"],
+        "resultado.correlativa",
+    )
+    _fallar_si_hay(mensajes)
+    # Propiedad, no foto: el entregable retira las técnicas y lleva las fijas primero.
+    columnas = [c["nombre"] for c in foto_actual["resultado"]["correlativa"]["columnas"]]
+    assert "NOMBRE_LIMPIO" not in columnas and columnas[:2] == ["ID_REGISTRO", "SRC"]
 
 
 def test_meta_del_fixture_coincide_con_el_codigo(
@@ -476,13 +531,17 @@ def test_meta_del_fixture_coincide_con_el_codigo(
 
 
 def test_fixture_no_guarda_valores_variables(foto_esperada: dict[str, Any]) -> None:
-    """El fixture guarda patrones: ninguna ruta conserva una marca de tiempo."""
+    """El fixture guarda patrones: ninguna ruta conserva una marca de tiempo.
+
+    Hasta F1.12 se exigía además que ``config_auditoria_<MARCA_TIEMPO>.*``
+    estuviera en la foto; desde F1.12 L6 escribe ``config_auditoria.json``
+    con nombre estable (alias de ``manifest.json``) y ningún archivo de la
+    corrida lleva marca de tiempo en el nombre.
+    """
     for ruta in foto_esperada["archivos"]:
         assert normalizar_ruta(ruta) == ruta, f"ruta sin normalizar en el fixture: {ruta!r}"
-    assert any("<MARCA_TIEMPO>" in r for r in foto_esperada["archivos"]), (
-        "config_auditoria_<MARCA_TIEMPO>.* debería estar en la foto; si L6 dejó de "
-        "escribirla, actualice esta prueba junto con el fixture."
-    )
+    assert "L6_reporting/config_auditoria.json" in foto_esperada["archivos"]
+    assert not any("<MARCA_TIEMPO>" in r for r in foto_esperada["archivos"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

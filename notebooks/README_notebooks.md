@@ -4,7 +4,8 @@
 > sección dicen cuándo se introdujo o se cambió por última vez ese notebook.
 
 Suite mínima para deduplicación y record linkage en **Google Colab Free**. Los
-notebooks 01–05 conservan el patrón **Celda A / A2 / B**. El nuevo 06 es un
+notebooks 01–05 conservan el patrón **Celda A / A1 / A2 / B** (la A1 fija
+`RUTA_DATOS` y `RUTA_RESULTADOS`). El nuevo 06 es un
 orquestador declarativo: entorno, parámetros, preflight, ejecución y QA lazy.
 
 ## ¿Cuál notebook usar?
@@ -43,7 +44,8 @@ orquestador declarativo: entorno, parámetros, preflight, ejecución y QA lazy.
    `pip install rues-linker @ git+https://github.com/EnriqueForero/rues-linker_v2@v0.16.0`.
    En el 06 configure una ruta exacta mediante `RUES_LINKER_WHEEL` o
    `RUES_LINKER_PROJECT_DIR` si el paquete correcto aún no está instalado.
-3. Edite únicamente las rutas y columnas de la Celda B.
+3. Revise `RUTA_DATOS`/`RUTA_RESULTADOS` en la Celda A1 y edite únicamente los
+   nombres de archivo y columnas de la Celda B.
 4. Descargue `/content/resultados/` antes de cerrar el runtime: el disco local de
    Colab es efímero.
 
@@ -54,7 +56,10 @@ resultados en el `workspace` indicado. Los notebooks 01–04 no montan Drive.
 
 Su lógica no vive en las celdas sino en `record_linkage.flujo`, que se entrega
 con pruebas; los notebooks tienen además contratos en
-`tests/test_notebooks_v014.py` y `tests/test_notebook_orquestador_v016.py`
+`tests/test_notebooks_v014.py`, `tests/test_notebook_orquestador_v016.py` y
+`tests/test_notebooks_contrato.py` (F1.15: ninguno usa la API anterior al
+contrato de salida y los siete 01–06 se ejecutan enteros con `nbclient` sobre
+`tests/data_sintetica/`, prueba marcada `slow`)
 (el primer nombre es histórico; el contrato actual es 0.16.0:
 el código compila, los nombres importados
 existen, la celda editable se mantiene corta y el trabajo nunca se configura
@@ -88,16 +93,28 @@ controle el perfil y valide el pico antes de una corrida nacional.
   más fuentes que ya caben proyectadas en memoria, el `03` conserva el flujo
   multifuente. Sus checkpoints locales viven en
   `/content/rues_linker_work/<etiqueta>/` y solo sobreviven mientras viva el runtime.
-- En el `03`, `skip_reporting=True` omite el reporte L6 redundante, pero no las
-  exportaciones GOLDEN/CORRELATIVA/MATRIZ/RESUMEN del notebook.
+- Los `01`, `02` y `03` entregan la **carpeta del estándar de salida** (contrato
+  1.0, escrita de forma atómica por `escribir_resultado`/`linkage(carpeta_salida=…)`):
+  `correlativa.parquet`, `golden.parquet` (no en el `01`: `dedupe()` no lo produce
+  en memoria), `excel/` completo o `*_LEEME.xlsx`, `diccionario.csv`, `revision.csv`
+  y `manifest.json`; `leer_resultado(carpeta)` la lee de vuelta verificando huellas.
+  Las vistas propias de cada notebook (DUPLICADOS, PARES_CRUZADOS, MATRIZ_FUENTES,
+  RESUMEN…) van en `vistas/` dentro de esa carpeta y no forman parte del contrato.
+- En el `03`, `skip_reporting=True` omite los reportes L6 (figuras y alias de v1),
+  no la carpeta del estándar ni las vistas del notebook.
 - En el `03`, `collapse_exact_duplicates=True` procesa una sola copia de filas
   exactamente iguales y restaura una fila por registro en la correlativa final.
 - En el 06, resultados productivos: `golden.parquet`, `correlativa.parquet` y
   metadatos JSON. Excel se desactiva porque materializaría la salida grande.
-- Seguridad de salida: `PipelineResult`/`SmartExporter` neutralizan texto que empieza
-  por `=`, `+`, `-`, `@`, tabulador o salto de línea antes de escribir XLSX/CSV.
-- Trazabilidad: el `03` escribe `manifiesto_corrida.json` con versión, huellas completas,
-  parámetros, controles de preprocesamiento y conteos.
+- Seguridad de salida: los `.xlsx`/`.csv.gz` (del estándar y de las vistas) se escriben
+  con las primitivas de `exporters.escritor`, que neutralizan texto que empieza por
+  `=`, `+`, `-`, `@` antes de escribir. Los notebooks ya no usan `PipelineResult`
+  (obsoleto desde el contrato de salida; hasta 0.22.x lo usaban para el Excel).
+- Trazabilidad: `manifest.json` es el único manifiesto de la corrida (versión,
+  huella y filas de cada fuente, parámetros pedidos y efectivos, conteos, métricas);
+  el `manifiesto_corrida.json` que el `03` escribía a mano desaparece.
+- El `04` (motor multicampo) exporta vistas CLUSTERS/DECISIONES, no la carpeta del
+  estándar: `evaluar_esquema` no completa el contrato 1.0 todavía.
 
 Estos notebooks reemplazan a: `fuente_unica`, `Cruce_universal_de_dos_bases`,
 `rues_linker_universal`, `Nearshoring_tres_fuentes`, `produccion_4fuentes` y

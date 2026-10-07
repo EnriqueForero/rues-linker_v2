@@ -43,6 +43,7 @@ from .deduplication.auto import deduplicate_auto
 from .deduplication.unified import deduplicate_unified
 from .engine.cobertura import ResultadoCobertura, cobertura_estrella
 from .evaluation.pairwise import evaluar_pares
+from .exporters.escritor import Manifiesto, escribir_resultado, leer_resultado
 from .flujo.importadores import (
     ConfigImportadores,
     ResultadoImportadores,
@@ -99,6 +100,7 @@ from .matching.nombre_idf import SimilitudNombre, neutralizar_genericos
 from .paises import CATALOGO_PAISES, ResultadoPaises, canonizar_pais, sugerir_alias_pais
 from .pipeline.orchestrator import Orchestrator
 from .processing.saneamiento import ascii_mayusculas, sanear_texto, unir_iniciales
+from .resultado import ReporteValidacion
 
 __all__ = [
     "CATALOGO_PAISES",
@@ -117,11 +119,13 @@ __all__ = [
     "InputFormat",
     "InvalidValuePolicy",
     "LoadedSource",
+    "Manifiesto",
     "MatcherPostProcessor",
     "MatchingProfile",
     "NumericFormat",
     "Orchestrator",
     "PoliticaFaltante",
+    "ReporteValidacion",
     "ResultadoCobertura",
     "ResultadoImportadores",
     "ResultadoLinkage",
@@ -147,12 +151,14 @@ __all__ = [
     "deduplicate_unified",
     "default_colombia_profile",
     "default_international_profile",
+    "escribir_resultado",
     "esquema_multicampo_completo",
     "esquema_rues",
     "evaluar_esquema",
     "evaluar_pares",
     "get_profile",
     "iter_source_chunks",
+    "leer_resultado",
     "link",
     "linkage",
     "load_source",

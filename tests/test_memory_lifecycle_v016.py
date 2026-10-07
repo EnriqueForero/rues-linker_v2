@@ -97,6 +97,7 @@ def _containment_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     correl = pd.DataFrame(
         {
             "ID_GRUPO": [10, 11, 12],
+            "SRC": ["RUES", "CRM", "RUES"],
             "NIT": ["8909002860", "8909002860", "800111222"],
             "RAZON_SOCIAL": [
                 "DEPARTAMENTO DE ANTIOQUIA",
@@ -114,14 +115,16 @@ def test_consolidacion_low_copy_preserva_api_y_permite_transferir_propiedad() ->
     golden, correl = _containment_frames()
     original = correl.copy(deep=True)
 
-    gold_copy, corr_copy = consolidate_groups_by_nit_balanced(golden, correl, verbose=False)
+    gold_copy, corr_copy = consolidate_groups_by_nit_balanced(
+        golden, correl, verbose=False, prioridad_fuentes=["RUES", "CRM"]
+    )
     pd.testing.assert_frame_equal(correl, original)
     assert corr_copy is not correl
     assert len(gold_copy) == 2
 
     golden, correl = _containment_frames()
     gold_owned, corr_owned = consolidate_groups_by_nit_balanced(
-        golden, correl, verbose=False, copiar_correlativa=False
+        golden, correl, verbose=False, copiar_correlativa=False, prioridad_fuentes=["RUES", "CRM"]
     )
     assert corr_owned is correl
     assert len(gold_owned) == 2
@@ -146,12 +149,19 @@ def test_consolidacion_transferida_no_queda_parcial_si_falla_validacion(
             correl,
             verbose=False,
             copiar_correlativa=False,
+            prioridad_fuentes=["RUES", "CRM"],
         )
 
     pd.testing.assert_frame_equal(correl, original)
 
 
 def test_concat_por_columnas_equivale_a_concat_tradicional() -> None:
+    """Equivale a ``pd.concat`` RESTRINGIDO a las columnas del golden (F1.1).
+
+    Hasta la 0.22.x ``SOLO_ABAJO`` (una columna de la correlativa) se pegaba al
+    golden con NaN arriba; hoy se ignora, y una columna del golden que falte
+    abajo es error en vez de NaN.
+    """
     golden = pd.DataFrame(
         {
             "ID_GRUPO": pd.array([0, 1, 2], dtype="int64"),
@@ -163,15 +173,20 @@ def test_concat_por_columnas_equivale_a_concat_tradicional() -> None:
         {
             "ID_GRUPO": pd.array([1], dtype="int64"),
             "NIT_FINAL": pd.array(["bb"], dtype="string[pyarrow]"),
+            "SOLO_ARRIBA": [0.25],
             "SOLO_ABAJO": pd.array([7], dtype="int64"),
         }
     )
     affected = {1}
-    expected = pd.concat([golden[~golden["ID_GRUPO"].isin(affected)], new], ignore_index=True)
+    expected = pd.concat([golden[~golden["ID_GRUPO"].isin(affected)], new], ignore_index=True)[
+        list(golden.columns)
+    ]
 
     result = _concat_filtrado_por_columnas(golden, new, affected)
 
     pd.testing.assert_frame_equal(result, expected)
+    with pytest.raises(ValueError, match="SOLO_ARRIBA"):
+        _concat_filtrado_por_columnas(golden, new.drop(columns=["SOLO_ARRIBA"]), affected)
 
 
 def test_liberacion_de_fuentes_no_retiene_bloques_originales() -> None:
@@ -233,13 +248,48 @@ def test_linkage_propaga_contrato_de_consumo_sin_cambiar_default(monkeypatch, tm
             self.sources = sources
             self.consume_sources = consume_sources
             self.profile = {"skip_reporting": True}
+            # Misma propiedad que Orchestrator.prioridad_fuentes: api.linkage()
+            # la lee para completar el contrato (F1.9).
+            self.prioridad_fuentes = ["RUES"]
             received_flags.append(consume_sources)
 
         def run(self, *, skip_reporting=None):
             del skip_reporting
             if self.consume_sources:
                 self.sources.clear()
-            return {"golden": pd.DataFrame(), "correlative": pd.DataFrame()}
+            # Desde F1.9 linkage() completa y valida el contrato de salida, así
+            # que el motor fingido devuelve la forma mínima que L5 produce.
+            correlative = pd.DataFrame(
+                {
+                    "NIT": ["1"],
+                    "RAZON_SOCIAL": ["ACME"],
+                    "SRC": ["RUES"],
+                    "ORIGINAL_INDEX": [0],
+                    "ID_GRUPO": [0],
+                    "NIT_FINAL": ["1"],
+                    "RAZON_SOCIAL_FINAL": ["ACME"],
+                    "NAME_SIMILARITY_SCORE": [1.0],
+                    "NIT_DISTANCE": [0],
+                }
+            )
+            golden = pd.DataFrame(
+                {
+                    "ID_GRUPO": [0],
+                    "NIT_FINAL": ["1"],
+                    "RAZON_SOCIAL_FINAL": ["ACME"],
+                    "PRIMARY_SOURCE": ["RUES"],
+                    "SOURCES_LIST": ["RUES"],
+                    "SOURCES_COUNT": [1],
+                    "RECORD_COUNT": [1],
+                    "NAME_VARIATIONS": [1],
+                    "NIT_VARIATIONS": [1],
+                    "CONFIDENCE_SCORE": [1.0],
+                    "CONFIANZA": ["MEDIA"],
+                    "REQUIRES_REVIEW": [0],
+                    "CREATED_AT": ["2026-10-06 00:00:00"],
+                }
+            )
+            return {"golden": golden, "correlative": correlative}
 
     monkeypatch.setattr(orchestrator_module, "Orchestrator", FakeOrchestrator)
     monkeypatch.setattr(

@@ -4,21 +4,73 @@ reporting.reports — record_linkage_pipeline
 Componentes:
     - class ReportGenerator  (origen: notebook celda [136])
 
-NOTA: Lógica de negocio preservada exactamente como en el notebook
-fuente. Solo se agregan imports, docstring de módulo y se eliminan
-directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+NOTA: el módulo nació como migración literal del notebook (celda [136]);
+la lógica de negocio ya NO es la del notebook. F1.5 (v2) cambió el alcance:
+los agregados (``analisis_fuentes``, ``estadisticas_grupos`` y los totales
+del ``resumen_ejecutivo``) se calculan sobre la tabla COMPLETA. Hasta aquí el
+generador cargaba una muestra de ``report_sample_size`` (100.000) filas y a
+139k registros el reporte decía «total 99.997» sin rotularlo. Lo único que
+sigue recortado —los casos de revisión ilustrativos— lo declara con la
+columna ``ALCANCE`` y en ``metrics["muestras"]``; y si quien llamó recortó
+las tablas (orquestador bajo RAM crítica) y lo declaró en
+``metrics["muestras"]``, ningún reporte presenta esa vista como total.
 """
 
 from __future__ import annotations
 
 import gc
 import os
+from functools import cached_property
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from ..pipeline.errores import ErrorPipeline, mensaje_accionable
 from ..utils.logger import CustomLogger
-from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
+from ._sqlite import (
+    open_readonly_sqlite,
+    quote_existing_table,
+    quote_sqlite_identifier,
+    validate_row_limit,
+)
+
+# Columnas de la correlativa que los reportes consumen. Cuando la tabla llega
+# por archivo se leen SOLO estas: los agregados son groupby sobre SRC/ID_GRUPO
+# y cargar las demás columnas (todas las de la fuente) sería una copia inútil.
+COLUMNAS_CORRELATIVA_REPORTES: tuple[str, ...] = ("ID_GRUPO", "SRC")
+
+# Perillas heredadas que ya no recortan nada: se avisa, no se ignora en silencio.
+PERILLAS_MUESTRA_RETIRADAS: tuple[str, ...] = ("report_sample_size", "report_chunk_size")
+
+# Tope de casos de revisión ilustrativos (el único reporte que se recorta).
+MAX_CASOS_REVISION_POR_DEFECTO = 1000
+
+# Valor de ``ALCANCE`` cuando la cifra cubre toda la tabla (o viene de una
+# métrica calculada sobre ella). Lo demás lleva ``MUESTRA (n de N)``.
+ALCANCE_COMPLETO = "COMPLETO"
+
+# Métricas del resumen cuyo valor real, si falta la métrica y la tabla llegó
+# recortada, es el N declarado de esa tabla en ``metrics["muestras"]``.
+TOTAL_DECLARADO_POR_METRICA: dict[str, str] = {
+    "total_records": "correlativa",
+    "unique_groups": "golden",
+}
+from ._fases import ETIQUETAS_FASE, formatear_segundos, tiempos_por_fase
+
+
+def _entero_o_na(valor: int | None) -> str:
+    """Entero con separador de miles, o «N/A» si la métrica no se pudo medir.
+
+    Un conteo ausente (base SQLite no encontrada) no se muestra como 0: ese 0
+    es justo la cifra falsa que F1.7 elimina del resumen ejecutivo.
+    """
+    return "N/A" if valor is None else f"{int(valor):,}"
+
+
+def _gib_o_na(rss_mib: float | None) -> str:
+    """RSS pico en GiB con dos decimales, o «N/A» si ninguna fase lo midió."""
+    return "N/A" if rss_mib is None else f"{rss_mib / 1024:.2f} GiB"
 
 
 class ReportGenerator:
@@ -31,6 +83,24 @@ class ReportGenerator:
     - Generación robusta de reportes con manejo granular de errores
     - Optimización para Google Colab y entornos con memoria limitada
     - Logging detallado para debugging y monitoreo
+
+    Alcance de cada reporte (F1.5):
+    - ``resumen_ejecutivo``, ``analisis_fuentes``, ``estadisticas_grupos`` y
+      ``metricas_calidad``: sobre la tabla completa (correlativa y golden).
+      Un DataFrame recibido se usa por referencia, sin copiar; un archivo se
+      lee solo en las columnas necesarias.
+    - ``casos_revision``: la prioridad se calcula sobre TODO el golden y el
+      reporte lleva los ``max_casos_revision`` primeros. Si recorta, cada fila
+      dice ``ALCANCE = MUESTRA (n de N)`` y ``metrics["muestras"]["casos_revision"]``
+      registra ``{"n": n, "N": N}``; si no, ``ALCANCE = COMPLETO (N de N)``.
+    - Si quien llamó declaró en ``metrics["muestras"]["correlativa"|"golden"]``
+      que la tabla llegó recortada (``{"n": n, "N": N}``), ningún reporte dice
+      COMPLETO: los agregados llevan ``ALCANCE = MUESTRA (n de N)``, el resumen
+      toma los totales y la calidad de las métricas (calculadas antes del
+      recorte) o del N declarado, y rotula fila a fila lo que solo pudo salir
+      de la vista; ``casos_revision`` añade ``golden_vista`` a su registro.
+    - ``metrics["muestras"]`` solo existe si algo se recortó: ausente
+      significa «todo completo».
     """
 
     def __init__(
@@ -46,59 +116,92 @@ class ReportGenerator:
         Args:
             correlative_data: DataFrame o ruta a archivo con tabla correlativa
             golden_records_data: DataFrame o ruta a archivo con golden records
-            metrics: Diccionario con métricas del proceso
-            config: Configuración opcional del sistema
+            metrics: Diccionario con métricas del proceso. Se conserva la
+                referencia: ``generate_all_reports`` escribe en él la clave
+                ``muestras`` con lo que se recortó.
+            config: Configuración opcional del sistema. ``report_max_casos_revision``
+                acota el reporte de casos de revisión (1000 por defecto).
         """
-        self.metrics = metrics or {}
+        # La referencia se conserva (no `metrics or {}`): un dict vacío del
+        # llamador es donde se registra `muestras`.
+        self.metrics = metrics if metrics is not None else {}
         self.config = config or {}
         self.logger = CustomLogger("ReportGenerator")
 
-        # Configuración de límites de memoria
-        self.sample_size = config.get("report_sample_size", 100000)
-        self.chunk_size = config.get("report_chunk_size", 50000)
+        self.max_casos_revision = self._validar_tope_casos_revision(
+            self.config.get("report_max_casos_revision", MAX_CASOS_REVISION_POR_DEFECTO)
+        )
+        for perilla in PERILLAS_MUESTRA_RETIRADAS:
+            if perilla in self.config:
+                self.logger.warning(
+                    f"'{perilla}' ya no aplica: los reportes se calculan sobre la tabla "
+                    "completa (F1.5). Por qué importa: una muestra sin rótulo daba totales "
+                    "falsos. Qué hacer: retire la perilla de la configuración."
+                )
 
         # Logging de diagnóstico mejorado
         self.logger.info("=" * 60)
         self.logger.info("Inicializando ReportGenerator V6.0 - VERSIÓN FINAL")
         self.logger.info(f"Tipo correlative_data: {type(correlative_data)}")
         self.logger.info(f"Tipo golden_records_data: {type(golden_records_data)}")
-        self.logger.info(f"Métricas recibidas: {list(metrics.keys())}")
-        self.logger.info(f"Límite de muestra: {self.sample_size:,} registros")
+        self.logger.info(f"Métricas recibidas: {list(self.metrics.keys())}")
+        self.logger.info(f"Tope de casos de revisión: {self.max_casos_revision:,}")
         self.logger.info("=" * 60)
 
         # Guardar referencias originales
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
 
-        # Cargar datos con gestión inteligente de memoria
-        self.correlative_sample = self._load_data_sample(correlative_data, "correlative_table")
-        self.golden_records = self._load_data_sample(golden_records_data, "golden_records")
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió;
+        # la estrategia que lo usa lo etiqueta con su propia clase.
+        self.omitidos: list[tuple[str, str]] = []
+
+        # Cargar las tablas completas (la correlativa, solo en sus columnas útiles)
+        self.correlativa = self._cargar_tabla(
+            correlative_data, "correlative_table", columnas=COLUMNAS_CORRELATIVA_REPORTES
+        )
+        self.golden_records = self._cargar_tabla(golden_records_data, "golden_records")
 
         # Validar datos cargados
         self._validate_loaded_data()
 
-        self.logger.info(f"Datos listos - Correlativa: {len(self.correlative_sample):,} registros")
+        self.logger.info(f"Datos listos - Correlativa: {len(self.correlativa):,} registros")
         self.logger.info(f"Datos listos - Golden: {len(self.golden_records):,} registros")
 
-    # def _setup_logger(self) -> logging.Logger:
-    #     """Configura logger con formato consistente."""
-    #     logger = logging.getLogger('ReportGenerator')
-    #     if not logger.handlers:
-    #         handler = logging.StreamHandler()
-    #         formatter = logging.Formatter(
-    #             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    #         )
-    #         handler.setFormatter(formatter)
-    #         logger.addHandler(handler)
-    #         logger.setLevel(logging.INFO)
-    #     return logger
+    @staticmethod
+    def _validar_tope_casos_revision(valor: object) -> int:
+        """Exige un entero ≥ 1 para ``report_max_casos_revision``; si no, falla rápido.
+
+        Reutiliza ``validate_row_limit`` (rechaza no enteros y negativos) y añade
+        el cero: ``head(0)`` dejaría el reporte vacío y ``head(-5)`` lo rotularía
+        como «MUESTRA (N-5 de N)», un rótulo absurdo registrado como muestra.
+        """
+        try:
+            tope = validate_row_limit(valor, label="report_max_casos_revision")
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                mensaje_accionable(
+                    f"report_max_casos_revision={valor!r} no es un entero ≥ 1 ({e}).",
+                    "el tope recorta los casos de revisión con head(); un valor inválido "
+                    "produce un reporte vacío o un rótulo MUESTRA absurdo.",
+                    "configure un entero positivo (1000 por defecto).",
+                )
+            ) from e
+        if tope < 1:
+            raise ValueError(
+                mensaje_accionable(
+                    f"report_max_casos_revision={tope} es cero.",
+                    "el reporte de casos de revisión quedaría vacío sin aviso.",
+                    "configure un entero positivo (1000 por defecto).",
+                )
+            )
+        return tope
 
     def _validate_loaded_data(self):
         """Valida que los datos cargados tengan las columnas mínimas necesarias."""
         # Validar tabla correlativa
-        if not self.correlative_sample.empty:
-            required_cols = ["ID_GRUPO", "SRC"]
-            missing = set(required_cols) - set(self.correlative_sample.columns)
+        if not self.correlativa.empty:
+            missing = set(COLUMNAS_CORRELATIVA_REPORTES) - set(self.correlativa.columns)
             if missing:
                 self.logger.warning(f"Columnas faltantes en correlativa: {missing}")
 
@@ -109,57 +212,31 @@ class ReportGenerator:
             if missing:
                 self.logger.warning(f"Columnas faltantes en golden records: {missing}")
 
-    def _load_data_sample(self, data_ref: pd.DataFrame | str, table_name: str) -> pd.DataFrame:
-        """
-        Carga datos de forma inteligente con manejo robusto de errores.
-        Versión mejorada con soporte para más formatos.
+    def _cargar_tabla(
+        self,
+        data_ref: pd.DataFrame | str,
+        table_name: str,
+        columnas: tuple[str, ...] | None = None,
+    ) -> pd.DataFrame:
+        """Carga una tabla COMPLETA desde memoria o archivo.
+
+        Un DataFrame se devuelve por referencia (no se copia ni se muestrea).
+        Un archivo se lee entero; si ``columnas`` viene, solo esas columnas (las
+        que existan). Si falla la carga se registra el error y se devuelve un
+        DataFrame vacío con la estructura mínima, como hacía la versión heredada.
         """
         try:
-            # Si ya es DataFrame, gestionar muestra
             if isinstance(data_ref, pd.DataFrame):
                 self.logger.debug(f"Usando DataFrame en memoria para '{table_name}'")
-                if len(data_ref) > self.sample_size:
-                    self.logger.info(
-                        f"Dataset grande detectado. Tomando muestra de {self.sample_size:,} registros"
-                    )
-                    # Muestra estratificada si es posible
-                    if "SRC" in data_ref.columns and table_name == "correlative_table":
-                        return self._stratified_sample(data_ref, "SRC", self.sample_size)
-                    return data_ref.sample(n=self.sample_size, random_state=42)
                 return data_ref
 
-            # Si es una ruta, cargar según el tipo
             if isinstance(data_ref, str) and os.path.exists(data_ref):
                 self.logger.info(
                     f"Cargando '{table_name}' desde archivo: {os.path.basename(data_ref)}"
                 )
-
-                # SQLite
                 if data_ref.endswith(".db"):
-                    return self._load_from_sqlite(data_ref, table_name)
-
-                # Parquet
-                elif data_ref.endswith(".parquet"):
-                    df = pd.read_parquet(data_ref)
-                    return self._apply_sample_limit(df, table_name)
-
-                # CSV (normal o comprimido)
-                elif data_ref.endswith((".csv", ".csv.gz", ".csv.zip")):
-                    # Para archivos grandes, usar chunks
-                    if os.path.getsize(data_ref) > 100 * 1024 * 1024:  # > 100MB
-                        return self._load_csv_chunked(data_ref)
-                    df = pd.read_csv(data_ref)
-                    return self._apply_sample_limit(df, table_name)
-
-                # Excel
-                elif data_ref.endswith((".xlsx", ".xls")):
-                    df = pd.read_excel(data_ref)
-                    return self._apply_sample_limit(df, table_name)
-
-                # HDF5
-                elif data_ref.endswith(".h5"):
-                    df = pd.read_hdf(data_ref, key=table_name)
-                    return self._apply_sample_limit(df, table_name)
+                    return self._load_from_sqlite(data_ref, table_name, columnas)
+                return self._leer_archivo_plano(data_ref, table_name, columnas)
 
         except Exception as e:
             self.logger.error(f"Error cargando '{table_name}': {e!s}")
@@ -169,85 +246,56 @@ class ReportGenerator:
         self.logger.warning(f"No se pudo cargar '{table_name}', usando DataFrame vacío")
         return self._create_empty_dataframe(table_name)
 
-    def _load_from_sqlite(self, db_path: str, table_name: str) -> pd.DataFrame:
-        """Carga datos desde SQLite con consulta optimizada."""
+    @staticmethod
+    def _leer_archivo_plano(
+        ruta: str, table_name: str, columnas: tuple[str, ...] | None
+    ) -> pd.DataFrame:
+        """Lee parquet/CSV/Excel/HDF5 completo; parquet y CSV solo en ``columnas``."""
+        if ruta.endswith(".parquet"):
+            if columnas is None:
+                return pd.read_parquet(ruta)
+            import pyarrow.parquet as pq
+
+            presentes = [c for c in columnas if c in pq.read_schema(ruta).names]
+            return pd.read_parquet(ruta, columns=presentes or None)
+
+        if ruta.endswith((".csv", ".csv.gz", ".csv.zip")):
+            if columnas is None:
+                return pd.read_csv(ruta)
+            quiero = set(columnas)
+            return pd.read_csv(ruta, usecols=lambda c: c in quiero)
+
+        if ruta.endswith((".xlsx", ".xls")):
+            return pd.read_excel(ruta)
+
+        if ruta.endswith(".h5"):
+            return pd.read_hdf(ruta, key=table_name)
+
+        raise ValueError(
+            f"Formato no reconocido para '{table_name}': {Path(ruta).name}. "
+            "Se aceptan .db, .parquet, .csv(.gz|.zip), .xlsx/.xls y .h5."
+        )
+
+    def _load_from_sqlite(
+        self, db_path: str, table_name: str, columnas: tuple[str, ...] | None = None
+    ) -> pd.DataFrame:
+        """Carga una tabla SQLite completa (solo ``columnas``, si se indican y existen)."""
         try:
             with open_readonly_sqlite(db_path) as conn:
                 quoted_table = quote_existing_table(conn, table_name)
-                sample_size = validate_row_limit(self.sample_size)
-
-                # Cargar muestra con consulta optimizada
-                if table_name == "correlative_table":
-                    # Para correlativa, muestra estratificada por fuente
-                    query = f"""
-                    WITH sampled AS (
-                        SELECT *, ROW_NUMBER() OVER (PARTITION BY SRC ORDER BY RANDOM()) as rn
-                        FROM {quoted_table}
-                    )
-                    SELECT * FROM sampled
-                    WHERE rn <= ?
-                    LIMIT ?
-                    """
-                    params = (sample_size // 10, sample_size)
-                else:
-                    # Para otras tablas, muestra aleatoria simple
-                    query = f"SELECT * FROM {quoted_table} LIMIT ?"
-                    params = (sample_size,)
-
-                return pd.read_sql_query(query, conn, params=params)
+                seleccion = "*"
+                if columnas is not None:
+                    existentes = {
+                        str(fila[1]) for fila in conn.execute(f"PRAGMA table_info({quoted_table})")
+                    }
+                    presentes = [c for c in columnas if c in existentes]
+                    if presentes:
+                        seleccion = ", ".join(quote_sqlite_identifier(c) for c in presentes)
+                return pd.read_sql_query(f"SELECT {seleccion} FROM {quoted_table}", conn)
 
         except Exception as e:
             self.logger.error(f"Error en consulta SQLite: {e!s}")
             return self._create_empty_dataframe(table_name)
-
-    def _load_csv_chunked(self, csv_path: str) -> pd.DataFrame:
-        """Carga CSV grande por chunks para optimizar memoria."""
-        chunks = []
-        rows_loaded = 0
-
-        for chunk in pd.read_csv(csv_path, chunksize=self.chunk_size):
-            chunks.append(chunk)
-            rows_loaded += len(chunk)
-            if rows_loaded >= self.sample_size:
-                break
-
-        if chunks:
-            df = pd.concat(chunks, ignore_index=True)
-            return df.head(self.sample_size)
-
-        return pd.DataFrame()
-
-    def _stratified_sample(
-        self, df: pd.DataFrame, stratify_col: str, n_samples: int
-    ) -> pd.DataFrame:
-        """Realiza muestreo estratificado preservando proporciones."""
-        try:
-            # Calcular proporción de cada estrato
-            strata_props = df[stratify_col].value_counts(normalize=True)
-
-            # Muestrear de cada estrato
-            samples = []
-            for stratum, prop in strata_props.items():
-                stratum_df = df[df[stratify_col] == stratum]
-                n_stratum_samples = max(1, int(n_samples * prop))
-                n_stratum_samples = min(n_stratum_samples, len(stratum_df))
-
-                samples.append(stratum_df.sample(n=n_stratum_samples, random_state=42))
-
-            return pd.concat(samples, ignore_index=True)
-
-        except Exception as e:
-            self.logger.warning(f"Error en muestreo estratificado: {e!s}")
-            return df.sample(n=min(n_samples, len(df)), random_state=42)
-
-    def _apply_sample_limit(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
-        """Aplica límite de muestra a un DataFrame."""
-        if len(df) > self.sample_size:
-            self.logger.info(f"Aplicando límite de {self.sample_size:,} registros a {table_name}")
-            if "SRC" in df.columns and table_name == "correlative_table":
-                return self._stratified_sample(df, "SRC", self.sample_size)
-            return df.sample(n=self.sample_size, random_state=42)
-        return df
 
     def _create_empty_dataframe(self, table_name: str) -> pd.DataFrame:
         """Crea DataFrame vacío con estructura esperada."""
@@ -260,12 +308,122 @@ class ReportGenerator:
         else:
             return pd.DataFrame()
 
+    # ------------------------------------------------------------------
+    # Agregados sobre la correlativa completa (se calculan una vez)
+    # ------------------------------------------------------------------
+
+    @cached_property
+    def _tamanos_grupo(self) -> pd.Series:
+        """Registros por ``ID_GRUPO`` sobre toda la correlativa (vacío si no hay columna)."""
+        if self.correlativa.empty or "ID_GRUPO" not in self.correlativa.columns:
+            return pd.Series(dtype="int64")
+        return self.correlativa.groupby("ID_GRUPO").size()
+
+    @cached_property
+    def _por_fuente(self) -> pd.DataFrame:
+        """Registros y grupos distintos por ``SRC`` sobre toda la correlativa."""
+        if self.correlativa.empty or not set(COLUMNAS_CORRELATIVA_REPORTES) <= set(
+            self.correlativa.columns
+        ):
+            return pd.DataFrame(columns=["SRC", "Total_Registros", "Grupos_Unicos"])
+        return (
+            self.correlativa.groupby("SRC")
+            .agg(Total_Registros=("ID_GRUPO", "size"), Grupos_Unicos=("ID_GRUPO", "nunique"))
+            .reset_index()
+        )
+
+    @cached_property
+    def _grupos_multifuente(self) -> int | None:
+        """Grupos con más de una fuente, o ``None`` si la correlativa no lo permite."""
+        if self.correlativa.empty or not set(COLUMNAS_CORRELATIVA_REPORTES) <= set(
+            self.correlativa.columns
+        ):
+            return None
+        return int((self.correlativa.groupby("ID_GRUPO")["SRC"].nunique() > 1).sum())
+
+    def _muestra_declarada(self, tabla: str) -> dict[str, int] | None:
+        """``{"n", "N"}`` si quien llamó declaró en ``metrics["muestras"]`` que la
+        tabla (``"correlativa"`` o ``"golden"``) llegó recortada; si no, ``None``."""
+        muestras = self.metrics.get("muestras")
+        declarado = muestras.get(tabla) if isinstance(muestras, dict) else None
+        if not isinstance(declarado, dict) or "n" not in declarado or "N" not in declarado:
+            return None
+        return {"n": int(declarado["n"]), "N": int(declarado["N"])}
+
+    @staticmethod
+    def _rotulo_muestra(muestra: dict[str, int]) -> str:
+        return f"MUESTRA ({muestra['n']} de {muestra['N']})"
+
+    def _alcance_declarado(self, tabla: str) -> str | None:
+        """Rótulo ``MUESTRA (n de N)`` de la tabla declarada recortada, o ``None``."""
+        declarado = self._muestra_declarada(tabla)
+        return None if declarado is None else self._rotulo_muestra(declarado)
+
+    def _rotular_alcance(self, reporte: pd.DataFrame, tabla: str) -> pd.DataFrame:
+        """Añade ``ALCANCE`` al reporte solo si la tabla que lo alimenta llegó recortada."""
+        alcance = self._alcance_declarado(tabla)
+        if alcance is not None:
+            reporte["ALCANCE"] = alcance
+        return reporte
+
+    def _cifra_del_resumen(
+        self, nombre_metrica: str, valor_tabla: int | float | None, tabla: str
+    ) -> tuple[int | float, str]:
+        """Cifra del resumen y su alcance: ``(valor, "COMPLETO" | "MUESTRA (n de N)")``.
+
+        - Tabla completa: se prefiere el conteo de la tabla y se avisa si la
+          métrica heredada discrepa (pudo salir de una muestra).
+        - Tabla declarada recortada en ``metrics["muestras"][tabla]``: la tabla es
+          una vista. Se usa la métrica (calculada antes del recorte); si falta y
+          la cifra es el total de una tabla (``TOTAL_DECLARADO_POR_METRICA``), el
+          N declarado; y si tampoco, el valor de la vista ROTULADO como muestra.
+        """
+        valor_metrica = self.metrics.get(nombre_metrica)
+        declarado = self._muestra_declarada(tabla)
+        if declarado is not None:
+            if valor_metrica is not None:
+                return valor_metrica, ALCANCE_COMPLETO
+            tabla_total = TOTAL_DECLARADO_POR_METRICA.get(nombre_metrica)
+            total = self._muestra_declarada(tabla_total) if tabla_total else None
+            if total is not None:
+                return total["N"], ALCANCE_COMPLETO
+            return valor_tabla or 0, self._rotulo_muestra(declarado)
+        if valor_tabla is None:
+            return valor_metrica or 0, ALCANCE_COMPLETO
+        if valor_metrica is not None and valor_metrica != valor_tabla:
+            self.logger.warning(
+                mensaje_accionable(
+                    f"metrics['{nombre_metrica}']={valor_metrica:,} difiere de la tabla "
+                    f"completa ({valor_tabla:,}); el resumen usa la tabla.",
+                    "la métrica heredada pudo salir de una muestra.",
+                    "revise quién la calcula.",
+                )
+            )
+        return valor_tabla, ALCANCE_COMPLETO
+
     def generate_all_reports(self) -> dict[str, pd.DataFrame]:
         """
-        Genera todos los reportes disponibles con manejo robusto de errores.
-        Versión mejorada con más reportes y mejor gestión de memoria.
+        Genera todos los reportes disponibles.
+
+        Un reporte que falla o no tiene datos NO entra al diccionario: hasta
+        F1.4 se devolvía un DataFrame con una sola celda «Error generando
+        reporte: …» que terminaba escrito como xlsx. Ahora se omite y queda en
+        ``self.omitidos`` como ``(archivo, motivo)``.
         """
         self.logger.info("Iniciando generación de reportes...")
+        self.omitidos = []
+
+        # Registro de lo que se recorta: ausente significa que todo es completo.
+        # Se conserva lo que declaró quien llamó (p. ej. el orquestador bajo
+        # presión de RAM), se regenera solo la entrada propia y la clave se crea
+        # únicamente cuando hay algo que registrar.
+        muestras = self.metrics.get("muestras")
+        if isinstance(muestras, dict):
+            muestras.pop("casos_revision", None)
+            if not muestras:
+                # Venía solo con la entrada propia de otra corrida: si queda
+                # vacío, la clave desaparece («ausente» = todo completo).
+                self.metrics.pop("muestras", None)
 
         # Definir todos los reportes disponibles (orden optimizado)
         report_generators = [
@@ -288,6 +446,7 @@ class ReportGenerator:
                 # Verificar si debe generarse
                 if not always_generate and self._should_skip_report(report_name):
                     self.logger.info(f"⏭️  {report_name}: Omitido (datos insuficientes)")
+                    self._omitir(report_name, "datos insuficientes")
                     skipped += 1
                     continue
 
@@ -302,14 +461,23 @@ class ReportGenerator:
                     successful += 1
                     self.logger.info(f"✓ {report_name}: {len(report_df)} filas generadas")
                 else:
-                    self.logger.warning(f"✗ {report_name}: Sin datos para generar")
-                    failed += 1
+                    # El generador ya dijo en el log por qué no hay datos (p. ej.
+                    # «sin tiempos por fase»); no se escribe ningún archivo y la
+                    # omisión queda registrada para el manifiesto (F1.4).
+                    self.logger.info(f"⏭️  {report_name}: Omitido (sin datos)")
+                    self._omitir(report_name, "el generador no devolvió filas")
+                    skipped += 1
 
+            except ErrorPipeline:
+                # Un defecto del pipeline (phase_times malformado, muestreo) no
+                # es «un reporte que no salió»: sube y la estrategia lo declara.
+                raise
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ {report_name}: Error - {e!s}", exc_info=True)
-                # Crear reporte de error
-                reports[report_name] = pd.DataFrame({"Error": [f"Error generando reporte: {e!s}"]})
+                # F1.4: nunca un archivo con un error dentro. Se omite y se
+                # deja constancia; el usuario lo ve en manifest.json.
+                self._omitir(report_name, f"{type(e).__name__}: {e!s}")
 
         # Liberar memoria después de generar reportes
         gc.collect()
@@ -320,10 +488,13 @@ class ReportGenerator:
 
         return reports
 
+    def _omitir(self, report_name: str, motivo: str) -> None:
+        self.omitidos.append((f"reporte_{report_name}.xlsx", motivo))
+
     def _should_skip_report(self, report_name: str) -> bool:
         """Determina si un reporte debe omitirse por falta de datos."""
         if report_name in ["analisis_fuentes", "estadisticas_grupos"]:
-            return self.correlative_sample.empty
+            return self.correlativa.empty
         elif report_name in ["metricas_calidad", "casos_revision"]:
             return self.golden_records.empty
         return False
@@ -331,46 +502,91 @@ class ReportGenerator:
     def _generate_executive_summary(self) -> pd.DataFrame:
         """
         Genera resumen ejecutivo con métricas principales.
-        Versión mejorada con más métricas y formato profesional.
+
+        F1.5: cada fila sabe de dónde sale su cifra. Si alguna tabla llegó
+        recortada y declarada, el reporte lleva la columna ``ALCANCE`` con
+        ``COMPLETO`` (tabla completa, métrica o N declarado) o ``MUESTRA (n de N)``
+        (la cifra solo pudo salir de la vista). Sin recorte no hay columna.
         """
         try:
-            summary_data = []
+            summary_data: list[dict[str, str]] = []
+            hay_recorte = any(
+                self._muestra_declarada(tabla) is not None for tabla in ("correlativa", "golden")
+            )
 
-            # --- MÉTRICAS DE VOLUMEN ---
-            total_records = self.metrics.get("total_records", 0)
-            unique_groups = self.metrics.get("unique_groups", 0)
+            def fila(
+                categoria: str, metrica: str, valor: str, descripcion: str, alcance: str
+            ) -> dict[str, str]:
+                return {
+                    "Categoría": categoria,
+                    "Métrica": metrica,
+                    "Valor": valor,
+                    "Descripción": descripcion,
+                    "ALCANCE": alcance,
+                }
 
-            # Contar fuentes si están disponibles
-            num_sources = 0
-            if not self.correlative_sample.empty and "SRC" in self.correlative_sample.columns:
-                num_sources = self.correlative_sample["SRC"].nunique()
+            # --- MÉTRICAS DE VOLUMEN (sobre la correlativa completa; F1.5) ---
+            # El total es el de la tabla COMPLETA (len), no la suma de los
+            # tamaños de grupo: groupby descarta las filas con ID_GRUPO nulo y
+            # el resumen diría menos que analisis_fuentes sobre la misma tabla.
+            tamanos = self._tamanos_grupo
+            hay_tabla = not tamanos.empty
+            sin_grupo = len(self.correlativa) - int(tamanos.sum()) if hay_tabla else 0
+            if sin_grupo:
+                self.logger.warning(
+                    mensaje_accionable(
+                        f"{sin_grupo:,} fila(s) de la correlativa no tienen ID_GRUPO.",
+                        "el motor asigna grupo a toda fila; esas filas cuentan en el total "
+                        "pero en ningún grupo.",
+                        "revise la fase L4/L5 de esta corrida antes de usar el resultado.",
+                    )
+                )
+            total_records, alc_total = self._cifra_del_resumen(
+                "total_records", len(self.correlativa) if hay_tabla else None, "correlativa"
+            )
+            unique_groups, alc_grupos = self._cifra_del_resumen(
+                "unique_groups", len(tamanos) if hay_tabla else None, "correlativa"
+            )
+            multi_source_groups, alc_multi = self._cifra_del_resumen(
+                "multi_source_groups", self._grupos_multifuente, "correlativa"
+            )
+            fuentes_tabla = None
+            if not self.correlativa.empty and "SRC" in self.correlativa.columns:
+                fuentes_tabla = int(self.correlativa["SRC"].nunique())
+            num_sources, alc_fuentes = self._cifra_del_resumen(
+                "sources_count", fuentes_tabla, "correlativa"
+            )
 
             summary_data.extend(
                 [
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Total Registros Procesados",
-                        "Valor": f"{total_records:,}",
-                        "Descripción": "Número total de registros de entrada",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Entidades Únicas Identificadas",
-                        "Valor": f"{unique_groups:,}",
-                        "Descripción": "Grupos únicos después del linkage",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Fuentes de Datos",
-                        "Valor": str(num_sources) if num_sources > 0 else "N/A",
-                        "Descripción": "Número de fuentes procesadas",
-                    },
-                    {
-                        "Categoría": "VOLUMEN",
-                        "Métrica": "Entidades Multi-fuente",
-                        "Valor": f"{self.metrics.get('multi_source_groups', 0):,}",
-                        "Descripción": "Grupos con registros de múltiples fuentes",
-                    },
+                    fila(
+                        "VOLUMEN",
+                        "Total Registros Procesados",
+                        f"{int(total_records):,}",
+                        "Número total de registros de entrada",
+                        alc_total,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Entidades Únicas Identificadas",
+                        f"{int(unique_groups):,}",
+                        "Grupos únicos después del linkage",
+                        alc_grupos,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Fuentes de Datos",
+                        str(int(num_sources)) if num_sources > 0 else "N/A",
+                        "Número de fuentes procesadas",
+                        alc_fuentes,
+                    ),
+                    fila(
+                        "VOLUMEN",
+                        "Entidades Multi-fuente",
+                        f"{int(multi_source_groups):,}",
+                        "Grupos con registros de múltiples fuentes",
+                        alc_multi,
+                    ),
                 ]
             )
 
@@ -378,59 +594,77 @@ class ReportGenerator:
             linkage_rate = self.metrics.get("linkage_rate", 0)
             reduction_rate = self.metrics.get("reduction_rate", 0)
 
+            # Las métricas de eficiencia vienen del proceso (L2/L3), no de las tablas.
             summary_data.extend(
                 [
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Tasa de Linkage",
-                        "Valor": f"{linkage_rate:.2%}",
-                        "Descripción": "Porcentaje de registros vinculados",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Tasa de Reducción",
-                        "Valor": f"{reduction_rate:.2%}",
-                        "Descripción": "Reducción lograda por deduplicación",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Candidatos Encontrados",
-                        "Valor": f"{self.metrics.get('candidates_found', 0):,}",
-                        "Descripción": "Pares candidatos identificados por LSH",
-                    },
-                    {
-                        "Categoría": "EFICIENCIA",
-                        "Métrica": "Pares Evaluados",
-                        "Valor": f"{self.metrics.get('pairs_scored', 0):,}",
-                        "Descripción": "Pares que pasaron scoring detallado",
-                    },
+                    fila(
+                        "EFICIENCIA",
+                        "Tasa de Linkage",
+                        f"{linkage_rate:.2%}",
+                        "Porcentaje de registros vinculados",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Tasa de Reducción",
+                        f"{reduction_rate:.2%}",
+                        "Reducción lograda por deduplicación",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Candidatos Encontrados",
+                        _entero_o_na(self.metrics.get("candidatos")),
+                        "Pares candidatos generados por L2 (candidates.db)",
+                        ALCANCE_COMPLETO,
+                    ),
+                    fila(
+                        "EFICIENCIA",
+                        "Pares Evaluados",
+                        _entero_o_na(self.metrics.get("pares_puntuados")),
+                        "Pares puntuados por L3 (scored.db)",
+                        ALCANCE_COMPLETO,
+                    ),
                 ]
             )
 
-            # --- MÉTRICAS DE CALIDAD ---
+            # --- MÉTRICAS DE CALIDAD (sobre todo el golden; si llegó recortado,
+            # de las métricas calculadas antes del recorte o rotuladas) ---
             if not self.golden_records.empty and "CONFIDENCE_SCORE" in self.golden_records.columns:
                 scores = self.golden_records["CONFIDENCE_SCORE"].dropna()
                 if len(scores) > 0:
+                    promedio, alc_prom = self._cifra_del_resumen(
+                        "avg_confidence", float(scores.mean()), "golden"
+                    )
+                    alta, alc_alta = self._cifra_del_resumen(
+                        "high_confidence_count", int((scores > 0.9).sum()), "golden"
+                    )
+                    baja, alc_baja = self._cifra_del_resumen(
+                        "low_confidence_count", int((scores < 0.75).sum()), "golden"
+                    )
                     summary_data.extend(
                         [
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Confidence Promedio",
-                                "Valor": f"{scores.mean():.3f}",
-                                "Descripción": "Score promedio de confianza",
-                            },
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Registros Alta Confianza (>0.9)",
-                                "Valor": f"{(scores > 0.9).sum():,}",
-                                "Descripción": "Grupos con confidence superior a 0.9",
-                            },
-                            {
-                                "Categoría": "CALIDAD",
-                                "Métrica": "Casos para Revisión (<0.75)",
-                                "Valor": f"{(scores < 0.75).sum():,}",
-                                "Descripción": "Grupos que requieren revisión manual",
-                            },
+                            fila(
+                                "CALIDAD",
+                                "Confidence Promedio",
+                                f"{promedio:.3f}",
+                                "Score promedio de confianza",
+                                alc_prom,
+                            ),
+                            fila(
+                                "CALIDAD",
+                                "Registros Alta Confianza (>0.9)",
+                                f"{int(alta):,}",
+                                "Grupos con confidence superior a 0.9",
+                                alc_alta,
+                            ),
+                            fila(
+                                "CALIDAD",
+                                "Casos para Revisión (<0.75)",
+                                f"{int(baja):,}",
+                                "Grupos que requieren revisión manual",
+                                alc_baja,
+                            ),
                         ]
                     )
 
@@ -449,39 +683,38 @@ class ReportGenerator:
 
                 summary_data.extend(
                     [
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Tiempo Total",
-                            "Valor": time_str,
-                            "Descripción": "Duración total del proceso",
-                        },
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Throughput",
-                            "Valor": f"{throughput:.0f} reg/s",
-                            "Descripción": "Velocidad de procesamiento",
-                        },
-                        {
-                            "Categoría": "RENDIMIENTO",
-                            "Métrica": "Memoria Máxima",
-                            "Valor": f"{self.metrics.get('max_memory_gb', 0):.1f} GB",
-                            "Descripción": "Uso máximo de memoria",
-                        },
+                        fila(
+                            "RENDIMIENTO",
+                            "Tiempo Total",
+                            time_str,
+                            "Duración total del proceso",
+                            ALCANCE_COMPLETO,
+                        ),
+                        fila(
+                            "RENDIMIENTO",
+                            "Throughput",
+                            f"{throughput:.0f} reg/s",
+                            "Velocidad de procesamiento",
+                            alc_total,
+                        ),
+                        fila(
+                            "RENDIMIENTO",
+                            "Memoria Máxima",
+                            _gib_o_na(self.metrics.get("rss_pico_mib")),
+                            "RSS pico del proceso (máximo entre fases L1-L5)",
+                            ALCANCE_COMPLETO,
+                        ),
                     ]
                 )
 
-            return pd.DataFrame(summary_data)
+            resumen = pd.DataFrame(summary_data)
+            if not hay_recorte:
+                resumen = resumen.drop(columns="ALCANCE")
+            return resumen
 
         except Exception as e:
             self.logger.error(f"Error en resumen ejecutivo: {e!s}")
-            return pd.DataFrame(
-                {
-                    "Categoría": ["ERROR"],
-                    "Métrica": ["Error generando resumen"],
-                    "Valor": [str(e)],
-                    "Descripción": ["Revisar logs para más detalles"],
-                }
-            )
+            raise
 
     def _generate_quality_metrics(self) -> pd.DataFrame:
         """
@@ -578,34 +811,24 @@ class ReportGenerator:
                 ]
             )
 
-            return pd.DataFrame(quality_data)
+            return self._rotular_alcance(pd.DataFrame(quality_data), "golden")
 
         except Exception as e:
             self.logger.error(f"Error en métricas de calidad: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas: {e!s}"]})
+            raise
 
     def _generate_source_analysis(self) -> pd.DataFrame:
         """
         Analiza contribución y calidad por fuente de datos.
-        Versión optimizada para datasets grandes.
+
+        F1.5: groupby sobre la correlativa COMPLETA (``_por_fuente``), venga de
+        memoria, archivo o SQLite; antes se calculaba sobre una muestra.
         """
         try:
-            # Para datasets grandes, intentar consulta directa si es posible
-            if isinstance(self.correlative_data_ref, str) and self.correlative_data_ref.endswith(
-                ".db"
-            ):
-                return self._generate_source_analysis_from_db()
-
-            # Análisis con datos en memoria
-            if self.correlative_sample.empty or "SRC" not in self.correlative_sample.columns:
+            source_stats = self._por_fuente
+            if source_stats.empty:
                 return pd.DataFrame({"Mensaje": ["No hay datos de fuentes disponibles"]})
-
-            # Análisis básico por fuente
-            source_stats = (
-                self.correlative_sample.groupby("SRC")
-                .agg(Total_Registros=("ID_GRUPO", "count"), Grupos_Unicos=("ID_GRUPO", "nunique"))
-                .reset_index()
-            )
+            source_stats = source_stats.copy()
 
             # Calcular métricas adicionales
             source_stats["Registros_por_Grupo"] = (
@@ -639,47 +862,11 @@ class ReportGenerator:
             # Renombrar columnas para presentación
             source_stats = source_stats.rename(columns={"SRC": "Fuente"})
 
-            return source_stats
+            return self._rotular_alcance(source_stats, "correlativa")
 
         except Exception as e:
             self.logger.error(f"Error en análisis de fuentes: {e!s}")
-            return pd.DataFrame({"Error": [f"Error analizando fuentes: {e!s}"]})
-
-    def _generate_source_analysis_from_db(self) -> pd.DataFrame:
-        """Genera análisis de fuentes directamente desde base de datos."""
-        try:
-            with open_readonly_sqlite(self.correlative_data_ref) as conn:
-                quoted_table = quote_existing_table(conn, "correlative_table")
-                # Consulta optimizada con todas las métricas
-                query = f"""
-                WITH source_stats AS (
-                    SELECT
-                        SRC as Fuente,
-                        COUNT(*) as Total_Registros,
-                        COUNT(DISTINCT ID_GRUPO) as Grupos_Unicos,
-                        CAST(COUNT(*) AS FLOAT) / COUNT(DISTINCT ID_GRUPO) as Registros_por_Grupo
-                    FROM {quoted_table}
-                    GROUP BY SRC
-                ),
-                totals AS (
-                    SELECT SUM(Total_Registros) as total_general
-                    FROM source_stats
-                )
-                SELECT
-                    s.*,
-                    ROUND(s.Registros_por_Grupo, 2) as Registros_por_Grupo,
-                    ROUND(100.0 * s.Total_Registros / t.total_general, 1) || '%' as Porcentaje_Total
-                FROM source_stats s
-                CROSS JOIN totals t
-                ORDER BY s.Total_Registros DESC
-                """
-
-                return pd.read_sql_query(query, conn)
-
-        except Exception as e:
-            self.logger.error(f"Error en consulta SQL de fuentes: {e!s}")
-            # Fallback a análisis en memoria
-            return self._generate_source_analysis()
+            raise
 
     def _generate_review_cases(self) -> pd.DataFrame:
         """
@@ -690,50 +877,56 @@ class ReportGenerator:
             if self.golden_records.empty:
                 return pd.DataFrame({"Mensaje": ["No hay golden records para analizar"]})
 
-            # Copiar para no modificar original
-            review_df = self.golden_records.copy()
-
-            # Calcular score de prioridad compuesto
-            review_df["REVIEW_PRIORITY"] = 0
+            # Los factores se calculan sobre TODO el golden, sin copiarlo: solo
+            # las filas que pasan el filtro se materializan (F1.5).
+            golden = self.golden_records
+            factores = pd.DataFrame(index=golden.index)
 
             # Factor 1: Baja confianza (peso 40%)
-            if "CONFIDENCE_SCORE" in review_df.columns:
-                review_df["LOW_CONFIDENCE_FACTOR"] = (
-                    1 - review_df["CONFIDENCE_SCORE"].fillna(1)
-                ) * 40
-                review_df["REVIEW_PRIORITY"] += review_df["LOW_CONFIDENCE_FACTOR"]
+            if "CONFIDENCE_SCORE" in golden.columns:
+                factores["LOW_CONFIDENCE_FACTOR"] = (1 - golden["CONFIDENCE_SCORE"].fillna(1)) * 40
 
             # Factor 2: Muchas variaciones de nombres (peso 25%)
-            if "NAME_VARIATIONS" in review_df.columns:
-                review_df["NAME_VAR_FACTOR"] = (review_df["NAME_VARIATIONS"].fillna(0) / 10).clip(
+            if "NAME_VARIATIONS" in golden.columns:
+                factores["NAME_VAR_FACTOR"] = (golden["NAME_VARIATIONS"].fillna(0) / 10).clip(
                     0, 1
                 ) * 25
-                review_df["REVIEW_PRIORITY"] += review_df["NAME_VAR_FACTOR"]
 
             # Factor 3: Variaciones de NIT (peso 20%)
-            if "NIT_VARIATIONS" in review_df.columns:
-                review_df["NIT_VAR_FACTOR"] = (review_df["NIT_VARIATIONS"].fillna(0) / 5).clip(
+            if "NIT_VARIATIONS" in golden.columns:
+                factores["NIT_VAR_FACTOR"] = (golden["NIT_VARIATIONS"].fillna(0) / 5).clip(
                     0, 1
                 ) * 20
-                review_df["REVIEW_PRIORITY"] += review_df["NIT_VAR_FACTOR"]
 
             # Factor 4: Tamaño del grupo (peso 15%)
-            if "RECORD_COUNT" in review_df.columns:
-                review_df["SIZE_FACTOR"] = (review_df["RECORD_COUNT"].fillna(0) / 50).clip(
-                    0, 1
-                ) * 15
-                review_df["REVIEW_PRIORITY"] += review_df["SIZE_FACTOR"]
+            if "RECORD_COUNT" in golden.columns:
+                factores["SIZE_FACTOR"] = (golden["RECORD_COUNT"].fillna(0) / 50).clip(0, 1) * 15
+
+            # Calcular score de prioridad compuesto
+            factores["REVIEW_PRIORITY"] = factores.sum(axis=1) if len(factores.columns) else 0.0
 
             # Filtrar casos que requieren revisión (score > 20)
-            review_cases = review_df[review_df["REVIEW_PRIORITY"] > 20].copy()
+            requiere = factores["REVIEW_PRIORITY"] > 20
+            review_cases = golden.loc[requiere].join(factores.loc[requiere])
 
             if review_cases.empty:
-                return pd.DataFrame(
+                # Si el golden es una vista declarada, «ningún caso» solo se
+                # sabe de la vista: se rotula y se registra como los demás.
+                golden_vista = self._muestra_declarada("golden")
+                detalle = (
+                    "Todos los grupos tienen alta confianza"
+                    if golden_vista is None
+                    else "Ningún grupo de la vista del golden requiere revisión"
+                )
+                mensaje = pd.DataFrame(
                     {
                         "Mensaje": ["✅ No hay casos que requieran revisión urgente"],
-                        "Detalle": ["Todos los grupos tienen alta confianza"],
+                        "Detalle": [detalle],
                     }
                 )
+                if golden_vista is not None:
+                    mensaje["ALCANCE"] = self._declarar_casos_revision(0, 0, golden_vista)
+                return mensaje
 
             # Clasificar severidad
             review_cases["SEVERIDAD"] = pd.cut(
@@ -769,53 +962,81 @@ class ReportGenerator:
             ]
             columns_to_include.extend([col for col in detail_cols if col in review_cases.columns])
 
-            # Limitar a top 1000 casos para no sobrecargar
-            final_report = review_cases[columns_to_include].head(1000)
+            # Recortar a los primeros `max_casos_revision` para no sobrecargar el
+            # Excel; es el ÚNICO reporte que no lleva toda la tabla y lo declara.
+            n_total = len(review_cases)
+            final_report = review_cases.head(self.max_casos_revision)
+            n_mostrados = len(final_report)
 
-            # Agregar columna de razón principal
-            final_report["RAZON_PRINCIPAL"] = final_report.apply(
-                self._determine_main_review_reason, axis=1
-            )
+            # Agregar columna de razón principal (vectorizado sobre los factores)
+            razon_principal = self._razones_principales(final_report)
+            final_report = final_report[columns_to_include].copy()
+            final_report["RAZON_PRINCIPAL"] = razon_principal
+
+            # Si el golden mismo es una vista declarada por quien llamó, el
+            # total de casos también lo es: nunca se rotula COMPLETO.
+            golden_vista = self._muestra_declarada("golden")
+            if n_mostrados < n_total or golden_vista is not None:
+                final_report["ALCANCE"] = self._declarar_casos_revision(
+                    n_mostrados, n_total, golden_vista
+                )
+            else:
+                final_report["ALCANCE"] = f"COMPLETO ({n_total} de {n_total})"
 
             return final_report
 
         except Exception as e:
             self.logger.error(f"Error en casos de revisión: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando casos de revisión: {e!s}"]})
+            raise
 
-    def _determine_main_review_reason(self, row) -> str:
-        """Determina la razón principal para revisar un caso."""
-        reasons = []
+    def _declarar_casos_revision(
+        self, n_mostrados: int, n_total: int, golden_vista: dict[str, int] | None
+    ) -> str:
+        """Rótulo ``MUESTRA (n de N[, sobre una vista …])`` de los casos de
+        revisión, registrado en ``metrics["muestras"]["casos_revision"]``. Una
+        sola regla para el reporte con casos y para el mensaje sin casos."""
+        rotulo = f"MUESTRA ({n_mostrados} de {n_total}"
+        registro: dict[str, Any] = {"n": n_mostrados, "N": n_total}
+        if golden_vista is not None:
+            rotulo += f", sobre una vista de {golden_vista['n']} de {golden_vista['N']} del golden"
+            registro["golden_vista"] = golden_vista
+        rotulo += ")"
+        self.metrics.setdefault("muestras", {})["casos_revision"] = registro
+        self.logger.info(
+            f"casos_revision: {n_mostrados:,} de {n_total:,} casos (los de mayor "
+            f"prioridad); ALCANCE = {rotulo}"
+        )
+        return rotulo
 
-        if "LOW_CONFIDENCE_FACTOR" in row and row["LOW_CONFIDENCE_FACTOR"] > 15:
-            reasons.append("Baja confianza")
-        if "NAME_VAR_FACTOR" in row and row["NAME_VAR_FACTOR"] > 10:
-            reasons.append("Múltiples nombres")
-        if "NIT_VAR_FACTOR" in row and row["NIT_VAR_FACTOR"] > 8:
-            reasons.append("Múltiples NITs")
-        if "SIZE_FACTOR" in row and row["SIZE_FACTOR"] > 7:
-            reasons.append("Grupo grande")
-
-        return " | ".join(reasons) if reasons else "Revisar detalles"
+    @staticmethod
+    def _razones_principales(casos: pd.DataFrame) -> pd.Series:
+        """Razón principal de revisión por caso, vectorizada sobre los factores."""
+        umbrales = (
+            ("LOW_CONFIDENCE_FACTOR", 15, "Baja confianza"),
+            ("NAME_VAR_FACTOR", 10, "Múltiples nombres"),
+            ("NIT_VAR_FACTOR", 8, "Múltiples NITs"),
+            ("SIZE_FACTOR", 7, "Grupo grande"),
+        )
+        razones = pd.Series("", index=casos.index, dtype="object")
+        for columna, umbral, etiqueta in umbrales:
+            if columna not in casos.columns:
+                continue
+            aplica = casos[columna] > umbral
+            separador = razones.where(razones == "", " | ")
+            razones = razones.where(~aplica, razones + separador.where(aplica, "") + etiqueta)
+        return razones.where(razones != "", "Revisar detalles")
 
     def _generate_group_statistics(self) -> pd.DataFrame:
         """
         Genera estadísticas detalladas sobre la distribución de grupos.
-        Optimizado para grandes volúmenes.
+
+        F1.5: tamaños de grupo sobre la correlativa COMPLETA (``_tamanos_grupo``);
+        antes se calculaban sobre una muestra.
         """
         try:
-            # Intentar consulta directa a BD si está disponible
-            if isinstance(self.correlative_data_ref, str) and self.correlative_data_ref.endswith(
-                ".db"
-            ):
-                return self._generate_group_statistics_from_db()
-
-            # Análisis con datos en memoria
-            if self.correlative_sample.empty or "ID_GRUPO" not in self.correlative_sample.columns:
+            group_sizes = self._tamanos_grupo
+            if group_sizes.empty:
                 return pd.DataFrame({"Mensaje": ["No hay datos de grupos disponibles"]})
-
-            # Calcular tamaños de grupos
-            group_sizes = self.correlative_sample.groupby("ID_GRUPO").size()
 
             # Categorizar tamaños con rangos más detallados
             bins = [0, 1, 2, 3, 5, 10, 20, 50, 100, float("inf")]
@@ -890,166 +1111,82 @@ class ReportGenerator:
                 }
             )
 
-            return pd.DataFrame(stats_data)
+            return self._rotular_alcance(pd.DataFrame(stats_data), "correlativa")
 
         except Exception as e:
             self.logger.error(f"Error en estadísticas de grupos: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando estadísticas: {e!s}"]})
-
-    def _generate_group_statistics_from_db(self) -> pd.DataFrame:
-        """Genera estadísticas de grupos directamente desde base de datos."""
-        try:
-            with open_readonly_sqlite(self.correlative_data_ref) as conn:
-                quoted_table = quote_existing_table(conn, "correlative_table")
-                # Consulta SQL optimizada para estadísticas de grupos
-                query = f"""
-                WITH group_sizes AS (
-                    SELECT ID_GRUPO, COUNT(*) as size
-                    FROM {quoted_table}
-                    GROUP BY ID_GRUPO
-                ),
-                categorized AS (
-                    SELECT
-                        CASE
-                            WHEN size = 1 THEN '1 (Singleton)'
-                            WHEN size = 2 THEN '2 (Par)'
-                            WHEN size = 3 THEN '3'
-                            WHEN size <= 5 THEN '4-5'
-                            WHEN size <= 10 THEN '6-10'
-                            WHEN size <= 20 THEN '11-20'
-                            WHEN size <= 50 THEN '21-50'
-                            WHEN size <= 100 THEN '51-100'
-                            ELSE '>100'
-                        END as Tamaño,
-                        COUNT(*) as Cantidad_Grupos,
-                        SUM(size) as Registros_Totales
-                    FROM group_sizes
-                    GROUP BY Tamaño
-                ),
-                totals AS (
-                    SELECT
-                        SUM(Cantidad_Grupos) as total_grupos,
-                        SUM(Registros_Totales) as total_registros
-                    FROM categorized
-                )
-                SELECT
-                    c.Tamaño,
-                    c.Cantidad_Grupos,
-                    ROUND(100.0 * c.Cantidad_Grupos / t.total_grupos, 1) || '%' as Porcentaje_Grupos,
-                    c.Registros_Totales as Registros_Estimados,
-                    ROUND(100.0 * c.Registros_Totales / t.total_registros, 1) || '%' as Porcentaje_Registros
-                FROM categorized c
-                CROSS JOIN totals t
-                ORDER BY
-                    CASE c.Tamaño
-                        WHEN '1 (Singleton)' THEN 1
-                        WHEN '2 (Par)' THEN 2
-                        WHEN '3' THEN 3
-                        WHEN '4-5' THEN 4
-                        WHEN '6-10' THEN 5
-                        WHEN '11-20' THEN 6
-                        WHEN '21-50' THEN 7
-                        WHEN '51-100' THEN 8
-                        ELSE 9
-                    END
-                """
-
-                df = pd.read_sql_query(query, conn)
-
-                # Calcular acumulados
-                df["Acumulado_Grupos"] = df["Cantidad_Grupos"].cumsum()
-                total = df["Cantidad_Grupos"].sum()
-                df["Acumulado_Grupos"] = (df["Acumulado_Grupos"] / total * 100).round(1).astype(
-                    str
-                ) + "%"
-
-                return df
-
-        except Exception as e:
-            self.logger.error(f"Error en consulta SQL de grupos: {e!s}")
-            return self._generate_group_statistics()
+            raise
 
     def _generate_performance_metrics(self) -> pd.DataFrame:
+        """Alias histórico de :meth:`reporte_metricas_performance`."""
+        return self.reporte_metricas_performance()
+
+    def reporte_metricas_performance(self) -> pd.DataFrame:
         """
-        Genera reporte de métricas de rendimiento del proceso.
-        Nuevo reporte que no estaba en la versión original.
+        Reporte ``reporte_metricas_performance.xlsx``: segundos por fase.
+
+        F1.6: los tiempos son EXACTAMENTE ``metrics["phase_times"]`` (los del
+        ``manifest.json``), una fila por fase medida más una fila ``TOTAL``
+        con la suma. Columnas: ``Fase`` (etiqueta humana), ``Clave`` (clave
+        de la fase en el manifiesto), ``Segundos`` (crudo, comparable),
+        ``Tiempo`` (legible), ``Porcentaje`` y ``Velocidad``.
+
+        Si no hay tiempos por fase devuelve un DataFrame vacío y
+        ``generate_all_reports`` omite el archivo: antes se escribía un Excel
+        con filas que buscaban claves inexistentes.
         """
-        try:
-            perf_data = []
-
-            # Tiempos por fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Generación Candidatos": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            total_time = sum(phase_times.values())
-
-            for phase, time_val in phase_times.items():
-                if time_val > 0:
-                    percentage = (time_val / total_time * 100) if total_time > 0 else 0
-
-                    # Formato adaptativo de tiempo
-                    if time_val < 1:
-                        time_str = f"{time_val * 1000:.0f} ms"
-                    elif time_val < 60:
-                        time_str = f"{time_val:.1f} seg"
-                    else:
-                        time_str = f"{time_val / 60:.1f} min"
-
-                    perf_data.append(
-                        {
-                            "Fase": phase,
-                            "Tiempo": time_str,
-                            "Porcentaje": f"{percentage:.1f}%",
-                            "Velocidad": self._calculate_phase_speed(phase, time_val),
-                        }
-                    )
-
-            # Agregar métricas generales
-            perf_data.extend(
-                [
-                    {
-                        "Fase": "--- TOTALES ---",
-                        "Tiempo": f"{total_time:.1f} seg"
-                        if total_time < 60
-                        else f"{total_time / 60:.1f} min",
-                        "Porcentaje": "100.0%",
-                        "Velocidad": f"{self.metrics.get('total_records', 0) / (total_time + 1):.0f} reg/seg",
-                    }
-                ]
+        tiempos = tiempos_por_fase(self.metrics)
+        if not tiempos:
+            self.logger.warning(
+                "reporte_metricas_performance omitido: metrics['phase_times'] no trae "
+                "tiempos por fase (el orquestador los cronometra en _exec_phase)."
             )
+            return pd.DataFrame()
 
-            return pd.DataFrame(perf_data)
-
-        except Exception as e:
-            self.logger.error(f"Error en métricas de performance: {e!s}")
-            return pd.DataFrame({"Error": [f"Error generando métricas de performance: {e!s}"]})
+        total_time = sum(tiempos.values())
+        perf_data = [
+            {
+                "Fase": ETIQUETAS_FASE[clave],
+                "Clave": clave,
+                "Segundos": segundos,
+                "Tiempo": formatear_segundos(segundos),
+                "Porcentaje": f"{(segundos / total_time * 100) if total_time > 0 else 0:.1f}%",
+                "Velocidad": self._calculate_phase_speed(clave, segundos),
+            }
+            for clave, segundos in tiempos.items()
+        ]
+        total_records = self.metrics.get("total_records", 0)
+        perf_data.append(
+            {
+                "Fase": "TOTAL (fases medidas)",
+                "Clave": "TOTAL",
+                "Segundos": total_time,
+                "Tiempo": formatear_segundos(total_time),
+                "Porcentaje": "100.0%",
+                "Velocidad": f"{total_records / total_time:.0f} reg/seg"
+                if total_time > 0
+                else "N/A",
+            }
+        )
+        return pd.DataFrame(perf_data)
 
     def _calculate_phase_speed(self, phase: str, time_val: float) -> str:
-        """Calcula velocidad específica por fase."""
-        if time_val == 0:
+        """Velocidad por fase; ``phase`` es la clave del manifiesto (``L2_lsh_candidates``…).
+
+        Si la métrica de conteo de esa fase no viene en ``metrics`` (hoy
+        ``_build_metrics`` no entrega ``candidates_found`` ni ``pairs_scored``)
+        se responde ``N/A`` en vez de «0 por segundo».
+        """
+        if time_val <= 0:
             return "N/A"
 
-        total_records = self.metrics.get("total_records", 0)
-
-        if phase == "Generación Candidatos":
-            items = self.metrics.get("candidates_found", 0)
-            speed = items / time_val
-            return f"{speed:.0f} candidatos/seg"
-        elif phase == "Scoring":
-            items = self.metrics.get("pairs_scored", 0)
-            speed = items / time_val
-            return f"{speed:.0f} pares/seg"
-        elif phase == "Golden Records":
-            items = self.metrics.get("unique_groups", 0)
-            speed = items / time_val
-            return f"{speed:.0f} grupos/seg"
-        else:
-            speed = total_records / time_val
-            return f"{speed:.0f} reg/seg"
+        conteo_por_fase = {
+            "L2_lsh_candidates": ("candidatos", "candidatos/seg"),
+            "L3_scoring": ("pares_puntuados", "pares/seg"),
+            "L5_golden": ("unique_groups", "grupos/seg"),
+        }
+        clave_conteo, unidad = conteo_por_fase.get(phase, ("total_records", "reg/seg"))
+        items = self.metrics.get(clave_conteo)
+        if items is None:
+            return "N/A"
+        return f"{items / time_val:.0f} {unidad}"

@@ -261,3 +261,27 @@ def test_una_corrida_inexistente_nombra_las_disponibles(tmp_path: Path) -> None:
 def test_el_informe_dice_pasa_o_falla() -> None:
     assert "VEREDICTO: PASA" in comparar(_corrida("a"), _corrida("b")).resumen()
     assert "VEREDICTO: FALLA" in comparar(_corrida("a"), _corrida("b", f1=0.5)).resumen()
+
+
+def test_comparar_corridas_de_conjuntos_distintos_es_un_error() -> None:
+    """Dos corridas sobre CSV distintos no son comparables: hay que decirlo, no dar PASA.
+
+    Antes `--comparar base_f0 f1_a` dio PASA con la huella «distinta» porque
+    f1_a se corrió sin `--datos` (ground_truth_grande en vez del benchmark
+    institucional): todas las métricas «mejoraban» contra otro conjunto.
+    """
+    base, nueva = _corrida("a"), _corrida("b")
+    base["especificacion"] = {"datos": "data/benchmark/benchmark_institucional.csv.gz"}
+    nueva["especificacion"] = {"datos": "data/ground_truth/ground_truth_grande.csv"}
+    with pytest.raises(ValueError, match="conjuntos distintos") as exc:
+        comparar(base, nueva)
+    assert "benchmark_institucional" in str(exc.value) and "ground_truth_grande" in str(exc.value)
+    assert "--datos" in str(exc.value)
+
+
+def test_comparar_acepta_el_mismo_conjunto_o_corridas_sin_especificacion() -> None:
+    base, nueva = _corrida("a"), _corrida("b")
+    base["especificacion"] = nueva["especificacion"] = {"datos": "x.csv"}
+    assert comparar(base, nueva).pasa
+    base.pop("especificacion")
+    assert comparar(base, nueva).pasa

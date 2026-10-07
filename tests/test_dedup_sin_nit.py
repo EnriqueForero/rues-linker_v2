@@ -54,6 +54,7 @@ def test_consolidacion_todos_nit_vacios_no_rompe():
         golden,
         correlative,
         verbose=False,
+        prioridad_fuentes=["TEST"],
     )
 
     # Sin NITs válidos no hay nada que consolidar: devuelve los grupos intactos.

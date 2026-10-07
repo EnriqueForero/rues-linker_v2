@@ -171,6 +171,17 @@ def comparar(
         Comparacion con un veredicto por métrica vigilada.
     """
     umbrales = umbrales or Umbrales()
+    datos_base = (base.get("especificacion") or {}).get("datos")
+    datos_nueva = (nueva.get("especificacion") or {}).get("datos")
+    if datos_base and datos_nueva and datos_base != datos_nueva:
+        raise ValueError(
+            f"Qué pasó: las corridas {base['etiqueta']!r} ({datos_base}) y "
+            f"{nueva['etiqueta']!r} ({datos_nueva}) son de conjuntos distintos.\n"
+            "Por qué importa: comparar métricas de dos conjuntos no mide el cambio del "
+            "motor; un PASA así no vale nada.\n"
+            "Qué hacer: vuelva a correr la nueva con el mismo --datos de la base "
+            f"(python scripts/banco.py --etiqueta {nueva['etiqueta']} --datos {datos_base})."
+        )
     cb, cn = base["calidad"], nueva["calidad"]
     rb, rn = base["recursos"], nueva["recursos"]
 

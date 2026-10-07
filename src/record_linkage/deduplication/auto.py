@@ -42,6 +42,28 @@ def _is_nit_empty(series: pd.Series) -> pd.Series:
     return normalized.isin(_EMPTY_NIT_VALUES) | series.isna()
 
 
+def _estadisticas_regimen(
+    correlativa: pd.DataFrame, conexiones: pd.DataFrame, profile: str
+) -> dict[str, Any]:
+    """Estadísticas de una pasada de ``deduplicate_unified`` como dict serializable.
+
+    ``deduplicate_unified`` devuelve ``(correlativa, conexiones_no_triviales)``:
+    el segundo elemento es un DataFrame, no un dict de estadísticas. Hasta
+    F1.13 ``deduplicate_auto`` lo desempaquetaba como ``stats`` y lo
+    expandía con ``{**stats}``: el dict resultante traía una ``Series`` por
+    columna de las conexiones (``NIT``, ``RAZON_SOCIAL``, …) en el caso
+    homogéneo, y DataFrames enteros bajo ``stats_con_nit``/``stats_sin_nit``
+    en el mixto. Nada lo leía, pero ``dedupe()`` lo guardaba en
+    ``metricas['stats_pipeline']`` y no era serializable.
+    """
+    return {
+        "profile": profile,
+        "n_registros": len(correlativa),
+        "n_grupos": int(correlativa["ID_GRUPO"].nunique()),
+        "n_conexiones_no_triviales": len(conexiones),
+    }
+
+
 def deduplicate_auto(
     df_input: pd.DataFrame,
     col_nit: str = "NIT",
@@ -83,7 +105,13 @@ def deduplicate_auto(
         Tupla ``(tabla_correlativa_combinada, estadisticas)``. La correlativa
         combinada preserva ``ORIGINAL_INDEX`` apuntando al índice original de
         ``df_input`` y trae una columna ``REGIMEN_AUTO`` ('CON_NIT'|'SIN_NIT')
-        que indica por qué ruta pasó cada registro.
+        que indica por qué ruta pasó cada registro. ``estadisticas`` es un
+        dict serializable (sin Series ni DataFrames) con ``routed``,
+        ``n_con_nit``, ``n_sin_nit``, ``n_grupos_con_nit``,
+        ``n_grupos_sin_nit``, ``profile_con_nit``, ``profile_sin_nit`` y, por
+        régimen ejecutado, ``stats_con_nit``/``stats_sin_nit`` con
+        ``n_registros``, ``n_grupos``, ``n_conexiones_no_triviales`` y
+        ``profile``.
 
     Raises:
         ValueError: si faltan columnas requeridas o el DataFrame está vacío.
@@ -111,7 +139,7 @@ def deduplicate_auto(
     # ── Caso homogéneo: delegar directo (sin overhead de separar) ──────────
     if n_sin == 0:
         logger.info("Dataset homogéneo CON_NIT → %s", profile_con_nit)
-        corr, stats = deduplicate_unified(
+        corr, conexiones = deduplicate_unified(
             df_input=df_input,
             col_nit=col_nit,
             col_name=col_name,
@@ -121,11 +149,21 @@ def deduplicate_auto(
             **kwargs,
         )
         corr["REGIMEN_AUTO"] = "CON_NIT"
-        stats = {**stats, "routed": "homogeneo_con_nit", "n_con_nit": n_con, "n_sin_nit": 0}
+        stats_con = _estadisticas_regimen(corr, conexiones, profile_con_nit)
+        stats: dict[str, Any] = {
+            "routed": "homogeneo_con_nit",
+            "n_con_nit": n_con,
+            "n_sin_nit": 0,
+            "n_grupos_con_nit": stats_con["n_grupos"],
+            "n_grupos_sin_nit": 0,
+            "profile_con_nit": profile_con_nit,
+            "profile_sin_nit": profile_sin_nit,
+            "stats_con_nit": stats_con,
+        }
         return corr, stats
     if n_con == 0:
         logger.info("Dataset homogéneo SIN_NIT → %s", profile_sin_nit)
-        corr, stats = deduplicate_unified(
+        corr, conexiones = deduplicate_unified(
             df_input=df_input,
             col_nit=col_nit,
             col_name=col_name,
@@ -135,12 +173,22 @@ def deduplicate_auto(
             **kwargs,
         )
         corr["REGIMEN_AUTO"] = "SIN_NIT"
-        stats = {**stats, "routed": "homogeneo_sin_nit", "n_con_nit": 0, "n_sin_nit": n_sin}
+        stats_sin = _estadisticas_regimen(corr, conexiones, profile_sin_nit)
+        stats = {
+            "routed": "homogeneo_sin_nit",
+            "n_con_nit": 0,
+            "n_sin_nit": n_sin,
+            "n_grupos_con_nit": 0,
+            "n_grupos_sin_nit": stats_sin["n_grupos"],
+            "profile_con_nit": profile_con_nit,
+            "profile_sin_nit": profile_sin_nit,
+            "stats_sin_nit": stats_sin,
+        }
         return corr, stats
 
     # ── Caso mixto: deduplicar cada régimen por separado ───────────────────
     logger.info("Dataset mixto → enrutamiento por régimen")
-    corr_con, stats_con = deduplicate_unified(
+    corr_con, conexiones_con = deduplicate_unified(
         df_input=df_con.drop(columns=["_auto_orig_idx"]),
         col_nit=col_nit,
         col_name=col_name,
@@ -149,7 +197,7 @@ def deduplicate_auto(
         output_dir=f"{output_dir}/con_nit",
         **kwargs,
     )
-    corr_sin, stats_sin = deduplicate_unified(
+    corr_sin, conexiones_sin = deduplicate_unified(
         df_input=df_sin.drop(columns=["_auto_orig_idx"]),
         col_nit=col_nit,
         col_name=col_name,
@@ -188,8 +236,8 @@ def deduplicate_auto(
         "n_grupos_sin_nit": corr_sin["ID_GRUPO"].nunique(),
         "profile_con_nit": profile_con_nit,
         "profile_sin_nit": profile_sin_nit,
-        "stats_con_nit": stats_con,
-        "stats_sin_nit": stats_sin,
+        "stats_con_nit": _estadisticas_regimen(corr_con, conexiones_con, profile_con_nit),
+        "stats_sin_nit": _estadisticas_regimen(corr_sin, conexiones_sin, profile_sin_nit),
     }
     logger.info(
         "deduplicate_auto OK: %d grupos CON_NIT + %d grupos SIN_NIT",

@@ -17,6 +17,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from typing import Any
 import pandas as pd
 import psutil
 
+from ..config.auditoria import prioridad_del_perfil
 from ..engine.cannot_link import aplicar_cannot_link_identificador
 from ..engine.clusterer import OptimizedClusterer
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
@@ -31,7 +33,16 @@ from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
 from ..golden.containment import consolidate_groups_by_nit_balanced
 from ..golden.generator import ConsumableDataFrame, GoldenRecordGeneratorV7
+from ..golden.metricas import verificar_golden
+from ..golden.tipos import tipar_golden
 from ..processing.dtypes import optimizar_dtypes_categoricos
+from ..reporting.contrato_l6 import (
+    ArtefactoOmitido,
+    artefactos_de,
+    es_estrategia_obligatoria,
+    obligatorios_de,
+    verificar_artefactos,
+)
 from ..reporting.strategies import (
     BaseReportingStrategy,
     ConfigAuditStrategy,
@@ -47,10 +58,28 @@ from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
+from .errores import (
+    ArtefactoObligatorioError,
+    ConsolidacionNitError,
+    EstrategiaFallo,
+    mensaje_accionable,
+)
 from .fingerprints import fingerprint_sources
 from .linkage_pipeline import RecordLinkagePipeline
+from .metricas import (
+    CLAVES_METRICAS,
+    RUTA_CANDIDATES_DB,
+    RUTA_SCORED_DB,
+    TABLA_CANDIDATES,
+    TABLA_SCORED,
+    metricas_de_corrida,
+)
 from .state_manager import StateManager
 from .storage import HybridStorageManager
+
+# Centinela para distinguir «clave ausente» de «clave con valor None» en la
+# configuración al restaurarla tras un L6 postprocesado.
+_AUSENTE: Any = object()
 
 
 class Orchestrator:
@@ -202,6 +231,14 @@ class Orchestrator:
         # haber invocado `run()` (escenario de testing/debug).
         self._force_rerun_phases: set[Phase] = set()
 
+        # (F1.4) Metadatos que una fase quiere dejar en su entrada del
+        # manifiesto además de duración y RSS (hoy: L6 → `omitidos`).
+        # `_exec_phase` los mezcla en `mark_done(meta=…)` y los vacía.
+        self._meta_extra: dict[str, dict[str, Any]] = {}
+        # Artefactos opcionales de L6 que no se escribieron en la última
+        # generación de reportes, con estrategia y motivo.
+        self.l6_omitidos: list[dict[str, str]] = []
+
         # Estrategias de reporting (orden de ejecución)
         self._reporting_strategies: list[BaseReportingStrategy] = [
             DataExportStrategy(),
@@ -247,13 +284,14 @@ class Orchestrator:
                     continue
                 if canonico in df.columns:
                     raise ValueError(
-                        f"Qué pasó: la fuente '{nombre}' tiene la columna "
-                        f"'{usuario}' (mapeada a '{canonico}') Y también "
-                        f"'{canonico}'. "
-                        f"Por qué importa: el pipeline no puede adivinar cuál "
-                        f"de las dos es la verdadera sin riesgo de mezclar datos. "
-                        f"Qué hacer: elimine o renombre una de las dos columnas "
-                        f"en esa fuente antes de llamar al pipeline."
+                        mensaje_accionable(
+                            f"la fuente '{nombre}' tiene la columna '{usuario}' (mapeada a "
+                            f"'{canonico}') Y también '{canonico}'.",
+                            "el pipeline no puede adivinar cuál de las dos es la verdadera "
+                            "sin riesgo de mezclar datos.",
+                            "elimine o renombre una de las dos columnas en esa fuente antes "
+                            "de llamar al pipeline.",
+                        )
                     )
                 renames[usuario] = canonico
             renombradas[nombre] = df.rename(columns=renames) if renames else df
@@ -286,6 +324,15 @@ class Orchestrator:
     def profile(self) -> dict:
         """Acceso rápido al profile activo de la configuración."""
         return self.config.get("profiles", {}).get(self.config.get("profile", ""), {})
+
+    @property
+    def prioridad_fuentes(self) -> list[str]:
+        """Prioridad de fuentes del golden (L5): la que declara el perfil
+        (``config.auditoria.prioridad_del_perfil``: claves de
+        ``source_quality_weights``) o, si no hay, el orden de las fuentes.
+        Una sola regla; ``api.py``, L6 y el manifiesto la leen de aquí."""
+        prioridad = prioridad_del_perfil(self.profile)
+        return prioridad or list(self.sources.keys())
 
     @property
     def output_dir(self) -> Path:
@@ -670,6 +717,62 @@ class Orchestrator:
             self.log.error(traceback.format_exc())
             raise
 
+    def ejecutar_reporting_postprocesado(
+        self, results_data: dict, postprocesado: Sequence[str]
+    ) -> list[Path]:
+        """Ejecuta L6 sobre un resultado postprocesado y lo registra en el manifiesto.
+
+        ``linkage()`` aplica el matcher multi-variable y la expansión del
+        colapso exacto DESPUÉS de ``run()``; los reportes deben describir ese
+        resultado y no el checkpoint de L5. Hasta F1.13 ese camino llamaba a
+        ``_run_L6`` directamente, así que L6 no quedaba en ``manifest.json``
+        (ni su estado, ni sus tiempos, ni sus artefactos): una corrida con
+        reportes era indistinguible de una sin ellos para quien auditaba el
+        manifiesto. Este método pasa por el mismo :meth:`_exec_phase` que el
+        camino normal.
+
+        El registro anterior de L6 se invalida antes de ejecutar: la huella de
+        fase no incorpora el matcher ni el plan de colapso, así que reutilizar
+        un L6 «válido» devolvería reportes de otro resultado.
+
+        Es el único camino para generar L6 fuera de :meth:`run`:
+        :meth:`export_reports` también delega aquí.
+
+        Args:
+            results_data: dict con ``golden`` y ``correlative`` ya
+                postprocesados.
+            postprocesado: etiquetas de lo que se aplicó tras L5 (p. ej.
+                ``["matcher", "colapso_exacto"]``, o ``["export_reports"]``
+                para la exportación manual); quedan en
+                ``manifest["L6_reporting"]["meta"]["postprocesado"]``.
+
+        Returns:
+            Los artefactos generados por L6.
+        """
+        # La bandera solo vive mientras corre L6: ``fingerprint_config`` hashea
+        # toda la configuración, así que dejarla en ``self.config`` cambiaría la
+        # huella de L1…L5 y un ``run()``/``estimate()`` posterior en el mismo
+        # Orchestrator daría la caché por inválida y re-ejecutaría todo.
+        clave = "reporting_use_checkpoints"
+        valor_previo = self.config.get(clave, _AUSENTE)
+        self.config[clave] = False
+        try:
+            self.state.invalidate_from(Phase.L6_REPORTING)
+            prev_hash = self.state.get_prev_hash(Phase.L6_REPORTING)
+            report_files, _ = self._exec_phase(
+                Phase.L6_REPORTING,
+                self._run_L6,
+                prev_hash,
+                results_data,
+                meta_extra={"postprocesado": list(postprocesado)},
+            )
+        finally:
+            if valor_previo is _AUSENTE:
+                self.config.pop(clave, None)
+            else:
+                self.config[clave] = valor_previo
+        return report_files
+
     def estimate(self, from_phase: Phase = None) -> dict[str, Any]:
         """
         Estima tiempo de ejecución y muestra estado de fases.
@@ -745,6 +848,10 @@ class Orchestrator:
         Útil cuando se ejecutó con skip_reporting=True y luego se quieren
         generar los reportes sin re-ejecutar todo el pipeline.
 
+        Pasa por :meth:`ejecutar_reporting_postprocesado`, así que L6 queda
+        en ``manifest.json`` con ``meta.postprocesado == ["export_reports"]``
+        (hasta F1.13 llamaba a ``_run_L6`` directamente y no dejaba rastro).
+
         Args:
             results: Dict con 'golden' y 'correlative'.
                     Si None, carga de los archivos de L5.
@@ -767,8 +874,9 @@ class Orchestrator:
                 "correlative": pd.read_parquet(corr_path),
             }
 
-        files, _ = self._run_L6(results)
-        return files
+        # F1.13: pasa por _exec_phase/mark_done, y ahí entran también los
+        # `omitidos` que _run_L6 deja en self._meta_extra (F1.4).
+        return self.ejecutar_reporting_postprocesado(results, ["export_reports"])
 
     def add_reporting_strategy(self, strategy: BaseReportingStrategy) -> None:
         """
@@ -787,7 +895,14 @@ class Orchestrator:
     # EJECUCIÓN DE FASES
     # ==========================================================================
 
-    def _exec_phase(self, phase: Phase, func, prev_hash: str, *args) -> tuple[Any, str]:
+    def _exec_phase(
+        self,
+        phase: Phase,
+        func,
+        prev_hash: str,
+        *args,
+        meta_extra: dict[str, Any] | None = None,
+    ) -> tuple[Any, str]:
         """
         Ejecuta una fase con validación de hash y checkpointing.
 
@@ -802,6 +917,9 @@ class Orchestrator:
             func: Función que implementa la fase
             prev_hash: Hash de la fase anterior
             *args: Argumentos adicionales para la función
+            meta_extra: Metadatos adicionales que se registran en el manifiesto
+                junto a ``duration`` y ``peak_rss_mib`` (p. ej. qué
+                postprocesamiento describe un L6 ejecutado fuera de ``run()``).
 
         Returns:
             Tupla (resultado, hash_de_esta_fase)
@@ -860,15 +978,15 @@ class Orchestrator:
         self._phase_times[phase.value] = duration
 
         # Persistir estado
-        self.state.mark_done(
-            phase,
-            ph_hash,
-            files,
-            {
-                "duration": duration,
-                "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
-            },
-        )
+        meta_fase: dict[str, Any] = {
+            "duration": duration,
+            "peak_rss_mib": round(self._phase_peak_rss_mib[phase.value], 3),
+        }
+        # Lo que la propia fase dejó para el manifiesto (F1.4: `omitidos` de L6)
+        # y lo que pide el llamador (F1.13: `postprocesado` de un L6 fuera de run()).
+        meta_fase.update(self._meta_extra.pop(phase.value, {}))
+        meta_fase.update(meta_extra or {})
+        self.state.mark_done(phase, ph_hash, files, meta_fase)
         self.log.info(
             f"✅ {phase.value}: Completado en {_fmt_time(duration)} (hash: {ph_hash[:6]})"
         )
@@ -1709,6 +1827,11 @@ class Orchestrator:
 
         Returns:
             Tupla (dict con 'golden' y 'correlative', [Path, Path])
+
+        Raises:
+            ConsolidacionNitError: si la consolidación final por NIT falla.
+                No hay fallback a los resultados sin consolidar (F1.2): la
+                fase no se persiste y la corrida termina con mensaje accionable.
         """
         phase_dir = self.dirs[Phase.L5_GOLDEN]
         out_gold = phase_dir / "golden.parquet"
@@ -1770,9 +1893,7 @@ class Orchestrator:
                 self.log.warning(f"   ⚠️ {reporte_cl.resumen()}")
 
         # Prioridad de fuentes
-        priority = list(self.profile.get("source_quality_weights", {}).keys())
-        if not priority:
-            priority = list(self.sources.keys())
+        priority = self.prioridad_fuentes
         self.log.debug(f"   📝 Prioridad de fuentes: {priority}")
 
         # Generar Golden Records
@@ -1785,25 +1906,44 @@ class Orchestrator:
             golden_input.release()
         gc.collect()
 
-        # Consolidación final por NIT
+        # Consolidación final por NIT.
+        # F1.2: nada se repara en silencio. Hasta aquí un ``except Exception``
+        # escribía una advertencia, seguía con golden/correl SIN consolidar y
+        # marcaba L5 como DONE: una entrega degradada que nadie veía. Ahora la
+        # fase falla con causa encadenada y mensaje accionable, y como la
+        # excepción sale antes de ``mark_done``, el manifiesto no registra L5.
         try:
             # El orquestador ya registra esta fase. Evitar ``print`` directos
             # impide que una consola Windows CP1252 convierta un emoji en una
-            # excepción y active el fallback funcional de consolidación.
+            # excepción dentro de la consolidación.
             golden_final, correl_final = consolidate_groups_by_nit_balanced(
                 golden,
                 correl,
                 verbose=False,
                 copiar_correlativa=False,
+                prioridad_fuentes=priority,
             )
-            if correl_final is not correl:
-                del correl
-            if golden_final is not golden:
-                del golden
-            self.log.info("   ✅ Consolidación por NIT completada")
         except Exception as e:
-            self.log.warning(f"   ⚠️ Consolidación falló, usando resultados directos: {e}")
-            golden_final, correl_final = golden, correl
+            raise ConsolidacionNitError.desde_causa(
+                e, n_golden=len(golden), n_correlativa=len(correl)
+            ) from e
+        if correl_final is not correl:
+            del correl
+        if golden_final is not golden:
+            del golden
+        self.log.info("   ✅ Consolidación por NIT completada")
+
+        # F1.1: red final antes de persistir. Fuera del try anterior a propósito:
+        # un golden con métricas nulas o columnas de la correlativa no se
+        # degrada a «resultados directos», detiene la corrida.
+        verificar_golden(golden_final, correl_final.columns)
+
+        # F1.14: el golden sale del generador ya tipado, pero la consolidación
+        # por NIT reconstruye filas y puede devolver 0/1 u object donde el
+        # contrato promete bool, o float donde promete int64. Tolerante a
+        # propósito: una métrica con nulos (las filas huérfanas que cierra
+        # F1.1) se deja como viene y se advierte; no se inventa un valor.
+        golden_final = tipar_golden(golden_final, estricto=False, registrador=self.log)
 
         # Guardar resultados
         golden_final.to_parquet(out_gold, index=False)
@@ -1843,22 +1983,28 @@ class Orchestrator:
         full_correl_df = results_data["correlative"]
         golden_df = full_golden_df
         correl_df = full_correl_df
-        reporting_sampled = False
         full_metrics = self._build_metrics(golden_df, correl_df)
+
+        # F1.5: un recorte nunca viaja sin rótulo. `muestras` es el registro
+        # único de lo recortado: ReportGenerator lo lee para marcar ALCANCE en
+        # sus reportes y para no confundir el N real (en `total_records`) con la
+        # vista. Solo entra en las métricas si hay algo que registrar.
+        muestras: dict[str, dict[str, Any]] = {}
 
         if mem_percent > MEMORY_CRITICAL_THRESHOLD:
             self.log.warning(f"   ⚠️ MEMORIA CRÍTICA ({mem_percent:.1f}%). Modo conservador...")
+            motivo = f"memoria crítica ({mem_percent:.1f} % > {MEMORY_CRITICAL_THRESHOLD:.0f} %)"
 
             if len(golden_df) > SAMPLE_SIZE:
                 orig = len(golden_df)
                 golden_df = golden_df.head(SAMPLE_SIZE)
-                reporting_sampled = True
+                muestras["golden"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 golden_df: {orig:,} → {SAMPLE_SIZE:,}")
 
             if len(correl_df) > SAMPLE_SIZE:
                 orig = len(correl_df)
                 correl_df = correl_df.head(SAMPLE_SIZE)
-                reporting_sampled = True
+                muestras["correlativa"] = {"n": SAMPLE_SIZE, "N": orig, "motivo": motivo}
                 self.log.info(f"      📉 correlative_df: {orig:,} → {SAMPLE_SIZE:,}")
 
             gc.collect()
@@ -1871,11 +2017,16 @@ class Orchestrator:
 
         # 4. OBTENER DATAFRAMES Y MÉTRICAS
         metrics = full_metrics
-        if reporting_sampled:
+        if muestras:
+            metrics["muestras"] = muestras
+            # Banderas heredadas (las leen consumidores del JSON de métricas):
+            # se derivan del registro, no se mantienen aparte.
             metrics["reporting_sampled"] = True
             metrics["reporting_sample_size"] = SAMPLE_SIZE
 
-        # 5. CREAR CONTEXTO
+        # 5. CREAR CONTEXTO (F1.12: la prioridad REAL del golden viaja con él,
+        #    para que el alias config_auditoria.json diga lo mismo que el manifiesto)
+        prioridad = tuple(self.prioridad_fuentes)
         ctx = ReportingContext(
             golden_df=golden_df,
             correlative_df=correl_df,
@@ -1884,6 +2035,7 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
         export_ctx = ReportingContext(
             golden_df=full_golden_df,
@@ -1893,65 +2045,129 @@ class Orchestrator:
             metrics=metrics,
             start_time=self._start_time or time.time(),
             phase_times=self._phase_times.copy(),
+            prioridad_fuentes=prioridad,
         )
 
-        # 6. EJECUTAR ESTRATEGIAS CON PROTECCIÓN
+        # 6. EJECUTAR ESTRATEGIAS BAJO EL CONTRATO DE L6 (F1.4)
+        #    - obligatoria (produce un artefacto obligatorio) y falla → la
+        #      corrida falla con ArtefactoObligatorioError;
+        #    - opcional y falla → se omite y queda en el manifiesto con motivo;
+        #    - al final, verificar_artefactos exige los obligatorios por
+        #      nombre exacto (no por prefijo).
         all_files: list[Path] = []
+        omitidos: list[ArtefactoOmitido] = []
         self.log.info(f"📊 Ejecutando {len(self._reporting_strategies)} estrategias...")
 
         for strategy in self._reporting_strategies:
             current_mem = psutil.virtual_memory().percent
             is_data_export = isinstance(strategy, DataExportStrategy)
+            nombre_clase = type(strategy).__name__
+            # Una estrategia que solo cumple el Protocol (sin heredar de
+            # BaseReportingStrategy) no declara `obligatoria` ni `omitidos`;
+            # el contrato la conoce por su jerarquía de clases.
+            obligatoria = bool(
+                getattr(strategy, "obligatoria", es_estrategia_obligatoria(strategy))
+            )
 
-            # La exportación es un artefacto contractual, no una visualización
-            # opcional: incluso bajo presión crítica debe intentarse. La
-            # estrategia ya usa streaming desde checkpoints cuando es válido
-            # y evita Excel completo con RAM alta. Solo se omite analítica.
-            if current_mem > 95 and not is_data_export:
-                self.log.error(f"   🛑 RAM crítica ({current_mem:.1f}%), saltando {strategy.name}")
+            # Los artefactos obligatorios se intentan incluso bajo presión
+            # crítica (la exportación usa streaming desde checkpoints y evita
+            # el Excel completo con RAM alta). Solo se omite la analítica (y
+            # el alias config_auditoria.json, F1.12), y con constancia.
+            if current_mem > 95 and not obligatoria:
+                motivo = f"RAM crítica ({current_mem:.1f} %): se omitió para proteger la corrida"
+                self.log.error(f"   🛑 {strategy.name}: {motivo}")
+                omitidos.extend(self._omisiones_de(strategy, motivo))
                 continue
 
+            self.log.info(f"   ▶️ {strategy.name}...")
+            strategy_ctx = export_ctx if is_data_export else ctx
             try:
-                self.log.info(f"   ▶️ {strategy.name}...")
-                strategy_ctx = export_ctx if is_data_export else ctx
                 files = strategy.execute(strategy_ctx, self.log)
+            except Exception as exc_cruda:
+                # BaseReportingStrategy.execute ya relanza EstrategiaFallo; una
+                # estrategia que solo cumple el Protocol (add_reporting_strategy)
+                # o que sobreescribe execute lanza lo que sea. Misma regla para
+                # ambas: obligatoria → falla la corrida; opcional → omitida.
+                if isinstance(exc_cruda, EstrategiaFallo):
+                    exc = exc_cruda
+                else:
+                    exc = EstrategiaFallo(strategy.name, exc_cruda)
+                    exc.__cause__ = exc_cruda  # misma cadena que BaseReportingStrategy
+                if obligatoria:
+                    # Solo los obligatorios: los Excel opcionales de la misma
+                    # estrategia no «faltan», se omiten.
+                    raise ArtefactoObligatorioError(
+                        obligatorios_de(strategy) or (strategy.name,),
+                        output_dir,
+                        detalle=f"{nombre_clase} falló: {type(exc.causa).__name__}: {exc.causa}",
+                    ) from exc
+                omitidos.extend(
+                    self._omisiones_de(strategy, f"{type(exc.causa).__name__}: {exc.causa}")
+                )
+                continue
+            finally:
+                gc.collect()
 
-                # BaseReportingStrategy es deliberadamente tolerante y
-                # convierte errores en []. Para la estrategia contractual
-                # incorporada eso ocultaría una corrida sin sus dos salidas.
-                if type(strategy) is DataExportStrategy:
-                    names = [Path(path).name for path in files]
-                    missing_exports = [
-                        prefix
-                        for prefix in ("golden_records", "tabla_correlativa")
-                        if not any(name.startswith(prefix) for name in names)
-                    ]
-                    if missing_exports:
-                        raise RuntimeError(
-                            "DataExportStrategy no generó artefactos para: "
-                            + ", ".join(missing_exports)
-                        )
-                all_files.extend(files)
-                self.log.info(f"   ✅ {strategy.name}: {len(files)} archivo(s)")
-            except Exception as e:
-                self.log.error(f"   ❌ {strategy.name} falló: {e}")
-                if is_data_export:
-                    raise RuntimeError(
-                        "Falló la exportación contractual de resultados; "
-                        "no se marcará L6 como completada."
-                    ) from e
+            # `omitidos` existe desde __init__ en BaseReportingStrategy; el
+            # getattr es solo para una estrategia de solo Protocol, que no lo
+            # declara (sus fallos se registran arriba, por excepción).
+            omitidos.extend(getattr(strategy, "omitidos", ()))
+            all_files.extend(files)
+            self.log.info(f"   ✅ {strategy.name}: {len(files)} archivo(s)")
 
-            gc.collect()
+        # 7. VERIFICAR EL CONTRATO: obligatorios por nombre exacto
+        reporte = verificar_artefactos(output_dir, all_files)
+        if not reporte.ok:
+            raise ArtefactoObligatorioError(reporte.obligatorios_faltantes, output_dir)
 
-        # 7. RESUMEN
+        self.l6_omitidos = [o.como_dict() for o in omitidos]
+        self._meta_extra[Phase.L6_REPORTING.value] = {"omitidos": list(self.l6_omitidos)}
+
+        # 8. RESUMEN
         self.log.info(f"   📁 Total: {len(all_files)} archivos generados")
+        if omitidos:
+            self.log.warning(
+                f"   ⚠️ {len(omitidos)} artefacto(s) opcional(es) omitido(s); "
+                "detalle en manifest.json → L6_reporting.meta.omitidos"
+            )
         self.log.info(f"   💾 Memoria final: {psutil.virtual_memory().percent:.1f}%")
 
         return all_files, all_files
 
+    @staticmethod
+    def _omisiones_de(strategy: BaseReportingStrategy, motivo: str) -> list[ArtefactoOmitido]:
+        """Una omisión por cada artefacto que la estrategia habría producido.
+
+        Para una estrategia no declarada en ``contrato_l6`` (añadida con
+        ``add_reporting_strategy``) se registra su nombre como artefacto.
+        """
+        nombre_clase = type(strategy).__name__
+        patrones = artefactos_de(strategy) or (strategy.name,)
+        return [ArtefactoOmitido(patron, nombre_clase, motivo) for patron in patrones]
+
     def _build_metrics(self, golden_df: pd.DataFrame, correl_df: pd.DataFrame) -> dict[str, Any]:
         """
-        Construye diccionario de métricas para reportes.
+        Construye diccionario de métricas para reportes (fuente única de L6).
+
+        El bloque en español (``pipeline.metricas.CLAVES_METRICAS``:
+        ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
+        ``grupos_multifuente``, ``confianza_media``/``mediana``,
+        ``segundos_total``, ``rss_pico_mib``) lo calcula
+        ``metricas_de_corrida`` desde la verdad en disco (F1.7/F1.12): es la
+        MISMA función que escribe ``manifest.json → metricas``, así el alias
+        ``config_auditoria.json`` y el manifiesto dicen la misma cifra. Aquí
+        ``rss_pico_mib`` y ``segundos_total`` cubren las fases ya cerradas (L6
+        aún no lo está cuando se construyen las métricas).
+
+        Los alias en inglés se DERIVAN del bloque, no se recalculan:
+        ``reduction_rate``/``linkage_rate`` (0 sin filas), ``multi_source_groups``,
+        ``avg_confidence``/``median_confidence`` (solo cuando el golden trae la
+        columna: los consumidores de v1 hacen ``.get(clave, 0)``),
+        ``candidates_found``, ``pairs_scored`` y ``max_memory_gb`` (con ``None``
+        se entregan como 0 porque ``visualizer``/``suite``/``dashboard`` dividen
+        por ellos). El resumen ejecutivo lee las claves en español. ``max_memory_gb`` está en GiB
+        (``rss_pico_mib / 1024``, como el muestreador) aunque la clave diga
+        «gb»: sus consumidores lo rotulan GiB.
 
         Args:
             golden_df: DataFrame de Golden Records
@@ -1964,33 +2180,50 @@ class Orchestrator:
         if not isinstance(phase_peak_rss_mib, dict):
             raise TypeError("_phase_peak_rss_mib debe ser un diccionario")
 
+        # ``self.work_dir`` y ``self.log`` existen desde ``__init__``; una
+        # instancia parcial de prueba debe traerlos, no se toleran aquí. Sin
+        # la base en disco el bloque dice None (nunca 0) y se avisa qué hacer.
+        dir_trabajo = self.work_dir
+        bloque = metricas_de_corrida(
+            golden_df, correl_df, dir_trabajo, self._phase_times, phase_peak_rss_mib
+        )
+        for clave, ruta, tabla in (
+            ("candidatos", RUTA_CANDIDATES_DB, TABLA_CANDIDATES),
+            ("pares_puntuados", RUTA_SCORED_DB, TABLA_SCORED),
+        ):
+            if bloque[clave] is None:
+                self.log.warning(
+                    mensaje_accionable(
+                        f"no se pudo contar {tabla} ({clave}) en {Path(dir_trabajo) / ruta}.",
+                        "el resumen ejecutivo mostrará N/A en vez de un número.",
+                        "si necesita la cifra, relance la fase con force_rerun o conserve el "
+                        "directorio de trabajo entre corridas.",
+                    )
+                )
+
         metrics: dict[str, Any] = {
             "total_records": len(correl_df),
             "unique_groups": len(golden_df),
             "execution_time": time.time() - self._start_time if self._start_time else 0,
             "phase_times": self._phase_times.copy(),
             "peak_rss_mib_by_phase": phase_peak_rss_mib.copy(),
+            **{clave: bloque[clave] for clave in CLAVES_METRICAS},
+            # Alias heredados (ver docstring).
+            "candidates_found": bloque["candidatos"] or 0,
+            "pairs_scored": bloque["pares_puntuados"] or 0,
+            "max_memory_gb": (bloque["rss_pico_mib"] or 0.0) / 1024,
+            "linkage_rate": bloque["tasa_reduccion"] if bloque["tasa_reduccion"] is not None else 0,
+            "reduction_rate": (
+                bloque["tasa_reduccion"] if bloque["tasa_reduccion"] is not None else 0
+            ),
         }
-
-        # Tasa de linkage/reducción
-        if len(correl_df) > 0:
-            metrics["linkage_rate"] = 1 - (len(golden_df) / len(correl_df))
-            metrics["reduction_rate"] = 1 - (len(golden_df) / len(correl_df))
-        else:
-            metrics["linkage_rate"] = 0
-            metrics["reduction_rate"] = 0
-
-        # Grupos multi-fuente
-        for col in ["SOURCES_COUNT", "SOURCE_COUNT"]:
-            if col in golden_df.columns:
-                metrics["multi_source_groups"] = int((golden_df[col] > 1).sum())
-                break
-
-        # Métricas de confianza
+        if bloque["grupos_multifuente"] is not None:
+            metrics["multi_source_groups"] = bloque["grupos_multifuente"]
+        if bloque["confianza_media"] is not None:
+            metrics["avg_confidence"] = bloque["confianza_media"]
+            metrics["median_confidence"] = bloque["confianza_mediana"]
         if "CONFIDENCE_SCORE" in golden_df.columns:
             scores = golden_df["CONFIDENCE_SCORE"]
-            metrics["avg_confidence"] = float(scores.mean())
-            metrics["median_confidence"] = float(scores.median())
             metrics["high_confidence_count"] = int((scores > 0.9).sum())
             metrics["low_confidence_count"] = int((scores < 0.75).sum())
 

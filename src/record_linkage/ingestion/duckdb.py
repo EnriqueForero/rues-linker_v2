@@ -184,6 +184,14 @@ class DuckDBCompactionResult:
     payload_path: Path | None = None
     payload_columns: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    #: Columnas canónicas de ``optional_column_mapping`` que la fuente NO tiene
+    #: (F1.8); misma regla que ``SourceLoadReport.missing_optional``.
+    missing_optional: tuple[str, ...] = ()
+    #: Columnas no-matcher que la fuente SÍ produjo pero no se publicaron como
+    #: payload (``preserve_payload=False``). Es el complemento de
+    #: ``payload_columns``: una de las dos lleva cada columna no-matcher, nunca
+    #: ambas. Permite al flujo declarar por qué faltan en la entrega (F1.8).
+    discarded_payload_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "resolved_mapping", MappingProxyType(dict(self.resolved_mapping)))
@@ -1278,6 +1286,10 @@ class DuckDBSourceCompactor:
                     payload_path=published_payload,
                     payload_columns=payload_columns if published_payload is not None else (),
                     warnings=warnings,
+                    missing_optional=tuple(plan.missing_optional),
+                    discarded_payload_columns=(
+                        payload_columns if published_payload is None else ()
+                    ),
                 )
         finally:
             if connection is not None:

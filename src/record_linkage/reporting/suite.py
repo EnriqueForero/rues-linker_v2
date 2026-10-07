@@ -11,11 +11,13 @@ directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -24,7 +26,10 @@ import pandas as pd
 import seaborn as sns
 
 from ..exporters._spreadsheet import prepare_spreadsheet_data, safe_sheet_name
+from ..pipeline.errores import ErrorPipeline, MuestreoReportesError
 from ..utils.logger import CustomLogger
+from ._fases import MENSAJE_SIN_TIEMPOS, etiquetar, formatear_segundos, tiempos_por_fase
+from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 
 
@@ -65,6 +70,8 @@ class EnhancedReportingSuite:
         self.config = config or {}
         self.max_memory_mb = max_memory_mb
         self.logger = CustomLogger("EnhancedReportingSuite")
+        # F1.4: (nombre de archivo, motivo) de cada reporte que no se escribió.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Configuración de límites
         self.sample_size = min(50000, max_memory_mb * 100)
@@ -79,6 +86,8 @@ class EnhancedReportingSuite:
         # Referencias a datos
         self.correlative_data_ref = correlative_data
         self.golden_records_data_ref = golden_records_data
+        # Causa de cada carga que falló, por tabla; la compuerta la cita.
+        self._errores_carga: dict[str, str] = {}
 
         # Cargar muestras inteligentes
         self.correlative_sample = self._load_smart_sample(
@@ -111,7 +120,20 @@ class EnhancedReportingSuite:
         return logger
 
     def _validate_data(self):
-        """Valida que los datos tengan estructura mínima necesaria."""
+        """Valida que las muestras representen a sus insumos y tengan la estructura mínima.
+
+        Compuerta de F1.3: un insumo con filas que produce una muestra vacía, o
+        una muestra a la que le faltan columnas del insumo, lanza
+        :class:`MuestreoReportesError`. Antes la suite seguía con la muestra
+        vacía y omitía tres artefactos con un WARNING.
+        """
+        self._verificar_muestra(
+            "correlative_table", self.correlative_data_ref, self.correlative_sample
+        )
+        self._verificar_muestra(
+            "golden_records", self.golden_records_data_ref, self.golden_records_sample
+        )
+
         # Validar correlative
         if not self.correlative_sample.empty:
             required = ["ID_GRUPO"]
@@ -141,17 +163,10 @@ class EnhancedReportingSuite:
                 if len(data_ref) <= sample_size:
                     return data_ref
 
-                # Muestra estratificada si es posible
-                if "SRC" in data_ref.columns:
-                    # Intentar mantener proporción por fuente
-                    return data_ref.groupby("SRC", group_keys=False).apply(
-                        lambda x: x.sample(
-                            n=min(len(x), int(sample_size * len(x) / len(data_ref))),
-                            random_state=42,
-                        )
-                    )
-                else:
-                    return data_ref.sample(n=sample_size, random_state=42)
+                # Muestra estratificada por fuente (F1.3): regla única en
+                # reporting._muestreo — conserva columnas y el estrato NaN,
+                # piso de 1 por fuente, tope sample_size. Sin SRC, muestra simple.
+                return muestra_estratificada(data_ref, "SRC", sample_size)
 
             # Si es archivo SQLite
             if isinstance(data_ref, str) and data_ref.endswith(".db"):
@@ -189,11 +204,72 @@ class EnhancedReportingSuite:
                     # Para CSV grandes, leer solo sample
                     return pd.read_csv(data_ref, nrows=sample_size)
 
+        except ErrorPipeline:
+            # Un fallo del propio muestreo (n <= 0, más estratos que n) es un
+            # defecto del pipeline, no una carga fallida: sube tal cual.
+            raise
         except Exception as e:
             self.logger.error(f"Error cargando muestra de {table_name}: {e!s}")
+            self._errores_carga[table_name] = f"{type(e).__name__}: {e}"
 
-        # Retornar DataFrame vacío si falla
+        # Retornar DataFrame vacío si falla; _validate_data decide si eso es
+        # una degradación (insumo con filas) o un insumo legítimamente vacío.
         return pd.DataFrame()
+
+    def _verificar_muestra(
+        self, table_name: str, data_ref: pd.DataFrame | str, muestra: pd.DataFrame
+    ) -> None:
+        """Falla si un insumo con filas dio muestra vacía o si se perdieron columnas.
+
+        Una muestra vacía porque la carga LANZÓ (tabla ausente en el ``.db``,
+        archivo ilegible) también es degradación, aunque no se sepa cuántas
+        filas tiene el insumo: la causa registrada se cita en el mensaje.
+        """
+        n_origen, columnas_origen = self._describir_insumo(data_ref, table_name)
+        perdidas: list[str] = []
+        if columnas_origen is not None:
+            perdidas = [c for c in columnas_origen if c not in muestra.columns]
+        muestra_vacia = muestra.empty and (
+            (n_origen is not None and n_origen > 0) or table_name in self._errores_carga
+        )
+        if muestra_vacia or (perdidas and not muestra.empty):
+            raise MuestreoReportesError.desde_muestra(
+                table_name,
+                n_origen=n_origen,
+                n_muestra=len(muestra),
+                columnas_perdidas=perdidas,
+                causa=self._errores_carga.get(table_name),
+            )
+
+    def _describir_insumo(
+        self, data_ref: pd.DataFrame | str, table_name: str
+    ) -> tuple[int | None, list[str] | None]:
+        """(filas, columnas) del insumo sin cargarlo; ``None`` donde no se puede saber."""
+        if isinstance(data_ref, pd.DataFrame):
+            return len(data_ref), list(data_ref.columns)
+        if not isinstance(data_ref, str) or not Path(data_ref).is_file():
+            return None, None
+        try:
+            if data_ref.endswith(".db"):
+                from ..pipeline.metricas import contar_filas_sqlite
+
+                return contar_filas_sqlite(Path(data_ref), table_name), None
+            if data_ref.endswith(".parquet"):
+                import pyarrow.parquet as pq
+
+                archivo = pq.ParquetFile(data_ref)
+                return archivo.metadata.num_rows, list(archivo.schema_arrow.names)
+            if data_ref.endswith((".csv", ".csv.gz")):
+                return None, list(pd.read_csv(data_ref, nrows=0).columns)
+        except Exception as e:
+            # Describir el insumo es diagnóstico: si no se puede, no se juzga,
+            # pero queda constancia de por qué.
+            self.logger.debug(
+                f"No se pudo describir el insumo '{table_name}' ({data_ref}): "
+                f"{type(e).__name__}: {e}"
+            )
+            return None, None
+        return None, None
 
     def _setup_visualization_style(self):
         """Configura estilo moderno para visualizaciones."""
@@ -230,42 +306,48 @@ class EnhancedReportingSuite:
         """
         self.logger.info("Iniciando generación de reportes mejorados...")
         generated_files = {}
+        self.omitidos = []
 
-        # 1. Heatmap de intersección
-        try:
-            self.logger.info("Generando Heatmap de Intersección...")
-            heatmap_path = self.generate_intersection_heatmap(output_dir)
-            if heatmap_path:
-                generated_files["intersection_heatmap"] = heatmap_path
-        except Exception as e:
-            self.logger.error(f"Error en heatmap: {e!s}", exc_info=True)
-
-        # 2. Dashboard Ejecutivo Mejorado
-        try:
-            self.logger.info("Generando Dashboard Ejecutivo Mejorado...")
-            dashboard_path = self.generate_enhanced_dashboard(output_dir)
-            if dashboard_path:
-                generated_files["enhanced_dashboard"] = dashboard_path
-        except Exception as e:
-            self.logger.error(f"Error en dashboard: {e!s}", exc_info=True)
-
-        # 3. Tarjeta de Calidad
-        try:
-            self.logger.info("Generando Tarjeta de Calidad...")
-            quality_card_path = self.generate_quality_card(output_dir)
-            if quality_card_path:
-                generated_files["quality_card"] = quality_card_path
-        except Exception as e:
-            self.logger.error(f"Error en tarjeta de calidad: {e!s}", exc_info=True)
-
-        # 4. Reporte de Casos Problemáticos
-        try:
-            self.logger.info("Generando Reporte de Casos Problemáticos...")
-            problematic_path = self.generate_problematic_cases_report(output_dir)
-            if problematic_path:
-                generated_files["problematic_cases"] = problematic_path
-        except Exception as e:
-            self.logger.error(f"Error en casos problemáticos: {e!s}", exc_info=True)
+        # F1.4: cada reporte que no sale queda en `omitidos` con motivo
+        # (excepción, o «sin datos» cuando el generador devuelve None).
+        generadores = [
+            (
+                "intersection_heatmap",
+                "heatmap_interseccion_mejorado.png",
+                "Heatmap de Intersección",
+                self.generate_intersection_heatmap,
+            ),
+            (
+                "enhanced_dashboard",
+                "dashboard_ejecutivo_mejorado.png",
+                "Dashboard Ejecutivo Mejorado",
+                self.generate_enhanced_dashboard,
+            ),
+            (
+                "quality_card",
+                "tarjeta_calidad_datos.png",
+                "Tarjeta de Calidad",
+                self.generate_quality_card,
+            ),
+            (
+                "problematic_cases",
+                "casos_problematicos_detallado.xlsx",
+                "Reporte de Casos Problemáticos",
+                self.generate_problematic_cases_report,
+            ),
+        ]
+        for clave, archivo, titulo, generador in generadores:
+            try:
+                self.logger.info(f"Generando {titulo}...")
+                ruta = generador(output_dir)
+            except Exception as e:
+                self.logger.error(f"Error en {titulo}: {e!s}", exc_info=True)
+                self.omitidos.append((archivo, f"{type(e).__name__}: {e!s}"))
+                continue
+            if ruta:
+                generated_files[clave] = ruta
+            else:
+                self.omitidos.append((archivo, "datos insuficientes para generarlo"))
 
         # Liberar memoria
         gc.collect()
@@ -373,7 +455,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error en generate_intersection_heatmap: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _calculate_intersection_from_db(self) -> pd.DataFrame:
         """Calcula matriz de intersección directamente desde SQLite."""
@@ -448,57 +530,52 @@ class EnhancedReportingSuite:
         """
         Dibuja un gráfico de radar para métricas de calidad - VERSIÓN CORREGIDA.
         """
-        try:
-            # Preparar datos
-            labels = list(metrics.keys())
-            values = list(metrics.values())
+        # Preparar datos
+        labels = list(metrics.keys())
+        values = list(metrics.values())
 
-            # Asegurar que todos los valores estén entre 0 y 1
-            values = [float(max(0, min(1, v))) for v in values]
+        # Asegurar que todos los valores estén entre 0 y 1
+        values = [float(max(0, min(1, v))) for v in values]
 
-            # Número de variables
-            num_vars = len(labels)
+        # Número de variables
+        num_vars = len(labels)
 
-            # Calcular ángulos para cada variable
-            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        # Calcular ángulos para cada variable
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
 
-            # Cerrar el polígono
-            values_plot = values + values[:1]
-            angles_plot = angles + angles[:1]
+        # Cerrar el polígono
+        values_plot = values + values[:1]
+        angles_plot = angles + angles[:1]
 
-            # Configurar el gráfico radar
-            ax.set_theta_offset(np.pi / 2)
-            ax.set_theta_direction(-1)
+        # Configurar el gráfico radar
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
 
-            # Dibujar el polígono
-            ax.plot(angles_plot, values_plot, "o-", linewidth=2, color=self.colors["primary"])
-            ax.fill(angles_plot, values_plot, alpha=0.25, color=self.colors["primary"])
+        # Dibujar el polígono
+        ax.plot(angles_plot, values_plot, "o-", linewidth=2, color=self.colors["primary"])
+        ax.fill(angles_plot, values_plot, alpha=0.25, color=self.colors["primary"])
 
-            # Configurar las etiquetas
-            ax.set_xticks(angles)
-            ax.set_xticklabels(labels, size=10)
+        # Configurar las etiquetas
+        ax.set_xticks(angles)
+        ax.set_xticklabels(labels, size=10)
 
-            # Configurar los límites y grid
-            ax.set_ylim(0, 1)
-            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
-            ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], size=8)
-            ax.grid(True, linestyle="--", alpha=0.7)
+        # Configurar los límites y grid
+        ax.set_ylim(0, 1)
+        ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+        ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], size=8)
+        ax.grid(True, linestyle="--", alpha=0.7)
 
-            # Agregar valores en cada punto
-            for angle, value, _label in zip(angles, values, labels, strict=False):
-                ax.text(
-                    angle,
-                    value + 0.05,
-                    f"{value:.2f}",
-                    ha="center",
-                    va="center",
-                    size=9,
-                    weight="bold",
-                )
-        except Exception as e:
-            self.logger.error(f"Error en _plot_quality_radar: {e!s}")
-            # Si falla, mostrar un mensaje
-            ax.text(0.5, 0.5, "Error generando radar", ha="center", va="center")
+        # Agregar valores en cada punto
+        for angle, value, _label in zip(angles, values, labels, strict=False):
+            ax.text(
+                angle,
+                value + 0.05,
+                f"{value:.2f}",
+                ha="center",
+                va="center",
+                size=9,
+                weight="bold",
+            )
 
     def generate_quality_card(self, output_dir: str) -> str | None:
         """
@@ -703,101 +780,71 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando tarjeta de calidad: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _plot_performance_metrics(self, ax):
         """
-        Métricas de rendimiento del proceso - VERSIÓN CORREGIDA.
+        Tiempo por fase, tal como lo cronometró el orquestador (F1.6).
+
+        Sin ``metrics["phase_times"]`` el panel dice «Sin tiempos por fase»;
+        antes repartía el tiempo total con porcentajes fijos. F1.4: sin
+        ``try/except``: un panel que falla relanza y el dashboard se omite con
+        motivo en el manifiesto, nunca se pinta «Error generando».
         """
-        try:
-            # Obtener tiempos de cada fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
+        phase_series = pd.Series(
+            etiquetar(tiempos_por_fase(self.metrics)), dtype="float64"
+        ).sort_values(ascending=True)
 
-            # Si no hay tiempos individuales, intentar calcular desde el total
-            total_time = self.metrics.get("total_time", self.metrics.get("execution_time", 0))
-            if sum(phase_times.values()) == 0 and total_time > 0:
-                # Estimación basada en proporciones típicas
-                phase_times = {
-                    "Carga y Validación": total_time * 0.15,
-                    "Preprocesamiento": total_time * 0.10,
-                    "Candidatos (LSH)": total_time * 0.30,
-                    "Scoring": total_time * 0.15,
-                    "Clustering": total_time * 0.10,
-                    "Golden Records": total_time * 0.10,
-                    "Exportación": total_time * 0.10,
-                }
+        if phase_series.empty:
+            self.logger.warning(
+                "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+            )
+            self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
+            return
 
-            # Filtrar fases con tiempo > 0
-            phase_series = pd.Series(phase_times).sort_values(ascending=True)
-            phase_series = phase_series[phase_series > 0]
+        # Crear gráfico de barras horizontales
+        colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
+        bars = ax.barh(phase_series.index, phase_series.values, color=colors)
 
-            if phase_series.empty:
-                self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
-                return
+        # Añadir etiquetas con valores y porcentajes
+        total = phase_series.sum()
+        for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
+            width = bar.get_width()
+            percentage = (time_val / total * 100) if total > 0 else 0
 
-            # Crear gráfico de barras horizontales
-            colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
-            bars = ax.barh(phase_series.index, phase_series.values, color=colors)
+            # Etiqueta con tiempo y porcentaje
+            label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
+            ax.text(
+                width + 0.01 * phase_series.max(),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
 
-            # Añadir etiquetas con valores y porcentajes
-            total = phase_series.sum()
-            for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
-                width = bar.get_width()
-                percentage = (time_val / total * 100) if total > 0 else 0
+        # Configuración del gráfico
+        ax.set_xlabel("Tiempo", fontsize=11)
+        ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
+        ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
 
-                # Formato del tiempo
-                if time_val < 1:
-                    time_str = f"{time_val * 1000:.0f}ms"
-                elif time_val < 60:
-                    time_str = f"{time_val:.1f}s"
-                else:
-                    time_str = f"{time_val / 60:.1f}min"
+        # Agregar línea de tiempo total
+        if total > 0:
+            ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
+            ax.text(
+                total,
+                len(phase_series) - 0.5,
+                f"Total: {formatear_segundos(total)}",
+                ha="right",
+                va="center",
+                fontsize=9,
+                color="red",
+            )
 
-                # Etiqueta con tiempo y porcentaje
-                label = f"{time_str} ({percentage:.0f}%)"
-                ax.text(
-                    width + 0.01 * phase_series.max(),
-                    bar.get_y() + bar.get_height() / 2,
-                    label,
-                    va="center",
-                    ha="left",
-                    fontsize=9,
-                )
-
-            # Configuración del gráfico
-            ax.set_xlabel("Tiempo", fontsize=11)
-            ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
-            ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
-
-            # Agregar línea de tiempo total
-            if total > 0:
-                ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
-                ax.text(
-                    total,
-                    len(phase_series) - 0.5,
-                    f"Total: {total:.1f}s",
-                    ha="right",
-                    va="center",
-                    fontsize=9,
-                    color="red",
-                )
-
-            # Limpiar bordes
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-
-        except Exception as e:
-            self.logger.error(f"Error en _plot_performance_metrics: {e!s}")
-            self._show_no_data_message(ax, "Error generando métricas")
+        # Limpiar bordes
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
     def generate_enhanced_dashboard(self, output_dir: str) -> str | None:
         """
@@ -864,7 +911,7 @@ class EnhancedReportingSuite:
         except Exception as e:
             self.logger.error(f"Error generando dashboard: {e!s}", exc_info=True)
             plt.close("all")
-            return None
+            raise
 
     def _add_kpi_cards(self, fig, grid_area):
         """Agrega tarjetas KPI al dashboard."""
@@ -1528,7 +1575,10 @@ class EnhancedReportingSuite:
 
             except Exception as e:
                 self.logger.error(f"Error guardando reporte Excel: {e!s}")
-                return None
+                # F1.4: no dejar un xlsx a medias ni perder el motivo.
+                with contextlib.suppress(OSError):
+                    Path(output_path).unlink()
+                raise
         else:
             self.logger.info("No se detectaron casos problemáticos significativos")
             return None

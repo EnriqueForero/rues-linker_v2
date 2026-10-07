@@ -4,6 +4,12 @@ Mide sobre archivos reales lo que ninguna prueba sintética puede afirmar:
 tiempo, pico de RAM, conservación de filas y —lo más importante— cuántos
 grupos mezclan dos NIT válidos distintos, que debe ser **cero**.
 
+Desde F1.9 la correlativa entregada no trae ``NIT_BASE``/``NIT_VALID``: el
+script las recupera de ``<dir_trabajo>/L5_golden/correlative.parquet`` con
+``salida.tecnicas.adjuntar_tecnicas`` (falla claro si no está), recalcula el
+conteo de conflictos con la MISMA regla del contrato (``salida.completar``) y
+exige que coincida con el que el flujo publicó en el manifiesto.
+
 Uso::
 
     python scripts/verificar_rues_x_exportaciones.py \\
@@ -24,6 +30,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -31,6 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from record_linkage import ColumnType, Compression, IdentifierFormat, SourceSpec
 from record_linkage.flujo import ConfigCruce, ejecutar_cruce
+from record_linkage.salida.completar import bases_del_motor, grupos_con_bases_distintas
+from record_linkage.salida.tecnicas import adjuntar_tecnicas
+
+COLUMNAS_TECNICAS = ("NIT_BASE", "NIT_VALID")
 
 
 def _muestreador_rss() -> tuple[list[float], threading.Event]:
@@ -81,13 +92,52 @@ def especificaciones(ruta_rues: Path, ruta_dane: Path) -> list[SourceSpec]:
 
 
 def conflictos_de_identificador(correlativa: pd.DataFrame) -> int:
-    """Grupos que contienen dos NIT válidos distintos. Debe ser 0."""
-    validos = correlativa[
-        correlativa["NIT_BASE"].notna()
-        & (correlativa["NIT_BASE"] != "")
-        & correlativa["NIT_VALID"].astype(str).isin(["True", "1", "true"])
-    ]
-    return int((validos.groupby("ID_GRUPO")["NIT_BASE"].nunique() > 1).sum())
+    """Grupos que contienen dos NIT válidos distintos. Debe ser 0.
+
+    La regla es la del contrato (``salida.completar``: la base del registro
+    es ``NIT_BASE`` donde ``NIT_VALID``); ``correlativa`` debe traer esas dos
+    columnas ya pegadas con ``adjuntar_tecnicas``.
+    """
+    bases = bases_del_motor(correlativa["NIT_BASE"].to_numpy(), correlativa["NIT_VALID"].to_numpy())
+    return grupos_con_bases_distintas(correlativa["ID_GRUPO"], bases)
+
+
+def evaluar(resultado: Any) -> dict[str, Any]:
+    """Reporte de la corrida: filas, enlaces, conflictos recalculados y publicados."""
+    correlativa, tecnicas = adjuntar_tecnicas(
+        resultado.correlativa, resultado.rutas["dir_trabajo"], COLUMNAS_TECNICAS
+    )
+    exportaciones = correlativa[correlativa["SRC"] == "EXPORTACIONES"]
+    fuentes_por_grupo = correlativa.groupby("ID_GRUPO")["SRC"].transform("nunique")
+    enlazadas = int((fuentes_por_grupo[exportaciones.index] > 1).sum())
+    return {
+        "filas_entrada": resultado.metricas["filas_entrada"],
+        "filas_correlativa": len(correlativa),
+        "entidades": resultado.metricas["entidades"],
+        "exportaciones_enlazadas": enlazadas,
+        "exportaciones_totales": len(exportaciones),
+        "pct_exportaciones_enlazadas": round(enlazadas / max(len(exportaciones), 1), 4),
+        "grupos_con_nit_valido_en_conflicto": conflictos_de_identificador(correlativa),
+        "grupos_con_nit_valido_en_conflicto_manifiesto": resultado.conflictos_identificador(),
+        "columnas_tecnicas": tecnicas.a_dict(),
+    }
+
+
+def fallos_de(reporte: dict[str, Any]) -> list[str]:
+    """Invariantes que deben cumplirse; cada incumplimiento, una línea."""
+    fallos = []
+    if reporte["filas_correlativa"] != reporte["filas_entrada"]:
+        fallos.append("la correlativa no conserva todas las filas de entrada")
+    conflictos = reporte["grupos_con_nit_valido_en_conflicto"]
+    if conflictos:
+        fallos.append(f"{conflictos} grupos mezclan dos NIT válidos distintos")
+    publicados = reporte["grupos_con_nit_valido_en_conflicto_manifiesto"]
+    if conflictos != publicados:
+        fallos.append(
+            f"el conteo recalculado desde _trabajo ({conflictos}) no coincide con el "
+            f"publicado en el manifiesto ({publicados})"
+        )
+    return fallos
 
 
 def main() -> int:
@@ -112,34 +162,16 @@ def main() -> int:
         )
     )
     parar.set()
-    correlativa = resultado.correlativa
-    conflictos = conflictos_de_identificador(correlativa)
-    exportaciones = correlativa[correlativa["SRC"] == "EXPORTACIONES"]
-    fuentes_por_grupo = correlativa.groupby("ID_GRUPO")["SRC"].transform("nunique")
-    enlazadas = int((fuentes_por_grupo[exportaciones.index] > 1).sum())
-
-    reporte = {
-        "filas_entrada": resultado.metricas["filas_entrada"],
-        "filas_correlativa": len(correlativa),
-        "entidades": resultado.metricas["entidades"],
-        "segundos_total": round(time.time() - inicio, 1),
-        "pico_rss_mib": round(pico[0], 1),
-        "exportaciones_enlazadas": enlazadas,
-        "exportaciones_totales": len(exportaciones),
-        "pct_exportaciones_enlazadas": round(enlazadas / max(len(exportaciones), 1), 4),
-        "grupos_con_nit_valido_en_conflicto": conflictos,
-    }
+    reporte = evaluar(resultado)
+    reporte["segundos_total"] = round(time.time() - inicio, 1)
+    reporte["pico_rss_mib"] = round(pico[0], 1)
     print(resultado.resumen())
     print(json.dumps(reporte, indent=2, ensure_ascii=False))
     (args.salida / "verificacion_rues_x_exportaciones.json").write_text(
         json.dumps(reporte, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    fallos = []
-    if reporte["filas_correlativa"] != reporte["filas_entrada"]:
-        fallos.append("la correlativa no conserva todas las filas de entrada")
-    if conflictos:
-        fallos.append(f"{conflictos} grupos mezclan dos NIT válidos distintos")
+    fallos = fallos_de(reporte)
     for fallo in fallos:
         print(f"❌ {fallo}")
     if not fallos:

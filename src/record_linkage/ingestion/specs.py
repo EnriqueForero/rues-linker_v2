@@ -309,6 +309,10 @@ class SourceLoadReport:
     resolved_mapping: Mapping[str, str]
     invalid_values: Mapping[str, int]
     warnings: tuple[str, ...] = ()
+    #: Columnas canónicas de ``optional_column_mapping`` que la fuente NO tiene
+    #: (F1.8). Es la misma regla que produce el aviso «Columna opcional …
+    #: ausente»; se expone como dato para que el flujo la declare sin recalcularla.
+    missing_optional: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -18,17 +18,51 @@ Componentes:
 NOTA: Lógica de negocio preservada exactamente como en el notebook
 fuente. Solo se agregan imports, docstring de módulo y se eliminan
 directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+
+F1.10: ``DataExportStrategy`` escribe ``tabla_correlativa.*`` y
+``golden_records.*`` como ALIAS de v1 del estándar de salida (la carpeta que
+deja ``linkage(carpeta_salida=...)`` vía ``exporters.escritor``). Avisa con
+``DeprecationWarning`` una vez por proceso, el ``.xlsx`` lleva una primera
+hoja ``LEEME`` que remite a ``excel/correlativa.xlsx`` / ``excel/golden.xlsx``
+y todo pasa por las primitivas del escritor (ningún ``to_parquet``/
+``to_excel``/``to_csv`` directo aquí). Los alias desaparecen en
+``VERSION_RETIRO_ALIAS_V1``. El aviso sale también por ``logging`` (Python,
+IPython y Colab silencian por defecto los ``DeprecationWarning`` que no nacen
+en ``__main__``). ``ExcelReportsStrategy`` (``reporte_*.xlsx``) no es un
+alias: pasa por ``escribir_xlsx`` pero conserva la hoja ``Sheet1`` de v1
+hasta que F1.11 lo unifique en ``informe_cruce.xlsx``.
+
+F1.12: ``ConfigAuditStrategy`` es un ALIAS de v1. Lo que era
+``config_auditoria_<ts>.json/.txt`` (parámetros LSH, scoring, pesos,
+prioridad de fuentes, tiempos por fase, métricas) vive en ``manifest.json`` de
+la carpeta del estándar (``parametros`` / ``tiempos_por_fase`` / ``metricas``,
+con ``version`` real e insumos con huella). La estrategia escribe
+``config_auditoria.json`` (nombre estable, sin marca de tiempo) con
+``vease: "manifest.json"`` y el mismo bloque de parámetros
+(``config.auditoria.parametros_motor``: una regla, una vez), es OPCIONAL en
+el contrato de L6 y avisa con ``DeprecationWarning``; el ``.txt`` ya no se
+escribe.
+
+hasta que se unifique en ``informe_cruce.xlsx``.
+
+F1.11: el ``.xlsx`` de los alias se escribe COMPLETO hasta
+``LIMITE_FILAS_EXCEL`` filas (en flujo, ``exporters.excel``) o, si no cabe,
+``<alias>_LEEME.xlsx``; nunca más la muestra recortada de v1. La perilla
+``export_settings.excel_max_rows`` (recortaba a N filas) ya no hace nada y se
+avisa una vez por proceso si aparece en la configuración.
 """
 
 from __future__ import annotations
 
+import contextlib
 import gc
-import gzip
 import json
 import logging
 import shutil
 import time
+import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -39,9 +73,21 @@ import pandas as pd
 import psutil
 import pyarrow.parquet as pq
 
-from ..exporters._spreadsheet import prepare_spreadsheet_data
+from ..config.auditoria import parametros_motor
+from ..exporters.escritor import (
+    VERSION_RETIRO_ALIAS_V1,
+    escribir_csv_gz,
+    escribir_csv_gz_por_lotes,
+    escribir_excel_o_leeme,
+    escribir_parquet,
+    escribir_xlsx,
+    leeme_alias_v1,
+)
+from ..exporters.excel import LIMITE_FILAS_EXCEL, miles, motivo_no_cabe
 from ..pipeline._internal import _class_exists
+from ..pipeline.errores import EstrategiaFallo
 from ._flags import PYARROW_AVAILABLE
+from .contrato_l6 import ArtefactoOmitido, artefactos_de, es_estrategia_obligatoria
 from .reports import ReportGenerator
 
 # v0.7.2 (Sprint 0.8.2, Tarea 2.4): los imports de ExecutiveDashboard,
@@ -51,6 +97,89 @@ from .reports import ReportGenerator
 # alguien importara `Orchestrator` — incluso con skip_reporting=True.
 # La validación de disponibilidad sigue ocurriendo en `is_available()`
 # vía `_class_exists()`, que ya hace lazy import internamente.
+
+
+#: Alias de v1 → archivo del estándar al que remiten (F1.10).
+ARCHIVO_NUEVO_DE_ALIAS: dict[str, str] = {
+    "tabla_correlativa": "excel/correlativa.xlsx",
+    "golden_records": "excel/golden.xlsx",
+}
+
+_ALIAS_V1_AVISADO = False
+_PERILLA_EXCEL_AVISADA = False
+_logger = logging.getLogger(__name__)
+
+#: Perilla de v1 que recortaba el Excel a N filas. Retirada en F1.11: el Excel
+#: va completo o se escribe el LEEME. Se avisa, no se ignora en silencio.
+PERILLA_EXCEL_RETIRADA = "excel_max_rows"
+
+
+def _avisar_alias_v1() -> None:
+    """Avisa una sola vez por proceso que los alias de v1 se van.
+
+    ``DeprecationWarning`` (lo que pide la especificación) y, con el mismo
+    texto, ``logging.warning``: Python, IPython y Colab ignoran por defecto los
+    ``DeprecationWarning`` que no se originan en ``__main__``, así que sin el
+    log el usuario de v1 nunca lo vería.
+    """
+    global _ALIAS_V1_AVISADO
+    if _ALIAS_V1_AVISADO:
+        return
+    _ALIAS_V1_AVISADO = True
+    mensaje = (
+        "L6_reporting/tabla_correlativa.* y golden_records.* son ALIAS de v1 desde 0.23.0: "
+        "el entregable es la carpeta del estándar (linkage(carpeta_salida=...)), con "
+        "excel/correlativa.xlsx y excel/golden.xlsx. Los alias desaparecen en rues-linker "
+        f"{VERSION_RETIRO_ALIAS_V1}."
+    )
+    warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
+    _logger.warning(mensaje)
+
+
+#: Nombre estable del alias de v1 de la auditoría de configuración (F1.12).
+ALIAS_AUDITORIA = "config_auditoria.json"
+
+_AUDITORIA_V1_AVISADA = False
+
+
+def _avisar_auditoria_v1() -> None:
+    """Avisa una sola vez por proceso que ``config_auditoria.json`` es un alias.
+
+    Mismo patrón que ``_avisar_alias_v1``: ``DeprecationWarning`` y, con el
+    mismo texto, ``logging.warning``.
+    """
+    global _AUDITORIA_V1_AVISADA
+    if _AUDITORIA_V1_AVISADA:
+        return
+    _AUDITORIA_V1_AVISADA = True
+    mensaje = (
+        f"L6_reporting/{ALIAS_AUDITORIA} es un ALIAS de v1 desde 0.23.0: la configuración "
+        "efectiva, los tiempos por fase y las métricas de la corrida viven en manifest.json "
+        "de la carpeta del estándar (linkage(carpeta_salida=...)) bajo parametros / "
+        "tiempos_por_fase / metricas; config_auditoria_<ts>.txt ya no se escribe. El alias "
+        f"desaparece en rues-linker {VERSION_RETIRO_ALIAS_V1}."
+    )
+    warnings.warn(mensaje, DeprecationWarning, stacklevel=2)
+    _logger.warning(mensaje)
+
+
+def _avisar_perilla_excel(export_config: Mapping[str, Any], logger: logging.Logger) -> None:
+    """``export_settings.excel_max_rows`` ya no recorta nada: se avisa una vez por proceso."""
+    global _PERILLA_EXCEL_AVISADA
+    if _PERILLA_EXCEL_AVISADA or PERILLA_EXCEL_RETIRADA not in export_config:
+        return
+    _PERILLA_EXCEL_AVISADA = True
+    logger.warning(
+        f"export_settings.{PERILLA_EXCEL_RETIRADA}={export_config[PERILLA_EXCEL_RETIRADA]!r} "
+        "ya no aplica (F1.11): el Excel se escribe completo hasta "
+        f"{miles(LIMITE_FILAS_EXCEL)} filas o se deja <alias>_LEEME.xlsx; nunca un recorte. "
+        "Por qué importa: una muestra sin rótulo pasaba por la tabla completa. "
+        "Qué hacer: retire la perilla de la configuración."
+    )
+
+
+def _leeme_de(base_name: str) -> pd.DataFrame:
+    return leeme_alias_v1(ARCHIVO_NUEVO_DE_ALIAS.get(base_name, "la carpeta del estándar"))
 
 
 class Phase(Enum):
@@ -85,6 +214,9 @@ class ReportingContext:
         metrics: Métricas de ejecución calculadas
         start_time: Timestamp de inicio del proceso
         phase_times: Diccionario con duración de cada fase en segundos
+        prioridad_fuentes: la prioridad REAL del golden (``Orchestrator.
+            prioridad_fuentes``), para que el alias de auditoría (F1.12) diga
+            lo mismo que el manifiesto; vacía si el llamador no la conoce.
     """
 
     golden_df: pd.DataFrame
@@ -94,6 +226,7 @@ class ReportingContext:
     metrics: dict[str, Any]
     start_time: float
     phase_times: dict[str, float] = field(default_factory=dict)
+    prioridad_fuentes: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Validación en construcción - falla rápido si hay datos inválidos."""
@@ -153,13 +286,37 @@ class BaseReportingStrategy(ABC):
     Implementa el patrón Template Method para:
     - Verificación de dependencias antes de ejecutar
     - Logging estructurado y consistente
-    - Manejo de errores con fallback graceful
+    - Fallos tipados: una excepción dentro de ``_execute_impl`` se relanza
+      como ``EstrategiaFallo`` (F1.4). Hasta entonces se convertía en ``[]``
+      y una corrida sin entregables pasaba por buena.
 
     Las subclases solo deben implementar:
     - name: Nombre descriptivo
     - required_class: Clase del notebook que necesita
     - _execute_impl: Lógica específica de generación
+
+    Un artefacto OPCIONAL que no se pudo escribir se registra con
+    ``self.omitir(artefacto, motivo)``; el orquestador lo lleva al manifiesto.
+    ``omitidos`` existe desde la construcción (una subclase con ``__init__``
+    propio llama a ``super().__init__()``) y se vacía al empezar cada
+    ``execute``.
     """
+
+    omitidos: list[ArtefactoOmitido]
+
+    def __init__(self) -> None:
+        self.omitidos = []
+
+    @property
+    def obligatoria(self) -> bool:
+        """``True`` si la estrategia produce algún artefacto obligatorio del
+        contrato de L6 (``reporting.contrato_l6``). Si falla, la corrida falla.
+        Las subclases heredan el contrato de su base declarada."""
+        return es_estrategia_obligatoria(self)
+
+    def omitir(self, artefacto: str, motivo: str) -> None:
+        """Deja constancia de un artefacto opcional que NO se escribió."""
+        self.omitidos.append(ArtefactoOmitido(artefacto, type(self).__name__, motivo))
 
     @property
     @abstractmethod
@@ -199,42 +356,49 @@ class BaseReportingStrategy(ABC):
 
     def execute(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
         """
-        Template Method: ejecuta con validación y manejo de errores.
+        Template Method: ejecuta con validación y fallo tipado.
 
         Flujo:
         1. Verificar disponibilidad de dependencias
         2. Ejecutar implementación específica
-        3. Reportar resultado o error
+        3. Reportar resultado, o relanzar ``EstrategiaFallo``
 
         Returns:
-            Lista de archivos generados (vacía si hay error o no disponible)
+            Lista de archivos generados (vacía si la dependencia no está:
+            esa omisión queda en ``omitidos`` con su motivo).
+
+        Raises:
+            EstrategiaFallo: si ``_execute_impl`` lanza. La causa queda
+                encadenada en ``__cause__``. Quien llama decide si la
+                corrida falla (estrategia obligatoria) o se registra la
+                omisión (opcional). Nunca se devuelve ``[]`` por un error.
         """
-        # Verificar dependencias
+        self.omitidos = []
+
+        # Verificar dependencias. La omisión se registra por cada artefacto
+        # que la estrategia habría producido (la misma forma que usa el
+        # orquestador cuando la salta por RAM crítica): quien lea el
+        # manifiesto busca por nombre de archivo, no por nombre de estrategia.
         if not self.is_available():
-            logger.warning(
-                f"   ⚠️ {self.name}: Clase '{self.required_class}' no disponible, omitiendo"
-            )
+            motivo = f"clase '{self.required_class}' no disponible en el entorno"
+            for artefacto in artefactos_de(self) or (self.name,):
+                self.omitir(artefacto, motivo)
             return []
 
         try:
-            # Ejecutar estrategia
             files = self._execute_impl(ctx, logger)
-
-            # Reportar éxito
-            if files:
-                logger.info(f"   ✅ {self.name}: {len(files)} archivo(s) generado(s)")
-            else:
-                logger.debug(f"   ℹ️ {self.name}: Sin archivos generados")
-
-            return files
-
         except Exception as e:
-            # Reportar error pero no propagar (fallback graceful)
             logger.error(f"   ❌ {self.name} falló: {type(e).__name__}: {e}")
-            import traceback
+            logger.debug("   Traceback:", exc_info=True)
+            raise EstrategiaFallo(self.name, e) from e
 
-            logger.debug(f"   Traceback: {traceback.format_exc()}")
-            return []
+        if files:
+            logger.info(f"   ✅ {self.name}: {len(files)} archivo(s) generado(s)")
+        else:
+            logger.debug(f"   ℹ️ {self.name}: Sin archivos generados")
+        for omitido in self.omitidos:
+            logger.warning(f"   ⚠️ {self.name}: omitido {omitido.artefacto} ({omitido.motivo})")
+        return files
 
 
 @dataclass
@@ -268,7 +432,6 @@ class DataExportStrategy(BaseReportingStrategy):
     """
 
     STREAMING_BATCH_SIZE: int = 50_000
-    EXCEL_ROW_LIMIT: int = 100_000
     MEMORY_WARNING_PERCENT: float = 80.0
 
     @property
@@ -282,14 +445,12 @@ class DataExportStrategy(BaseReportingStrategy):
     def _execute_impl(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
         """Implementación principal de exportación."""
         generated_files: list[Path] = []
+        _avisar_alias_v1()
 
         mem_percent = psutil.virtual_memory().percent
         logger.info(f"   💾 Memoria al inicio: {mem_percent:.1f}%")
 
-        export_config = ctx.config.get("export_settings", {})
-        excel_limit = min(
-            export_config.get("excel_max_rows", self.EXCEL_ROW_LIMIT), self.EXCEL_ROW_LIMIT
-        )
+        _avisar_perilla_excel(ctx.config.get("export_settings", {}) or {}, logger)
 
         checkpoint_dir = (
             self._find_checkpoint_dir(ctx.output_dir)
@@ -312,39 +473,35 @@ class DataExportStrategy(BaseReportingStrategy):
             ),
         ]
 
+        # F1.4: una tarea que falla NO se registra como advertencia y se
+        # sigue: parquet y csv.gz son obligatorios y la excepción sube como
+        # EstrategiaFallo → ArtefactoObligatorioError. Solo el Excel (opcional)
+        # se omite con constancia.
         for task in export_tasks:
-            try:
-                files = self._process_export_task(task, ctx.output_dir, excel_limit, logger)
-                generated_files.extend(files)
-                gc.collect()
-            except Exception as e:
-                logger.error(f"   ❌ Error exportando {task.name}: {e}")
+            files = self._process_export_task(task, ctx.output_dir, logger)
+            generated_files.extend(files)
+            gc.collect()
 
         return generated_files
 
     def _process_export_task(
-        self, task: ExportTask, output_dir: Path, excel_limit: int, logger: logging.Logger
+        self, task: ExportTask, output_dir: Path, logger: logging.Logger
     ) -> list[Path]:
         """Procesa una tarea de exportación."""
         checkpoint_path = task.find_checkpoint()
 
         if checkpoint_path and PYARROW_AVAILABLE:
             logger.info(f"   📂 {task.name}: Streaming desde disco")
-            return self._export_from_disk_streaming(
-                checkpoint_path, task.name, output_dir, excel_limit, logger
-            )
+            return self._export_from_disk_streaming(checkpoint_path, task.name, output_dir, logger)
         else:
             logger.info(f"   🧠 {task.name}: Desde memoria ({len(task.df_source):,} filas)")
-            return self._export_from_memory(
-                task.df_source, task.name, output_dir, excel_limit, logger
-            )
+            return self._export_from_memory(task.df_source, task.name, output_dir, logger)
 
     def _export_from_disk_streaming(
         self,
         source_path: Path,
         base_name: str,
         output_dir: Path,
-        excel_limit: int,
         logger: logging.Logger,
     ) -> list[Path]:
         """Exporta usando streaming REAL desde disco."""
@@ -358,13 +515,7 @@ class DataExportStrategy(BaseReportingStrategy):
         csv_path = output_dir / f"{base_name}.csv.gz"
         logger.info("      💾 Streaming a CSV.gz...")
 
-        with gzip.open(csv_path, "wt", encoding="utf-8", newline="") as f_out:
-            first_batch = True
-            for batch in parquet_file.iter_batches(batch_size=self.STREAMING_BATCH_SIZE):
-                df_chunk = batch.to_pandas()
-                prepare_spreadsheet_data(df_chunk).to_csv(f_out, index=False, header=first_batch)
-                first_batch = False
-                del df_chunk
+        escribir_csv_gz_por_lotes(parquet_file, csv_path, filas_por_lote=self.STREAMING_BATCH_SIZE)
 
         logger.info(f"      ✅ {csv_path.name} ({csv_path.stat().st_size / (1024**2):.1f} MB)")
         files.append(csv_path)
@@ -376,81 +527,99 @@ class DataExportStrategy(BaseReportingStrategy):
             logger.info(f"      ✅ {parquet_dest.name} (copia)")
             files.append(parquet_dest)
 
-        # 3. Excel (Solo muestra)
-        if total_rows <= excel_limit:
-            xlsx_path = output_dir / f"{base_name}.xlsx"
-            df_excel = pd.read_parquet(source_path)
-            prepare_spreadsheet_data(df_excel).to_excel(xlsx_path, index=False, engine="openpyxl")
-            del df_excel
-            gc.collect()
-            logger.info(f"      ✅ {xlsx_path.name}")
-            files.append(xlsx_path)
-        else:
-            xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
-            df_sample = next(parquet_file.iter_batches(batch_size=excel_limit)).to_pandas()
-            prepare_spreadsheet_data(df_sample).to_excel(xlsx_path, index=False, engine="openpyxl")
-            del df_sample
-            gc.collect()
-            logger.info(f"      ✅ {xlsx_path.name} (muestra)")
-            files.append(xlsx_path)
+        # 3. Excel (opcional: si falla se omite con constancia, no se traga).
+        # F1.11: completo (por lotes desde el parquet) o <alias>_LEEME.xlsx.
+        files.extend(self._excel_o_leeme(parquet_file, base_name, output_dir, total_rows, logger))
 
         return files
+
+    def _excel_o_leeme(
+        self,
+        fuente: pd.DataFrame | pq.ParquetFile,
+        base_name: str,
+        output_dir: Path,
+        n_rows: int,
+        logger: logging.Logger,
+    ) -> list[Path]:
+        """Excel completo hasta ``LIMITE_FILAS_EXCEL`` o ``<alias>_LEEME.xlsx``, nunca recorte.
+
+        Si la tabla no cabe, ``<alias>.xlsx`` queda en ``omitidos`` con el motivo
+        y el LEEME (que remite al parquet del alias y al archivo nuevo) se
+        devuelve como generado. Un fallo de escritura se omite con constancia.
+        """
+        xlsx_path = output_dir / f"{base_name}.xlsx"
+        try:
+            # hoja="datos": el nombre que F1.10 daba a los alias (escribir_xlsx); un
+            # lector con pd.read_excel(sheet_name="datos") distingue mayúsculas.
+            escrito = escribir_excel_o_leeme(
+                fuente,
+                xlsx_path,
+                hoja="datos",
+                leeme=_leeme_de(base_name),
+                filas_por_lote=self.STREAMING_BATCH_SIZE,
+            )
+        except Exception as e:
+            self._omitir_excel(xlsx_path, e, logger)
+            return []
+        gc.collect()
+        if escrito == xlsx_path:
+            logger.info(f"      ✅ {xlsx_path.name}")
+            return [escrito]
+        motivo = motivo_no_cabe(n_rows, escrito.name)  # el mismo texto que el estándar
+        logger.warning(f"      ⚠️ {xlsx_path.name} omitido: {motivo}")
+        self.omitir(xlsx_path.name, motivo)
+        logger.info(f"      ✅ {escrito.name} (la tabla completa está en {base_name}.parquet)")
+        return [escrito]
+
+    def _omitir_excel(self, xlsx_path: Path, causa: Exception, logger: logging.Logger) -> None:
+        """Un Excel que falla no se escribe a medias ni se olvida: se borra el
+        archivo parcial y la omisión queda registrada con su motivo."""
+        with contextlib.suppress(OSError):
+            xlsx_path.unlink(missing_ok=True)
+        # `execute` ya escribe un warning por cada omisión: aquí solo se registra.
+        self.omitir(xlsx_path.name, f"{type(causa).__name__}: {causa}")
 
     def _export_from_memory(
         self,
         df: pd.DataFrame,
         base_name: str,
         output_dir: Path,
-        excel_limit: int,
         logger: logging.Logger,
     ) -> list[Path]:
-        """Exporta desde DataFrame en memoria."""
+        """Exporta desde DataFrame en memoria.
+
+        Parquet y CSV.gz son obligatorios: si fallan, la excepción sube (hasta
+        F1.4 se convertía en una advertencia y la corrida seguía sin
+        entregable). El Excel es opcional y se omite con constancia.
+        """
         files: list[Path] = []
         n_rows = len(df)
 
-        # 1. Parquet
-        try:
-            parquet_path = output_dir / f"{base_name}.parquet"
-            df_clean = self._prepare_for_parquet(df)
-            df_clean.to_parquet(parquet_path, index=False, engine="pyarrow", compression="snappy")
-            del df_clean
-            gc.collect()
-            logger.info(f"      ✅ {parquet_path.name}")
-            files.append(parquet_path)
-        except Exception as e:
-            logger.warning(f"      ⚠️ Parquet falló: {e}")
+        # 1. Parquet (obligatorio: un fallo tumba la corrida, F1.4)
+        parquet_path = output_dir / f"{base_name}.parquet"
+        df_clean = self._prepare_for_parquet(df)
+        escribir_parquet(df_clean, parquet_path)
+        del df_clean
+        gc.collect()
+        logger.info(f"      ✅ {parquet_path.name}")
+        files.append(parquet_path)
 
-        # 2. CSV.gz
-        try:
-            csv_path = output_dir / f"{base_name}.csv.gz"
-            prepare_spreadsheet_data(df).to_csv(csv_path, index=False, compression="gzip")
-            logger.info(f"      ✅ {csv_path.name}")
-            files.append(csv_path)
-        except Exception as e:
-            logger.warning(f"      ⚠️ CSV.gz falló: {e}")
+        # 2. CSV.gz (obligatorio)
+        csv_path = output_dir / f"{base_name}.csv.gz"
+        escribir_csv_gz(df, csv_path)
+        logger.info(f"      ✅ {csv_path.name}")
+        files.append(csv_path)
 
-        # 3. Excel (si es seguro)
+        # 3. Excel (opcional; completo o LEEME, F1.11). Con la RAM al límite se
+        # omite con constancia: la escritura va por lotes, pero cada lote copia.
         mem_percent = psutil.virtual_memory().percent
-        if n_rows <= excel_limit and mem_percent < 85:
-            try:
-                xlsx_path = output_dir / f"{base_name}.xlsx"
-                prepare_spreadsheet_data(df).to_excel(xlsx_path, index=False, engine="openpyxl")
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name}")
-                files.append(xlsx_path)
-            except Exception as e:
-                logger.warning(f"      ⚠️ Excel falló: {e}")
-        elif n_rows > excel_limit:
-            try:
-                xlsx_path = output_dir / f"{base_name}_MUESTRA_{excel_limit // 1000}k.xlsx"
-                prepare_spreadsheet_data(df.head(excel_limit)).to_excel(
-                    xlsx_path, index=False, engine="openpyxl"
-                )
-                gc.collect()
-                logger.info(f"      ✅ {xlsx_path.name} (muestra)")
-                files.append(xlsx_path)
-            except Exception as e:
-                logger.warning(f"      ⚠️ Excel muestra falló: {e}")
+        if mem_percent < 85:
+            files.extend(self._excel_o_leeme(df, base_name, output_dir, n_rows, logger))
+        else:
+            self.omitir(
+                f"{base_name}.xlsx",
+                f"RAM al {mem_percent:.1f} %: se evita el Excel completo para proteger la corrida",
+            )
 
         return files
 
@@ -511,11 +680,22 @@ class ExcelReportsStrategy(BaseReportingStrategy):
         )
 
         reports = generator.generate_all_reports()
+        # Los reportes que el generador no pudo producir ya vienen con motivo.
+        for archivo, motivo in generator.omitidos:
+            self.omitir(archivo, motivo)
         generated = []
 
         for report_name, df_report in reports.items():
             path = ctx.output_dir / f"reporte_{report_name}.xlsx"
-            prepare_spreadsheet_data(df_report).to_excel(path, index=False, engine="openpyxl")
+            try:
+                # hoja="Sheet1": la forma de v1 (to_excel sin sheet_name). No es un
+                # alias, así que no lleva LEEME; F1.11 lo unifica en informe_cruce.xlsx.
+                escribir_xlsx(df_report, path, hoja="Sheet1")
+            except Exception as e:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+                self.omitir(path.name, f"escritura Excel falló: {type(e).__name__}: {e}")
+                continue
             generated.append(path)
             logger.debug(f"      • reporte_{report_name}.xlsx ({len(df_report):,} filas)")
 
@@ -556,6 +736,10 @@ class VisualizationsStrategy(BaseReportingStrategy):
         viz_dir.mkdir(exist_ok=True)
 
         files_map = visualizer.save_all_visualizations(str(viz_dir))
+        self.omitidos.extend(
+            ArtefactoOmitido(f"visualizaciones/{nombre}", type(self).__name__, motivo)
+            for nombre, motivo in visualizer.omitidos
+        )
 
         return [Path(p) for p in files_map.values() if Path(p).exists()]
 
@@ -579,10 +763,8 @@ class DashboardStrategy(BaseReportingStrategy):
         metrics_enriched = ctx.metrics.copy()
         metrics_enriched["phase_times"] = ctx.phase_times
         metrics_enriched["execution_time"] = time.time() - ctx.start_time if ctx.start_time else 0
-
-        # Agregar tiempos individuales de cada fase
-        for phase_name, duration in ctx.phase_times.items():
-            metrics_enriched[f"{phase_name}_time"] = duration
+        # F1.6: el dashboard lee ``phase_times`` con reporting._fases; ya no se
+        # duplican como ``<fase>_time`` (nadie los leía).
 
         dashboard = ExecutiveDashboard(
             correlative_data=ctx.correlative_df,
@@ -599,12 +781,12 @@ class DashboardStrategy(BaseReportingStrategy):
 
         # Dashboard mejorado si el método existe
         if hasattr(dashboard, "generate_enhanced_dashboard"):
+            enhanced_path = ctx.output_dir / "dashboard_ejecutivo_mejorado.png"
             try:
-                enhanced_path = ctx.output_dir / "dashboard_ejecutivo_mejorado.png"
                 dashboard.generate_enhanced_dashboard(str(enhanced_path))
                 generated.append(enhanced_path)
             except Exception as e:
-                logger.debug(f"   Dashboard mejorado no generado: {e}")
+                self.omitir(enhanced_path.name, f"{type(e).__name__}: {e}")
 
         return generated
 
@@ -637,138 +819,74 @@ class EnhancedInsightsStrategy(BaseReportingStrategy):
         )
 
         files_map = suite.generate_all_enhanced_reports(str(ctx.output_dir))
+        self.omitidos.extend(
+            ArtefactoOmitido(nombre, type(self).__name__, motivo)
+            for nombre, motivo in suite.omitidos
+        )
 
         return [Path(p) for p in files_map.values() if Path(p).exists()]
 
 
 class ConfigAuditStrategy(BaseReportingStrategy):
-    """
-    Exporta configuración y métricas para auditoría y reproducibilidad.
+    """ALIAS de v1 (F1.12): escribe ``config_auditoria.json`` y remite al manifiesto.
 
-    Genera:
-    - Archivo JSON con configuración completa
-    - Archivo TXT legible con resumen
+    Hasta F1.12 escribía ``config_auditoria_<timestamp>.json`` (obligatorio) y
+    ``.txt`` (opcional) con ``orchestrator_version: "8.5"`` fijo, sin huellas
+    de insumos y con ``source_priority`` leído de ``source_quality_weights``
+    sin la segunda mitad de la regla del golden (orden de las fuentes si el
+    perfil no trae pesos): decía ``{}`` cuando el golden usaba otra cosa. Todo
+    eso vive ahora en ``manifest.json`` de la carpeta del estándar, escrito
+    por ``exporters.escritor`` con la versión real del paquete y las huellas.
+
+    Lo que queda aquí es el alias: nombre ESTABLE (sin marca de tiempo),
+    ``vease: "manifest.json"``, el mismo bloque ``parametros`` que el
+    manifiesto (``config.auditoria.parametros_motor``), los tiempos de las
+    fases cerradas (L1…L5) y las métricas de L6 (``Orchestrator._build_metrics``,
+    cuyo bloque en español es ``pipeline.metricas.metricas_de_corrida``, el
+    mismo que ``manifest.json → metricas``).
+    Es OPCIONAL en el contrato de L6: si falla se omite con motivo. El ``.txt``
+    desaparece. Avisa con ``DeprecationWarning`` una vez por proceso y se retira
+    en ``VERSION_RETIRO_ALIAS_V1``.
     """
 
     @property
     def name(self) -> str:
-        return "Auditoría de Configuración"
+        return "Auditoría de configuración (alias de v1)"
 
     @property
     def required_class(self) -> str:
         return "None"  # Siempre disponible
 
     def _execute_impl(self, ctx: ReportingContext, logger: logging.Logger) -> list[Path]:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        profile_name = ctx.config.get("profile", "Unknown")
-        profile_params = ctx.config.get("profiles", {}).get(profile_name, {})
+        _avisar_auditoria_v1()
+        ruta = ctx.output_dir / ALIAS_AUDITORIA
+        ruta.write_text(
+            json.dumps(contenido_alias_auditoria(ctx), indent=2, ensure_ascii=False, default=str)
+            + "\n",
+            encoding="utf-8",
+        )
+        return [ruta]
 
-        # Construir estructura de auditoría
-        audit_data = {
-            "meta": {
-                "timestamp": datetime.now().isoformat(),
-                "orchestrator_version": "8.5",
-                "profile": profile_name,
-            },
-            "metrics": ctx.metrics,
-            "parameters": {
-                "lsh": {
-                    k: profile_params.get(k)
-                    for k in ["lsh_permutations", "lsh_threshold", "lsh_ngram", "cross_source_only"]
-                },
-                "scoring": {
-                    k: profile_params.get(k)
-                    for k in ["score_threshold", "min_name_similarity", "max_nit_distance"]
-                },
-                "weights": profile_params.get("weights", {}),
-                "source_priority": profile_params.get("source_quality_weights", {}),
-            },
-            "phase_times": ctx.phase_times,
-            "config_completa": ctx.config,
-        }
 
-        generated = []
+def contenido_alias_auditoria(ctx: ReportingContext) -> dict[str, Any]:
+    """El JSON del alias: ``vease``, el aviso y lo que el manifiesto también trae.
 
-        # JSON (para procesamiento programático)
-        json_path = ctx.output_dir / f"config_auditoria_{timestamp}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(audit_data, f, indent=2, default=str, ensure_ascii=False)
-        generated.append(json_path)
+    ``prioridad_fuentes`` es la real si el contexto la trae; si no, la del
+    perfil (``parametros_motor``), que es lo único que L6 puede saber.
+    """
+    from .. import __version__
 
-        # TXT (para lectura humana)
-        txt_path = ctx.output_dir / f"config_auditoria_{timestamp}.txt"
-        self._write_txt_audit(txt_path, audit_data, profile_params, ctx.metrics, ctx.phase_times)
-        generated.append(txt_path)
-
-        return generated
-
-    def _write_txt_audit(
-        self, path: Path, audit: dict, params: dict, metrics: dict, phase_times: dict
-    ):
-        """Escribe archivo de auditoría en formato legible para humanos."""
-        with open(path, "w", encoding="utf-8") as f:
-            # Header
-            f.write("=" * 70 + "\n")
-            f.write("📋 AUDITORÍA DE CONFIGURACIÓN - ORCHESTRATOR v8.5\n")
-            f.write(f"   Timestamp: {audit['meta']['timestamp']}\n")
-            f.write(f"   Profile: {audit['meta']['profile']}\n")
-            f.write("=" * 70 + "\n\n")
-
-            # Tiempos por fase
-            f.write("⏱️ TIEMPOS POR FASE\n")
-            f.write("-" * 70 + "\n")
-            total_time = 0
-            for phase, duration in phase_times.items():
-                mins = duration / 60
-                total_time += duration
-                f.write(f"  {phase:<25}: {mins:>8.1f} min\n")
-            f.write("-" * 70 + "\n")
-            f.write(f"  {'TOTAL':<25}: {total_time / 60:>8.1f} min ({total_time / 3600:.2f} h)\n\n")
-
-            # Métricas de ejecución
-            f.write("🎯 MÉTRICAS DE EJECUCIÓN\n")
-            f.write("-" * 70 + "\n")
-            for k, v in metrics.items():
-                if k != "phase_times" and k != "records_per_source":
-                    if isinstance(v, float):
-                        f.write(f"  {k:<30}: {v:>12.4f}\n")
-                    elif isinstance(v, int):
-                        f.write(f"  {k:<30}: {v:>12,}\n")
-                    elif isinstance(v, dict):
-                        f.write(f"  {k:<30}: {len(v)} items\n")
-                    else:
-                        f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Parámetros LSH
-            f.write("📊 PARÁMETROS LSH\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["lsh"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Parámetros Scoring
-            f.write("🎯 PARÁMETROS SCORING\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["scoring"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Pesos de matching
-            f.write("⚖️ PESOS DE MATCHING\n")
-            f.write("-" * 70 + "\n")
-            for k, v in audit["parameters"]["weights"].items():
-                f.write(f"  {k:<30}: {v}\n")
-            f.write("\n")
-
-            # Prioridad de fuentes
-            f.write("🏆 PRIORIDAD DE FUENTES\n")
-            f.write("-" * 70 + "\n")
-            source_priority = audit["parameters"]["source_priority"]
-            for src, weight in sorted(source_priority.items(), key=lambda x: -x[1]):
-                f.write(f"  {src:<30}: {weight:.2f}\n")
-
-            # Footer
-            f.write("\n" + "=" * 70 + "\n")
-            f.write("FIN DEL ARCHIVO DE AUDITORÍA\n")
-            f.write("=" * 70 + "\n")
+    prioridad = list(ctx.prioridad_fuentes) if ctx.prioridad_fuentes else None
+    return {
+        "vease": "manifest.json",
+        "aviso": (
+            "Alias de v1 (F1.12). La fuente de verdad es manifest.json de la carpeta del "
+            "estándar: parametros, tiempos_por_fase, metricas, insumos (huella SHA-256) y "
+            f"version. Este alias desaparece en rues-linker {VERSION_RETIRO_ALIAS_V1}."
+        ),
+        "version": str(__version__),
+        "marca_tiempo": datetime.now().isoformat(timespec="seconds"),
+        "parametros": parametros_motor(ctx.config, prioridad_fuentes=prioridad).a_dict(),
+        "tiempos_por_fase": dict(ctx.phase_times),
+        "metricas": dict(ctx.metrics),
+    }

@@ -1455,3 +1455,94 @@ mide el banco; la escala mide tiempo, memoria y candidatos.
 | trinquete | PASA, cinco conteos iguales a la referencia |
 | anillo de mypy | 31 archivos sin errores |
 | CI | **verde** en `152617a` ([run 37419942815](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/37419942815)): lint con paso estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete, build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 108 errores = techo) |
+
+---
+
+## IT-28 · F1, el contrato de salida: nada se degrada en silencio (sin publicar)
+
+Segunda fase del plan «v2 → producción». Quince tareas, cada una en su rama
+con prueba primero, revisor escéptico y corrección, integradas una a una en
+`claude/f1-contrato` sobre F0. El motor (L1…L5) no cambia: la huella del
+banco sigue en `1e365ba8…` y la conformidad en 34/34 en los dos modos.
+
+### Lo que se corrigió (y cómo se demostró)
+
+| tarea | degradación silenciosa | ahora |
+|---|---|---|
+| F1.1 | el golden fusionado por NIT salía con 27 columnas de la correlativa y métricas en NaN (`groupby.first()`) | métricas recalculadas sobre el subconjunto con la regla única `golden/metricas.py`; `verificar_golden` antes de persistir; paridad SQL↔pandas sobre 9.600 combinaciones |
+| F1.2 | `except Exception` en la consolidación por NIT seguía con L5 DONE | `ConsolidacionNitError` con causa encadenada; L5 no se marca DONE |
+| F1.3 | muestreo `groupby.apply` vaciaba los reportes con pandas 3 | `reporting/_muestreo` con piso de una fila por estrato (NaN incluido); `MuestreoReportesError` |
+| F1.4 | estrategias que fallan → `[]`; xlsx y PNG con «Error» dentro | contrato de L6 declarado (`contrato_l6.py`): obligatorios tumban la corrida, opcionales quedan en `manifest.json → omitidos` |
+| F1.5 | reportes sobre muestras de 100.000 filas sin rótulo | agregados sobre la tabla completa; lo muestreado lleva `ALCANCE` |
+| F1.6 | porcentajes de tiempo inventados (15/10/25…) | un solo mapeo fase→etiqueta (`reporting/_fases.py`); sin tiempos, «sin tiempos por fase» y omisión declarada |
+| F1.7 | resumen ejecutivo con «Candidatos 0», «Memoria 0.0 GB» | `candidatos`, `pares_puntuados`, `rss_pico_mib` desde SQLite y el manifiesto; «N/A» cuando no se midió |
+| F1.8 | columnas de arrastre omitidas en silencio en `flujo.cruce` | `ColumnasArrastreError` o entrega declarada con motivo en el manifiesto |
+| F1.9 | `linkage()` devolvía un `dict`; sin `ID_REGISTRO`, `ID_ENTIDAD`, `METODO_UNION`, `SCORE_PAR`; técnicas en el entregable | `ResultadoLinkage` 1.0 (`contrato.py`, `validar()`, shim con `DeprecationWarning`); técnicas en `_trabajo/` |
+| F1.10 | cada estrategia escribía a su manera | un escritor atómico (`exporters/escritor.py`): pendiente → definitiva, manifiesto con SHA-256, `leer_resultado`, alias de v1 con hoja `LEEME` hasta 0.25.0 |
+| F1.11 | `_MUESTRA_100k.xlsx` recortaba sin decirlo | Excel completo hasta 1.048.575 filas o `<base>_LEEME.xlsx` (xlsxwriter en flujo) |
+| F1.12 | `config_auditoria_<ts>.json/.txt` fuera del manifiesto; dos diccionarios | `manifest.json → configuracion` y un diccionario; alias `config_auditoria.json` con `DeprecationWarning` |
+| F1.13 | degradaciones en `api.py` y `deduplication/auto.py` | `ColapsoExactoError`, `CruceSinFuenteError`; L6 postprocesado por `_exec_phase` |
+| F1.14 | golden con `float64`/`object` y `NAME_SIMILARITY_SCORE` crudo contra normalizado (C38) | `tipar_golden` (int64/bool); ADR 0010 |
+| F1.15 | notebooks 01–06 con `PipelineResult` | `ResultadoLinkage`/`leer_resultado`; nbclient en verde |
+
+### Decisiones que no eran obvias
+
+1. **Una sola regla de «base válida», y es la del motor.** El contrato calculaba
+   `METODO_UNION` reduciendo `NIT_OK` con `bases_validas` y discrepaba de
+   `NIT_BASE` de `NitProcessor` en 3.573 de 22.455 filas válidas del banco
+   (288 `METODO_UNION` distintos). Ahora `METODO_UNION` y el QA de
+   identificador parten de `NIT_BASE`/`NIT_VALID`; `bases_validas` queda solo
+   para `ID_ENTIDAD = NIT-<base canónica>`.
+2. **`identificador` exige pareja.** El dueño de `NIT_FINAL` sin otro miembro
+   con su base (una cédula unida por nombre al NIT que la contiene) se declara
+   `nombre`: 391 filas del banco cambian (20.081 → 19.690 `identificador`);
+   el manifiesto publica `identificador_sin_pareja_de_base`.
+3. **Las técnicas no se alinean por `ORIGINAL_INDEX`.** Tras el colapso de
+   duplicados exactos la correlativa entregada está renumerada y el checkpoint
+   es compacto: `adjuntar_tecnicas` alinea por contenido y falla si no puede.
+4. **Un `errores.py` y un `golden/metricas.py`.** Cinco ramas crearon cada una
+   su módulo de errores (tres con `ErrorRuesLinker(Exception)`) y dos su
+   `metricas.py`; la integración dejó uno de cada, con `ErrorPipeline` como
+   `RuntimeError` para que los `except RuntimeError` heredados sigan viendo.
+5. **L6 opcional que falla no tumba `linkage()`** (contrato F1.4); en la ruta
+   heredada de `dedupe()` (`RecordLinkagePipeline`) ahora propaga. Se
+   unifica en F2.9. `StateManager.anotar_meta` se retiró: el L6 postprocesado
+   pasa por `_exec_phase`, un solo camino.
+6. **`--comparar` del banco rechaza conjuntos distintos.** Comparar `base_f0`
+   con una corrida sin `--datos` dio PASA con todas las métricas «mejorando».
+7. **El paso estricto del CI pasa a trinquete por archivo y regla.** Sobre el
+   PR de F1 daba 158 violaciones, todas heredadas de archivos legados que F1
+   toca (`linkage_pipeline.py` 57, `visualizer.py` 18, `orchestrator.py` 18…).
+   `scripts/reglas_estrictas.py` compara BASE y HEAD por (archivo, regla) y
+   falla solo con violaciones nuevas; al medir así aparecieron cinco que el
+   conteo global escondía (dos funciones que subieron de complejidad y tres
+   `os.path` nuevos), corregidas sin `noqa`.
+
+### Lo que el cruce con la v1 enseñó
+
+`CONSUMIDORES.md` omitía cinco consumidores reales (`REGIMEN_AUTO`, `matcher_stats`, `RECORD_COUNT`, el `ID_REGISTRO` de entrada que lee el benchmark E2E, los nombres del Excel de importadores del 07) y conservaba dos
+nombres sin lector; dos scripts asumían técnicas en la correlativa; el
+benchmark E2E habría dado 0 pares en silencio. Revisado contra v1 0.11.0
+(`c40dae5`).
+
+### Lo que la corrida con reporting dejó ver
+
+`DataVisualizer._weighted_sample` sigue con un `except Exception` que avisa
+(«Error en muestreo ponderado: Fewer non-zero entries in p than size») y cae a
+una muestra uniforme: es la muestra de unas gráficas, no un entregable, pero es
+el mismo patrón que F1 retiró de la suite y los reportes. Queda para el pulido de F2.
+
+### Estado al cierre
+
+| | |
+|---|---|
+| pruebas nuevas | 21 archivos; 1.329 → 1.614 funciones de prueba (+285); 15 módulos nuevos en `src/` |
+| suite rápida (`-m "not slow"`, 3.11) | **2.061 pasan, 2 saltos de Windows, 26 deseleccionadas** (22 min 20 s) · subconjunto de contrato en Python 3.10 (pandas 2.3.3): 239 pasan tras corregir `large_string` |
+| banco | huella idéntica (`1e365ba8…`), F1 0,878, 287 FP |
+| conformidad | 34/34 firmes sin y con `--corroborar`, salida idéntica |
+| contrato | `tests/test_contrato_salida.py` (linkage, dedupe y link) y la foto v0 (`esquema_salida_v0.json`, regenerada y declarada por F1.9/F1.14) en verde; `validar()` sobre las tres rutas |
+| escala | 139k 414,9 s (L2 244,5 · L3 143,1) · RSS 1.148 MiB · 463k 1.741,2 s (L2 822,4 · L3 831,9) · RSS 2.527 MiB; mismos candidatos (12,74 M / 38,65 M), huella idéntica en ambos tamaños; `--comparar base_f0 f1` PASA (tolerancia 10 %; todas las fases por debajo de la base) → `docs/evidencia/escala_f1.json` |
+| determinismo | `tests/test_determinismo_linkage_procesos.py` en verde (dos procesos, `PYTHONHASHSEED` distinto, misma huella) |
+| trinquete | PASA; el techo baja: `except` sin relanzar 121 → 103, mypy 108 → 102 (complejidad ≥ 20: 11, tras sacar `_resolver_matching_profile` de `linkage()`, que había subido a 23) |
+| 139k con reporting (`linkage(carpeta_salida=…)`) | carpeta del estándar publicada y leída (`validar()` ok): 139.028 filas, 54.450 grupos, 18 archivos del estándar (Excel completo de 139k filas, 10 figuras), 19 artefactos de L6, `omitidos: []`, L6 48,6 s |
+| CI | **verde** en `646651d` ([run 37533795449](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/37533795449)): lint con trinquete estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete de deuda, build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 102 errores = techo) |

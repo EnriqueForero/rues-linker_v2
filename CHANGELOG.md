@@ -1,5 +1,51 @@
 # Changelog
 
+## [Sin publicar] — F1 · Contrato de salida: nada se degrada en silencio
+
+**Cambio de API declarado**: `linkage()`, `dedupe()` y `link()` devuelven
+`ResultadoLinkage` (contrato 1.0) en vez de un `dict`. Las claves de v1
+(`res["correlative"]`, `res["golden"]`, `res.get("report_files")`,
+`"preprocessing"`, `in`, `.keys()`) siguen funcionando con `DeprecationWarning`
+hasta 0.25.0. El motor (L1…L5) no cambia: huella del banco idéntica.
+
+- **Contrato de salida** (`record_linkage.contrato`, `resultado.py`,
+  `salida/completar.py`): correlativa con 12 columnas fijas (`ID_REGISTRO`,
+  `ID_GRUPO`, `ID_ENTIDAD`, `METODO_UNION`, `SCORE_PAR`, `CONFIANZA`, …) y
+  después TODAS las de la fuente; golden de 13 columnas de v1 + `ID_ENTIDAD`,
+  conteos `int64` y `REQUIRES_REVIEW` booleano; `validar()`; diccionario con
+  alias en español; columnas técnicas (`NIT_BASE`, `NIT_VALID`, `NOMBRE_LIMPIO`,
+  `PHONETIC_KEY1`, …) fuera del entregable, en `_trabajo/`
+  (`salida.tecnicas.adjuntar_tecnicas` las recupera alineando por contenido).
+  `METODO_UNION=identificador` exige que otro miembro del grupo comparta la
+  base válida del motor (`NIT_BASE`/`NIT_VALID`, una sola regla).
+- **Carpeta del estándar** (`exporters/escritor.py`, `linkage(carpeta_salida=,
+  nombre=)`): escritura atómica (pendiente → definitiva), `manifest.json` con
+  SHA-256 y bytes, `diccionario.csv`, `leer_resultado()`; Excel completo hasta
+  1.048.575 filas o `<tabla>_LEEME.xlsx` (xlsxwriter en flujo, sin recortes;
+  `_MUESTRA_100k.xlsx` y `export_settings.excel_max_rows` retirados);
+  `config_auditoria_<ts>.json/.txt` fundido en `manifest.json → configuracion`
+  (alias `config_auditoria.json` con `DeprecationWarning`).
+- **Cero degradaciones silenciosas**: `pipeline/errores.py` (un solo
+  `mensaje_accionable`; `ConsolidacionNitError`, `GoldenInvalidoError`,
+  `MuestreoReportesError`, `ArtefactoObligatorioError`, `ColumnasArrastreError`,
+  `ColapsoExactoError`, `CruceSinFuenteError`, `TiemposPorFaseError`,
+  `EscrituraSalidaError`, `ContratoSalidaError`, …); contrato de L6
+  (`reporting/contrato_l6.py`): los obligatorios tumban la corrida, los
+  opcionales quedan en `manifest.json → omitidos`; ningún xlsx/PNG con un
+  error dentro; golden fusionado por NIT con métricas recalculadas
+  (`golden/metricas.py`) y sin columnas ajenas; muestreo de reportes con piso
+  por estrato; reportes sobre la tabla completa con `ALCANCE`; tiempos por fase
+  reales (`reporting/_fases.py`); resumen ejecutivo con candidatos, pares y RSS
+  medidos; columnas de arrastre de `flujo.cruce` declaradas o error.
+- **Golden tipado y C38** (ADR 0010): `NAME_SIMILARITY_SCORE` compara
+  normalizado contra normalizado.
+- **Notebooks 01–06** migrados al contrato (`ResultadoLinkage`/`leer_resultado`);
+  `tests/test_notebooks_contrato.py` (slow) los ejecuta con nbclient.
+- **Herramientas**: `scripts/banco.py --comparar` rechaza corridas de conjuntos
+  distintos; `docs/CONSUMIDORES.md` revisado contra v1 0.11.0; scripts de
+  verificación leen las técnicas desde `_trabajo/`.
+- Dependencia nueva: `xlsxwriter>=3.1,<4`.
+
 ## [Sin publicar] — F0 · Fundaciones del plan «v2 → producción»
 
 Sin cambios de comportamiento en el motor. Entra lo que hace medible todo lo

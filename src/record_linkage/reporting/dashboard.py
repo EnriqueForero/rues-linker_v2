@@ -25,8 +25,21 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 from ..utils.logger import CustomLogger
+from ._fases import MENSAJE_SIN_TIEMPOS, etiquetar, formatear_segundos, tiempos_por_fase
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 from ._text_utils import strip_emojis as _strip_emojis
+
+
+def _serie_tiempos(metrics: dict[str, Any] | None) -> pd.Series:
+    """Serie que dibuja el panel «Tiempo por Fase»: etiqueta humana → segundos.
+
+    Función pura (F1.6): son EXACTAMENTE los ``phase_times`` del orquestador,
+    sin escalar ni repartir. Sin ``phase_times`` la serie es vacía y el panel
+    dice «Sin tiempos por fase»; antes se inventaban porcentajes fijos sobre
+    el tiempo total.
+    """
+    tiempos = etiquetar(tiempos_por_fase(metrics))
+    return pd.Series(tiempos, dtype="float64")
 
 
 class ExecutiveDashboard:
@@ -367,9 +380,13 @@ class ExecutiveDashboard:
             return fig
 
         except Exception as e:
+            # F1.4: nunca un PNG con el texto del error. Se cierra la figura
+            # y la excepción sube; DashboardStrategy la convierte en una
+            # omisión con motivo en el manifiesto.
             self.logger.error(f"Error generando dashboard: {e}")
             self.logger.debug("Stack trace:", exc_info=True)
-            return self._generate_error_dashboard(output_path, format, dpi)
+            plt.close("all")
+            raise
 
     def _insufficient_data(self) -> bool:
         """Verifica si hay datos suficientes para el dashboard."""
@@ -538,16 +555,9 @@ class ExecutiveDashboard:
         if exec_time == 0 and self.pipeline_start_time:
             exec_time = time.time() - self.pipeline_start_time
 
-        # Fallback: sumar tiempos parciales
+        # Fallback: sumar los tiempos por fase que sí cronometró el orquestador
         if exec_time == 0:
-            phase_times = [
-                "load_validate",
-                "preprocessing_time",
-                "linkage_time",
-                "golden_records_time",
-                "export_time",
-            ]
-            exec_time = sum(self.metrics.get(t, 0) for t in phase_times)
+            exec_time = sum(tiempos_por_fase(self.metrics).values())
 
         return exec_time
 
@@ -805,110 +815,65 @@ class ExecutiveDashboard:
 
     def _plot_performance_metrics(self, ax):
         """
-        Métricas de rendimiento del proceso.
-        Versión corregida con el método _show_no_data_message.
+        Tiempo por fase del pipeline, tal como lo cronometró el orquestador.
+
+        F1.6: la serie sale de ``_serie_tiempos`` (``metrics["phase_times"]``).
+        Si no hay tiempos, el panel lo dice; no se estima ni se reparte.
+        F1.4: sin ``try/except``: un panel que falla relanza y el dashboard se
+        omite con motivo en el manifiesto, nunca se pinta «Error generando».
         """
-        try:
-            # Obtener tiempos de cada fase
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Candidatos (LSH)": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
+        phase_series = _serie_tiempos(self.metrics).sort_values(ascending=True)
 
-            # Si no hay tiempos individuales, usar el tiempo total y estimaciones
-            total_time = self.metrics.get("execution_time", self.metrics.get("total_time", 0))
+        if phase_series.empty:
+            self.logger.warning(
+                "Panel «Tiempo por Fase» omitido: metrics['phase_times'] no trae tiempos."
+            )
+            self._show_no_data_message(ax, MENSAJE_SIN_TIEMPOS)
+            return
 
-            # Verificar si tenemos tiempos reales
-            sum_times = sum(phase_times.values())
+        # Crear gráfico de barras horizontales
+        colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
+        bars = ax.barh(phase_series.index, phase_series.values, color=colors)
 
-            if sum_times == 0 and total_time > 0:
-                # No tenemos tiempos por fase, hacer estimación proporcional
-                self.logger.warning("No se encontraron tiempos por fase, usando estimaciones")
-                phase_times = {
-                    "Carga y Validación": total_time * 0.15,
-                    "Preprocesamiento": total_time * 0.10,
-                    "Candidatos (LSH)": total_time * 0.25,
-                    "Scoring": total_time * 0.15,
-                    "Clustering": total_time * 0.10,
-                    "Golden Records": total_time * 0.15,
-                    "Exportación": total_time * 0.10,
-                }
-            elif sum_times > 0 and sum_times < total_time * 0.8:
-                # Tenemos algunos tiempos pero no todos
-                total_time - sum_times
-                # Distribuir el tiempo faltante proporcionalmente
-                factor = total_time / (sum_times + 0.001)
-                phase_times = {k: v * factor for k, v in phase_times.items()}
+        # Añadir etiquetas con valores y porcentajes
+        total = phase_series.sum()
+        for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
+            width = bar.get_width()
+            percentage = (time_val / total * 100) if total > 0 else 0
 
-            # Filtrar fases con tiempo > 0
-            phase_series = pd.Series(phase_times).sort_values(ascending=True)
-            phase_series = phase_series[phase_series > 0.01]  # Filtrar tiempos muy pequeños
+            # Etiqueta con tiempo y porcentaje
+            label = f"{formatear_segundos(time_val)} ({percentage:.0f}%)"
+            ax.text(
+                width + 0.01 * phase_series.max(),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
 
-            if phase_series.empty:
-                self._show_no_data_message(ax, "Sin métricas de tiempo disponibles")
-                return
+        # Configuración del gráfico
+        ax.set_xlabel("Tiempo", fontsize=11)
+        ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
+        ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
 
-            # Crear gráfico de barras horizontales
-            colors = plt.colormaps["viridis"](np.linspace(0.3, 0.9, len(phase_series)))
-            bars = ax.barh(phase_series.index, phase_series.values, color=colors)
+        # Agregar línea de tiempo total
+        ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
+        if total > 0:
+            ax.text(
+                total,
+                len(phase_series) - 0.5,
+                f"Total: {formatear_segundos(total)}",
+                ha="right",
+                va="center",
+                fontsize=9,
+                color="red",
+            )
 
-            # Añadir etiquetas con valores y porcentajes
-            total = phase_series.sum()
-            for bar, (_phase, time_val) in zip(bars, phase_series.items(), strict=False):
-                width = bar.get_width()
-                percentage = (time_val / total * 100) if total > 0 else 0
-
-                # Formato del tiempo
-                if time_val < 1:
-                    time_str = f"{time_val * 1000:.0f}ms"
-                elif time_val < 60:
-                    time_str = f"{time_val:.1f}s"
-                else:
-                    time_str = f"{time_val / 60:.1f}min"
-
-                # Etiqueta con tiempo y porcentaje
-                label = f"{time_str} ({percentage:.0f}%)"
-                ax.text(
-                    width + 0.01 * phase_series.max(),
-                    bar.get_y() + bar.get_height() / 2,
-                    label,
-                    va="center",
-                    ha="left",
-                    fontsize=9,
-                )
-
-            # Configuración del gráfico
-            ax.set_xlabel("Tiempo", fontsize=11)
-            ax.set_title("Tiempo por Fase del Pipeline", fontweight="bold", fontsize=12)
-            ax.grid(True, which="major", axis="x", linestyle="--", alpha=0.5)
-
-            # Agregar línea de tiempo total
-            ax.axvline(x=total, color="red", linestyle="--", alpha=0.5, linewidth=1)
-            if total > 0:
-                total_str = f"{total:.1f}s" if total < 60 else f"{total / 60:.1f}min"
-                ax.text(
-                    total,
-                    len(phase_series) - 0.5,
-                    f"Total: {total_str}",
-                    ha="right",
-                    va="center",
-                    fontsize=9,
-                    color="red",
-                )
-
-            # Limpiar bordes
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-
-        except Exception as e:
-            self.logger.error(f"Error en _plot_performance_metrics: {e!s}")
-            self._show_no_data_message(ax, "Error generando métricas")
+        # Limpiar bordes
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
 
     def _plot_group_distribution(self, ax):
         """Distribución de tamaños de grupo."""
@@ -1375,18 +1340,20 @@ class ExecutiveDashboard:
             metrics.append(f"🔷 Clusters creados: {clusters:,}")
 
         # Memoria máxima
+        # El alias heredado `max_memory_gb` viene en GiB (rss_pico_mib / 1024).
         max_memory = self.metrics.get("max_memory_gb", 0)
         if max_memory > 0:
-            metrics.append(f"💾 Memoria máxima: {max_memory:.1f} GB")
+            metrics.append(f"💾 Memoria máxima: {max_memory:.1f} GiB")
 
-        # Velocidad por fase
+        # Velocidad por fase (tiempos reales de L2 y L3, F1.6)
         phase_speeds = []
-        if candidates > 0 and self.metrics.get("candidate_generation_time", 0) > 0:
-            speed = candidates / self.metrics["candidate_generation_time"]
+        tiempos = tiempos_por_fase(self.metrics)
+        if candidates > 0 and tiempos.get("L2_lsh_candidates", 0) > 0:
+            speed = candidates / tiempos["L2_lsh_candidates"]
             phase_speeds.append(f"LSH: {speed:.0f} cand/s")
 
-        if pairs_scored > 0 and self.metrics.get("scoring_time", 0) > 0:
-            speed = pairs_scored / self.metrics["scoring_time"]
+        if pairs_scored > 0 and tiempos.get("L3_scoring", 0) > 0:
+            speed = pairs_scored / tiempos["L3_scoring"]
             phase_speeds.append(f"Scoring: {speed:.0f} pares/s")
 
         if phase_speeds:
@@ -1520,41 +1487,4 @@ class ExecutiveDashboard:
 
         self._save_figure(fig, output_path, format, dpi)
         self.logger.warning("Dashboard mínimo generado por falta de datos")
-        return fig
-
-    def _generate_error_dashboard(self, output_path: str, format: str, dpi: int):
-        """Genera dashboard de error como fallback."""
-        fig, ax = plt.subplots(figsize=(12, 8), facecolor="white")
-        ax.axis("off")
-
-        error_text = f"""DASHBOARD EJECUTIVO
-Record Linkage Pipeline
-
-Error generando visualizaciones completas.
-Por favor, revise los logs para más detalles.
-
-Información disponible:
-- Registros correlative: {len(self.correlative_table):,}
-- Golden records: {len(self.golden_records):,}
-- Métricas: {len(self.metrics)}
-
-Generado: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
-
-        ax.text(
-            0.5,
-            0.5,
-            error_text,
-            fontsize=12,
-            ha="center",
-            va="center",
-            bbox=dict(
-                boxstyle="round,pad=1",
-                facecolor=self.colors["light"],
-                edgecolor=self.colors["danger"],
-                linewidth=2,
-            ),
-        )
-
-        self._save_figure(fig, output_path, format, dpi)
-        self.logger.error("Dashboard de error generado como fallback")
         return fig

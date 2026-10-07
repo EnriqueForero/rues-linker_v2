@@ -46,6 +46,7 @@ mnt/
 resultados/
 rues_linker.egg-info/
 salida/
+!src/record_linkage/salida/
 src/rues_linker.egg-info/
 venv/
 work/

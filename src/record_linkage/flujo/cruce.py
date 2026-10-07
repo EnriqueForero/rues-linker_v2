@@ -19,7 +19,7 @@ import os
 import shutil
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import Enum
@@ -30,8 +30,14 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
+from .. import contrato
 from ..api import linkage
-from ..golden.columnas_finales import COLUMNAS_FINALES, faltantes, faltantes_en
+from ..golden.columnas_finales import (
+    COLUMNAS_FINALES,
+    POR_QUE_IMPORTA_SIN_IDENTIDAD,
+    faltantes,
+    faltantes_en,
+)
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -41,6 +47,8 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
+from ..pipeline.errores import ColumnasArrastreError, ContratoSalidaError, mensaje_accionable
+from ..resultado import ResultadoLinkage
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
 from .insumos import (
@@ -177,8 +185,11 @@ class ConfigCruce:
     def __post_init__(self) -> None:
         if not self.fuentes:
             raise ValueError(
-                "Qué pasó: ConfigCruce.fuentes está vacío. Por qué importa: no "
-                "hay nada que cruzar. Qué hacer: declare al menos un SourceSpec."
+                mensaje_accionable(
+                    "ConfigCruce.fuentes está vacío.",
+                    "no hay nada que cruzar.",
+                    "declare al menos un SourceSpec.",
+                )
             )
         nombres = [f.name for f in self.fuentes]
         if len(set(nombres)) != len(nombres):
@@ -264,9 +275,12 @@ class ConfigCruce:
         desconocidas = self.confiables - set(nombres)
         if desconocidas:
             raise ValueError(
-                f"Qué pasó: 'confiables' nombra fuentes inexistentes "
-                f"{sorted(desconocidas)}. Qué hacer: use exactamente los "
-                f"nombres declarados: {sorted(nombres)}."
+                mensaje_accionable(
+                    f"'confiables' nombra fuentes inexistentes {sorted(desconocidas)}.",
+                    "la política de fuentes confiables se aplicaría a un nombre que no "
+                    "existe y ninguna fuente real la recibiría.",
+                    f"use exactamente los nombres declarados: {sorted(nombres)}.",
+                )
             )
         if self.dir_trabajo is None:
             # Nunca usar Drive como disco de trabajo: los checkpoints SQLite
@@ -341,16 +355,38 @@ class ControlCalidad(Protocol):
 _AJUSTES_QA = DuckDBIngestionSettings(memory_limit="512MB", threads=2)
 
 
-def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
+def _conflictos_del_contrato(metricas: Mapping[str, Any]) -> int:
+    """Grupos que mezclan dos bases de identificador válidas distintas.
+
+    Desde F1.9 las columnas técnicas (``NIT_BASE``, ``NIT_VALID``…) ya no
+    viajan en el entregable —quedan en ``_trabajo/``—, así que el conteo NO se
+    recalcula aquí desde ``NIT``: lo calcula una sola vez
+    ``salida.completar`` con las técnicas del motor (``NIT_BASE`` donde
+    ``NIT_VALID``, la misma regla que decide ``METODO_UNION``), lo publica en
+    el manifiesto del contrato y :func:`ejecutar_cruce` lo copia a
+    ``metricas["conflictos_identificador"]``. Recalcularlo desde ``NIT``
+    daba un falso conflicto con un identificador flotante (``900111222.0``).
+    """
+    conflictos = metricas.get("conflictos_identificador")
+    if conflictos is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "el resultado no trae metricas['conflictos_identificador'].",
+                    "el QA de identificador se calcula con las técnicas del motor al "
+                    "completar el contrato, no desde la correlativa publicada.",
+                    "construya el resultado con ejecutar_cruce(); si lo arma a mano, "
+                    "copie el conteo de manifiesto['completar']['identificador'].",
+                )
+            ]
+        )
+    return int(conflictos)
+
+
+def _qa_desde_dataframe(correlativa: pd.DataFrame, conflictos: int) -> dict[str, Any]:
     """Métricas de QA sobre una correlativa materializada."""
     from .diagnostico import diagnosticar_identificadores
 
-    validos = correlativa[
-        correlativa["NIT_BASE"].notna()
-        & (correlativa["NIT_BASE"].astype("string").fillna("") != "")
-        & correlativa["NIT_VALID"].astype(str).isin(["True", "1", "true"])
-    ]
-    conflictos = int((validos.groupby("ID_GRUPO")["NIT_BASE"].nunique() > 1).sum())
     tam = correlativa.groupby("ID_GRUPO").size()
     variedad = correlativa.groupby("ID_GRUPO")["RAZON_SOCIAL"].nunique()
     return {
@@ -366,24 +402,18 @@ def _qa_desde_dataframe(correlativa: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _qa_desde_parquet(ruta: Path, settings: Any) -> dict[str, Any]:
-    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM."""
+def _qa_desde_parquet(ruta: Path, settings: Any, conflictos: int) -> dict[str, Any]:
+    """Mismas métricas, resueltas en DuckDB sin traer la correlativa a RAM.
+
+    El conteo de conflictos llega calculado (ver ``_conflictos_del_contrato``):
+    no se materializa ninguna columna para recalcularlo.
+    """
     import duckdb
 
     con = duckdb.connect()
     try:
         _configure_connection(con, settings)
         origen = f"read_parquet({_quote_literal(str(ruta))})"
-        conflictos = con.execute(
-            f"""
-            SELECT COUNT(*) FROM (
-                SELECT ID_GRUPO FROM {origen}
-                WHERE NIT_BASE IS NOT NULL AND NIT_BASE <> ''
-                  AND lower(CAST(NIT_VALID AS VARCHAR)) IN ('true', '1')
-                GROUP BY ID_GRUPO HAVING COUNT(DISTINCT NIT_BASE) > 1
-            )
-            """
-        ).fetchone()[0]
         tam = (
             con.execute(f"SELECT ID_GRUPO, COUNT(*) n FROM {origen} GROUP BY ID_GRUPO")
             .df()
@@ -588,7 +618,8 @@ class ResultadoCruce:
         correlativa: cada fila original con su ``ID_GRUPO``.
         reportes_carga: reporte de ingesta por fuente.
         metricas: tiempos, filas y conteos de la corrida.
-        rutas: archivos escritos.
+        rutas: archivos escritos, más ``rutas["dir_trabajo"]`` (carpeta L1…L5 de
+            la corrida, donde quedan las columnas técnicas que el contrato retira).
     """
 
     golden: pd.DataFrame
@@ -608,7 +639,11 @@ class ResultadoCruce:
     def _qa(self) -> dict[str, Any]:
         """Métricas de QA cacheadas por resultado."""
         if getattr(self, "_qa_cache", None) is None:
-            object.__setattr__(self, "_qa_cache", _qa_desde_dataframe(self.correlativa))
+            object.__setattr__(
+                self,
+                "_qa_cache",
+                _qa_desde_dataframe(self.correlativa, _conflictos_del_contrato(self.metricas)),
+            )
         return self._qa_cache  # type: ignore[return-value]
 
     def conflictos_identificador(self) -> int:
@@ -720,7 +755,11 @@ class ResultadoCruceDisco:
             object.__setattr__(
                 self,
                 "_qa_cache",
-                _qa_desde_parquet(Path(self.correlativa.path), _AJUSTES_QA),
+                _qa_desde_parquet(
+                    Path(self.correlativa.path),
+                    _AJUSTES_QA,
+                    _conflictos_del_contrato(self.metricas),
+                ),
             )
         return self._qa_cache  # type: ignore[return-value]
 
@@ -1122,10 +1161,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
             else ""
         )
         raise FileNotFoundError(
-            f"Qué pasó: la fuente '{spec.name}' apunta a '{ruta}', que no existe, "
-            f"y no hay caché reutilizable. Por qué importa: el preflight corta aquí "
-            f"para no fallar dentro de una corrida de horas. Qué hacer: revise la "
-            f"ruta y, en Colab, que Drive esté montado.{detalle_motor}"
+            mensaje_accionable(
+                f"la fuente '{spec.name}' apunta a '{ruta}', que no existe, y no hay "
+                "caché reutilizable.",
+                "el preflight corta aquí para no fallar dentro de una corrida de horas.",
+                f"revise la ruta y, en Colab, que Drive esté montado.{detalle_motor}",
+            )
         )
     config.ruta_workspace.mkdir(parents=True, exist_ok=True)
     config.ruta_trabajo.mkdir(parents=True, exist_ok=True)
@@ -1135,8 +1176,12 @@ def _preflight(config: ConfigCruce, log: Any) -> None:
         testigo.unlink()
     except OSError as exc:
         raise PermissionError(
-            f"Qué pasó: no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}). "
-            f"Qué hacer: elija otra carpeta o verifique el montaje de Drive."
+            mensaje_accionable(
+                f"no se puede escribir en el workspace '{config.ruta_workspace}' ({exc}).",
+                "sin un workspace escribible la corrida no puede guardar resultados ni "
+                "checkpoints y moriría a mitad de camino.",
+                "elija otra carpeta o verifique el montaje de Drive.",
+            )
         ) from exc
     log.info(f"   ✅ Preflight: {len(config.fuentes)} fuentes, workspace escribible")
 
@@ -1212,6 +1257,7 @@ def _cargar(
                     str(resultado.payload_path) if resultado.payload_path is not None else None
                 ),
                 "payload_columns": list(resultado.payload_columns),
+                "missing_optional": list(resultado.missing_optional),
             }
             cargadas[spec.name] = (datos, reporte)
             compactaciones[spec.name] = resultado
@@ -1230,6 +1276,14 @@ def _cargar(
         desde_cache = False
         if not config.forzar_relectura:
             encontrado = leer_cache(spec, config.ruta_procesados, logger=log)
+            if encontrado is not None and "missing_optional" not in encontrado[1]:
+                # F1.8 — una caché anterior no dice qué columnas opcionales
+                # faltaron; reutilizarla dejaría ``omitidas = []`` sin saberlo.
+                log.info(
+                    f"   🔁 {spec.name}: la caché es anterior a F1.8 (no declara las "
+                    f"columnas opcionales ausentes); se vuelve a leer el original"
+                )
+                encontrado = None
             if encontrado is not None:
                 datos, reporte = encontrado
                 desde_cache = True
@@ -1324,6 +1378,8 @@ def _normalizar_reporte_carga(reporte: Mapping[str, Any]) -> dict[str, Any]:
         value = normalizado.get(key)
         if isinstance(value, Mapping):
             normalizado[key] = dict(value)
+    if "missing_optional" in normalizado:
+        normalizado["missing_optional"] = list(normalizado["missing_optional"])
     return normalizado
 
 
@@ -1499,20 +1555,28 @@ def _separar_columnas_extra(
     ``limite_filas``, para que la alineación posicional sea exacta) y los
     frames de ``marcos`` quedan reducidos a las columnas de motor.
 
+    Con ``separar_columnas_extra=False`` no se derrama ni se reduce nada (las
+    columnas viajan por el motor), pero la unión se calcula igual: es lo que
+    el manifiesto debe encontrar en la correlativa entregada (F1.8).
+
     Returns:
-        Tupla ``(rutas_spill, union_de_columnas, longitudes_por_fuente)``.
+        Tupla ``(rutas_spill, union_de_columnas, longitudes_por_fuente)``;
+        ``rutas_spill`` queda vacío cuando no se separa.
     """
     rutas: dict[str, Path] = {}
     union: list[str] = []
     longitudes: dict[str, int] = {}
-    if not config.separar_columnas_extra:
-        return rutas, union, {n: len(df) for n, df in marcos.items()}
     motor = _columnas_de_motor(config)
     dir_spill = config.ruta_trabajo / "columnas_extra"
     for nombre, df in marcos.items():
         longitudes[nombre] = len(df)
         extras = [c for c in df.columns if c not in motor]
         if not extras:
+            continue
+        if not config.separar_columnas_extra:
+            for columna in extras:
+                if columna not in union:
+                    union.append(columna)
             continue
         dir_spill.mkdir(parents=True, exist_ok=True)
         ruta = dir_spill / f"{nombre}.parquet"
@@ -1528,6 +1592,198 @@ def _separar_columnas_extra(
     return rutas, union, longitudes
 
 
+#: Motivo (global) de una columna pedida cuyo nombre lo produce el motor. Es
+#: neutral respecto del camino: con separación la de la fuente queda fuera y
+#: no se adjunta; sin separación viajó por el motor y este la pisó. En ambos
+#: prevalece la del motor y la de la fuente no se entrega.
+MOTIVO_CHOQUE_CON_MOTOR = (
+    "choca con una columna que produce el motor; prevalece la del motor y la de la "
+    "fuente no se entrega"
+)
+
+#: Motivo (DuckDB) de una columna no-matcher que la fuente sí produjo y no se
+#: publicó: ``ConfigCruce(preservar_payload=False)`` la dejó fuera del entregable.
+MOTIVO_SIN_PAYLOAD = "fuera del entregable por preservar_payload=False"
+
+#: Prefijo del motivo por fuente que calcula el lector (``missing_optional``);
+#: :func:`motivo_fuente_sin_columna` lo completa con la columna de origen.
+PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA = "la fuente no tiene la columna"
+
+
+def motivo_fuente_sin_columna(origen: str) -> str:
+    """Motivo documentado 1: la fuente no trae la columna de origen pedida."""
+    return f"{PREFIJO_MOTIVO_FUENTE_SIN_COLUMNA} {origen!r} pedida en optional_column_mapping"
+
+
+#: Columnas que el motor ESCRIBE en la correlativa, además de sus entradas
+#: (:func:`_columnas_de_motor`). Con ``separar_columnas_extra=False`` las
+#: columnas de arrastre viajan por el motor y una con uno de estos nombres
+#: queda PISADA: es la única forma de declarar ese choque en vez de afirmar
+#: que se adjuntó (revisión r3 de F1.8). Desde F1.9 son EXACTAMENTE las
+#: columnas fijas del contrato de salida (``contrato.COLUMNAS_CORRELATIVA``:
+#: las técnicas ya no están en el entregable, quedan en ``_trabajo/``); la
+#: regla se escribe una vez, en ``contrato.py``. La prueba
+#: ``test_las_columnas_que_produce_el_motor_son_exactamente_las_declaradas``
+#: ata esta constante a lo observado.
+COLUMNAS_QUE_PRODUCE_EL_MOTOR: frozenset[str] = frozenset(contrato.COLUMNAS_CORRELATIVA)
+
+
+@dataclass(frozen=True)
+class ColumnaOmitida:
+    """Una columna de arrastre pedida que NO está en la correlativa entregada.
+
+    Attributes:
+        columna: nombre canónico pedido.
+        motivo: uno de los motivos documentados en
+            :class:`ReporteColumnasArrastre`.
+        fuente: fuente donde se pidió, cuando el motivo es por fuente; ``None``
+            si el motivo es global (choque con el motor).
+    """
+
+    columna: str
+    motivo: str
+    fuente: str | None = None
+
+    def como_manifiesto(self) -> dict[str, str | None]:
+        """Forma serializable para ``metadatos_corrida.json``."""
+        return {"columna": self.columna, "fuente": self.fuente, "motivo": self.motivo}
+
+
+@dataclass(frozen=True)
+class ReporteColumnasArrastre:
+    """Lo que REALMENTE pasó con las columnas de arrastre (F1.8).
+
+    Va al manifiesto como ``parametros.columnas_arrastre``. Hasta F1.8 el
+    manifiesto declaraba ``columnas_re_adjuntadas = unión planificada``,
+    que era verdad solo si el re-adjunte había ocurrido; ahora se deriva de
+    la correlativa ENTREGADA en los tres caminos (pandas con y sin separación,
+    DuckDB), con :func:`_reporte_arrastre_observado`.
+
+    Es un valor: se construye una sola vez, al final, y no se muta.
+
+    Attributes:
+        adjuntadas: columnas de arrastre que están en la correlativa entregada.
+        omitidas: columnas pedidas que NO están. Los motivos posibles son
+            EXACTAMENTE tres, y son constantes del módulo:
+
+            1. por fuente, :func:`motivo_fuente_sin_columna`: lo calcula el
+               lector (``missing_optional`` del informe de ingesta) y aquí
+               solo se declara, con ``fuente``. Puede convivir con la misma
+               columna en ``adjuntadas`` si otra fuente sí la trae: para la
+               fuente que no la tiene, la petición no se cumplió y se dice;
+            2. global, :data:`MOTIVO_CHOQUE_CON_MOTOR`: la fuente SÍ la trae,
+               pero el motor produce una columna con ese nombre y prevalece
+               la del motor (F1 la renombrará ``<col>_FUENTE`` cuando entre
+               el contrato de salida; hasta entonces queda declarada aquí).
+               Con separación la de la fuente queda fuera; con
+               ``separar_columnas_extra=False`` viajó por el motor y este la
+               pisó: en ambos casos se declara choque, nunca «adjuntada»;
+            3. por fuente, :data:`MOTIVO_SIN_PAYLOAD` (solo DuckDB): la fuente
+               la produjo y ``preservar_payload=False`` la dejó fuera.
+
+            Una columna que la fuente aportó fuera del motor y no llegó a la
+            correlativa NO es una omisión: es :class:`ColumnasArrastreError`.
+    """
+
+    adjuntadas: tuple[str, ...] = ()
+    omitidas: tuple[ColumnaOmitida, ...] = ()
+
+    def como_manifiesto(self) -> dict[str, Any]:
+        """Forma serializable para ``metadatos_corrida.json``."""
+        return {
+            "adjuntadas": list(self.adjuntadas),
+            "omitidas": [omitida.como_manifiesto() for omitida in self.omitidas],
+        }
+
+
+def _omitidas_por_ingesta(
+    config: ConfigCruce, reportes_carga: Mapping[str, Mapping[str, Any]]
+) -> tuple[ColumnaOmitida, ...]:
+    """Columnas opcionales pedidas que cada fuente NO tiene, según el lector.
+
+    No recalcula la regla: lee ``missing_optional`` del informe de ingesta
+    (``SourceLoadReport`` / ``DuckDBCompactionResult``), que es donde el lector
+    la decidió. Se excluyen las columnas que el motor usa para decidir: esas no
+    son de arrastre.
+    """
+    motor = _columnas_de_motor(config)
+    omitidas: list[ColumnaOmitida] = []
+    for spec in config.fuentes:
+        for canonica in reportes_carga[spec.name]["missing_optional"]:
+            if canonica in motor:
+                continue
+            origen = spec.optional_column_mapping[canonica]
+            omitidas.append(
+                ColumnaOmitida(
+                    columna=str(canonica),
+                    motivo=motivo_fuente_sin_columna(str(origen)),
+                    fuente=spec.name,
+                )
+            )
+    return tuple(omitidas)
+
+
+def _omitidas_por_payload_no_publicado(
+    orden_fuentes: Sequence[str], compactaciones: Mapping[str, DuckDBCompactionResult]
+) -> tuple[ColumnaOmitida, ...]:
+    """Columnas no-matcher que DuckDB produjo y ``preservar_payload=False`` dejó
+    fuera de la entrega: ``discarded_payload_columns`` del compactador, que es
+    quien decidió no publicarlas."""
+    return tuple(
+        ColumnaOmitida(columna=columna, motivo=MOTIVO_SIN_PAYLOAD, fuente=nombre)
+        for nombre in orden_fuentes
+        for columna in compactaciones[nombre].discarded_payload_columns
+    )
+
+
+def _reporte_arrastre_observado(
+    columnas_finales: Iterable[str],
+    esperadas: Sequence[str],
+    columnas_motor: Iterable[str],
+    omitidas_ingesta: Sequence[ColumnaOmitida],
+    *,
+    que_hacer: str = ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA,
+) -> ReporteColumnasArrastre:
+    """Deriva el reporte de la correlativa ENTREGADA; es la misma regla en los
+    tres caminos.
+
+    Args:
+        columnas_finales: columnas de la correlativa que se entrega.
+        esperadas: columnas de arrastre que las fuentes aportaron fuera del
+            motor (unión de parquets derramados, de ``payload_columns`` DuckDB
+            o de las columnas no-motor que viajaron por el pipeline).
+        columnas_motor: columnas que el motor produjo ANTES del re-adjunte;
+            una esperada con ese nombre es un choque y no se adjunta.
+        omitidas_ingesta: lo que el lector (o el compactador) declaró ausente
+            por fuente.
+        que_hacer: remedio del error; por defecto el de la entrega
+            (:attr:`ColumnasArrastreError.QUE_HACER_ENTREGA_INCOMPLETA`). El
+            camino con parquets derramados pasa el de la alineación
+            (:attr:`ColumnasArrastreError.QUE_HACER_POR_DEFECTO`).
+
+    Raises:
+        ColumnasArrastreError: si una esperada que no choca con el motor no
+            está en la correlativa: eso no es una omisión declarable, es una
+            entrega incompleta.
+    """
+    finales = set(columnas_finales)
+    motor = set(columnas_motor)
+    adjuntadas = tuple(c for c in esperadas if c not in motor and c in finales)
+    perdidas = [c for c in esperadas if c not in motor and c not in finales]
+    if perdidas:
+        raise ColumnasArrastreError(
+            f"la correlativa entregada no trae {perdidas} aunque las fuentes las "
+            "aportaron fuera del motor",
+            que_hacer=que_hacer,
+        )
+    choques = tuple(
+        ColumnaOmitida(columna=c, motivo=MOTIVO_CHOQUE_CON_MOTOR) for c in esperadas if c in motor
+    )
+    return ReporteColumnasArrastre(
+        adjuntadas=adjuntadas, omitidas=tuple(omitidas_ingesta) + choques
+    )
+
+
 def _adjuntar_columnas_extra(
     correlativa: pd.DataFrame,
     rutas: dict[str, Path],
@@ -1535,57 +1791,100 @@ def _adjuntar_columnas_extra(
     longitudes: dict[str, int],
     orden_fuentes: list[str],
     log: Any,
-) -> pd.DataFrame:
+    *,
+    omitidas_ingesta: Sequence[ColumnaOmitida] = (),
+) -> tuple[pd.DataFrame, ReporteColumnasArrastre]:
     """Re-adjunta a la correlativa las columnas derramadas, por posición.
 
     El contrato (verificado con datos reales, colapso incluido) es que en la
     correlativa expandida ``ORIGINAL_INDEX = offset_de_la_fuente + fila
     original``. Eso permite un ``take`` posicional exacto, sin merges.
+
+    F1.8: nunca devuelve la correlativa intacta en silencio. Si una parte
+    derramada no tiene las filas de su fuente, si la unión no tiene las de la
+    correlativa o si falta ``ORIGINAL_INDEX``, levanta
+    :class:`~record_linkage.pipeline.errores.ColumnasArrastreError`. Un
+    choque de nombre con una columna que ya produjo el motor no pisa la del
+    motor: queda en ``omitidas`` con :data:`MOTIVO_CHOQUE_CON_MOTOR`.
+
+    Args:
+        omitidas_ingesta: lo que el lector declaró ausente por fuente
+            (:func:`_omitidas_por_ingesta`); viaja al reporte tal cual.
+
+    Returns:
+        ``(correlativa, reporte)``; el reporte se deriva de la correlativa
+        resultante con :func:`_reporte_arrastre_observado`.
     """
-    if not rutas or "ORIGINAL_INDEX" not in correlativa.columns:
-        return correlativa
-    partes: list[pd.DataFrame] = []
-    for nombre in orden_fuentes:
-        n = longitudes.get(nombre, 0)
-        if nombre in rutas:
-            parte = _normalizar_dtypes_texto(pd.read_parquet(rutas[nombre]))
-            if len(parte) != n:
-                log.warning(
-                    f"   ⚠️ Columnas de arrastre de {nombre}: {len(parte):,} filas "
-                    f"≠ {n:,} esperadas; no se re-adjuntan (resultado intacto)."
-                )
-                return correlativa
-        else:
-            parte = pd.DataFrame(index=pd.RangeIndex(n))
-        partes.append(parte)
-    extras = pd.concat(partes, ignore_index=True)
-    if len(extras) != len(correlativa):
-        log.warning(
-            f"   ⚠️ Columnas de arrastre: {len(extras):,} filas ≠ correlativa "
-            f"{len(correlativa):,}; no se re-adjuntan (resultado intacto)."
+    columnas_motor = list(correlativa.columns)
+    if rutas:
+        if "ORIGINAL_INDEX" not in correlativa.columns:
+            raise ColumnasArrastreError(
+                "la correlativa no trae ORIGINAL_INDEX y hay columnas de arrastre "
+                f"derramadas para {sorted(rutas)}; sin esa columna no hay forma de "
+                "alinearlas por posición"
+            )
+        partes: list[pd.DataFrame] = []
+        for nombre in orden_fuentes:
+            n = longitudes.get(nombre, 0)
+            if nombre in rutas:
+                parte = _normalizar_dtypes_texto(pd.read_parquet(rutas[nombre]))
+                if len(parte) != n:
+                    raise ColumnasArrastreError(
+                        f"las columnas de arrastre de {nombre} ({rutas[nombre]}) traen "
+                        f"{len(parte):,} filas y la fuente entró con {n:,}; la "
+                        "alineación posicional no cuadra",
+                        fuente=nombre,
+                        esperadas=n,
+                        observadas=len(parte),
+                    )
+            else:
+                parte = pd.DataFrame(index=pd.RangeIndex(n))
+            partes.append(parte)
+        extras = pd.concat(partes, ignore_index=True)
+        if len(extras) != len(correlativa):
+            raise ColumnasArrastreError(
+                f"la unión de columnas de arrastre trae {len(extras):,} filas y la "
+                f"correlativa {len(correlativa):,}; la alineación posicional no cuadra",
+                esperadas=len(correlativa),
+                observadas=len(extras),
+            )
+        posiciones = pd.to_numeric(correlativa["ORIGINAL_INDEX"], errors="raise").to_numpy(
+            dtype="int64"
         )
-        return correlativa
-    posiciones = pd.to_numeric(correlativa["ORIGINAL_INDEX"], errors="raise").to_numpy(
-        dtype="int64"
+        for columna in columnas:
+            if columna in extras.columns and columna not in correlativa.columns:
+                correlativa[columna] = extras[columna].array.take(posiciones)
+    reporte = _reporte_arrastre_observado(
+        correlativa.columns,
+        columnas,
+        columnas_motor,
+        omitidas_ingesta,
+        que_hacer=ColumnasArrastreError.QUE_HACER_POR_DEFECTO,
     )
-    adjuntadas = []
-    for columna in columnas:
-        if columna in correlativa.columns or columna not in extras.columns:
-            continue
-        correlativa[columna] = extras[columna].array.take(posiciones)
-        adjuntadas.append(columna)
-    if adjuntadas:
-        log.info(f"   📎 Re-adjuntadas a la correlativa: {adjuntadas}")
-    return correlativa
+    _registrar_reporte_arrastre(reporte, log)
+    return correlativa, reporte
+
+
+def _registrar_reporte_arrastre(reporte: ReporteColumnasArrastre, log: Any) -> None:
+    """Deja en el registro lo mismo que va al manifiesto, en los tres caminos."""
+    if reporte.adjuntadas:
+        log.info(f"   📎 Re-adjuntadas a la correlativa: {list(reporte.adjuntadas)}")
+    for omitida in reporte.omitidas:
+        donde = f" en {omitida.fuente}" if omitida.fuente else ""
+        log.warning(
+            f"   ⚠️ Columna de arrastre omitida {omitida.columna!r}{donde}: {omitida.motivo}"
+        )
 
 
 def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, esperadas: int) -> None:
     """Falla ruidosamente si el resultado viola una garantía estructural."""
     if len(correlativa) != esperadas:
         raise RuntimeError(
-            f"Qué pasó: la correlativa trae {len(correlativa):,} filas y entraron "
-            f"{esperadas:,}. Por qué importa: el cruce debe conservar TODAS las filas "
-            f"de entrada. Qué hacer: no use este resultado; reporte el caso."
+            mensaje_accionable(
+                f"la correlativa trae {len(correlativa):,} filas y entraron {esperadas:,}.",
+                "el cruce debe conservar TODAS las filas de entrada.",
+                "no use este resultado; reporte el caso.",
+            )
         )
     if correlativa["ID_GRUPO"].isna().any():
         raise RuntimeError("Hay filas sin ID_GRUPO: resultado inutilizable.")
@@ -1602,12 +1901,12 @@ def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, espe
     ausentes = faltantes(correlativa)
     if ausentes:
         raise RuntimeError(
-            f"Qué pasó: la correlativa salió sin {list(ausentes)}. Por qué "
-            f"importa: sin NIT_FINAL y RAZON_SOCIAL_FINAL el resultado dice a "
-            f"qué grupo pertenece cada fila pero no qué identidad quedó para "
-            f"ese grupo, que es el entregable. Qué hacer: no use este "
-            f"resultado; revise el registro de la fase L5, donde la "
-            f"reconstrucción desde el golden debió haber ocurrido."
+            mensaje_accionable(
+                f"la correlativa salió sin {list(ausentes)}.",
+                POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                "no use este resultado; revise el registro de la fase L5, donde la "
+                "reconstrucción desde el golden debió haber ocurrido.",
+            )
         )
 
 
@@ -1746,6 +2045,8 @@ def ejecutar_cruce(config: ConfigCruce) -> ResultadoCruce | ResultadoCruceDisco:
         FileNotFoundError: si alguna fuente no existe (preflight).
         PermissionError: si el workspace no es escribible (preflight).
         RuntimeError: si el resultado viola una invariante estructural.
+        ColumnasArrastreError: si las columnas de arrastre no se pudieron
+            re-adjuntar a la correlativa (F1.8: nunca se omiten en silencio).
     """
     log = CustomLogger("flujo.cruce")
     cronometro = _Cronometro()
@@ -1755,6 +2056,48 @@ def ejecutar_cruce(config: ConfigCruce) -> ResultadoCruce | ResultadoCruceDisco:
         # v0.17.0: el hilo de muestreo se detiene y se hace join pase lo que
         # pase — incluida una excepción a mitad de corrida.
         cronometro.cerrar()
+
+
+def _golden_de(salida: ResultadoLinkage) -> pd.DataFrame:
+    """El golden que ``linkage()`` publicó; sin él el cruce no tiene entregable."""
+    if salida.golden is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un resultado sin golden.",
+                    "el flujo de cruce publica golden y correlativa.",
+                    "revise la ruta de linkage/collapse_exact_duplicates usada por ejecutar_cruce.",
+                )
+            ]
+        )
+    return salida.golden
+
+
+def _conflictos_identificador_de(salida: ResultadoLinkage) -> int:
+    """QA de identificador (grupos que mezclan dos bases válidas) que dejó ``salida.completar``.
+
+    Lo calculó ``completar`` con las técnicas del motor; de aquí sale a
+    ``metricas``. No se recalcula desde la correlativa publicada, que ya no
+    trae columnas técnicas.
+    """
+    conflictos = (
+        salida.manifiesto.get("completar", {})
+        .get("identificador", {})
+        .get("grupos_con_bases_distintas")
+    )
+    if conflictos is None:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "linkage() devolvió un manifiesto sin completar.identificador."
+                    "grupos_con_bases_distintas.",
+                    "el QA de identificador del cruce se toma de ahí, no se recalcula "
+                    "desde la correlativa publicada (sin columnas técnicas).",
+                    "revise que linkage() complete el contrato con salida.completar.",
+                )
+            ]
+        )
+    return int(conflictos)
 
 
 def _ejecutar_cruce_medido(
@@ -1803,6 +2146,10 @@ def _ejecutar_cruce_medido(
     # ocurre en el staging y ``preservar_payload`` hace el re-adjunte.
     rutas_extra: dict[str, Path] = {}
     columnas_extra: list[str] = []
+    # F1.8 — el manifiesto declara lo que REALMENTE está en la correlativa
+    # entregada, en los tres caminos; las ausencias por fuente las dijo el lector.
+    omitidas_ingesta = _omitidas_por_ingesta(config, reportes_carga)
+    reporte_arrastre: ReporteColumnasArrastre
     longitudes_fuente: dict[str, int] = {n: len(df) for n, df in marcos.items()}
     if not compactaciones:
         with cronometro.fase("separar columnas"):
@@ -1852,8 +2199,12 @@ def _ejecutar_cruce_medido(
             consume_sources=True,
         )
     segundos_link = time.time() - inicio_link
-    golden_compacta = salida["golden"]
-    correlativa_compacta = salida["correlative"]
+    # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
+    # dict viejo siguen funcionando pero avisan, y la librería no se avisa a
+    # sí misma.
+    golden_compacta = _golden_de(salida)
+    correlativa_compacta = salida.correlativa
+    conflictos_identificador = _conflictos_identificador_de(salida)
     publicacion: PublicacionResultadosDisco | None = None
     golden: pd.DataFrame | TablaParquet
     correlativa: pd.DataFrame | TablaParquet
@@ -1879,12 +2230,27 @@ def _ejecutar_cruce_medido(
             ausentes_disco = faltantes_en(publicacion.correlativa.columns)
             if ausentes_disco:
                 raise RuntimeError(
-                    f"Qué pasó: la correlativa publicada no trae "
-                    f"{list(ausentes_disco)}. Por qué importa: sin NIT_FINAL y "
-                    f"RAZON_SOCIAL_FINAL el resultado no dice qué identidad "
-                    f"adoptó cada grupo, que es el entregable. Qué hacer: no "
-                    f"use este resultado; revise el registro de la fase L5."
+                    mensaje_accionable(
+                        f"la correlativa publicada no trae {list(ausentes_disco)}.",
+                        POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                        "no use este resultado; revise el registro de la fase L5.",
+                    )
                 )
+            # F1.8 — ``publicar_resultados_duckdb`` adjunta el payload por
+            # nombre y descarta sin aviso el que choca con una columna del motor:
+            # el manifiesto se deriva de la correlativa publicada, no de la intención.
+            payload_esperado = list(
+                dict.fromkeys(
+                    c for nombre in source_order for c in compactaciones[nombre].payload_columns
+                )
+            )
+            reporte_arrastre = _reporte_arrastre_observado(
+                publicacion.correlativa.columns,
+                payload_esperado,
+                correlativa_compacta.columns,
+                omitidas_ingesta + _omitidas_por_payload_no_publicado(source_order, compactaciones),
+            )
+            _registrar_reporte_arrastre(reporte_arrastre, log)
             rutas = {
                 "golden_parquet": publicacion.golden.path,
                 "correlativa_parquet": publicacion.correlativa.path,
@@ -1910,18 +2276,35 @@ def _ejecutar_cruce_medido(
         assert isinstance(correlativa, pd.DataFrame)
         with cronometro.fase("invariantes"):
             _verificar_invariantes(correlativa, golden, filas_entrada)
-        if rutas_extra:
+        if config.separar_columnas_extra:
             with cronometro.fase("re-adjuntar columnas"):
-                correlativa = _adjuntar_columnas_extra(
+                correlativa, reporte_arrastre = _adjuntar_columnas_extra(
                     correlativa,
                     rutas_extra,
                     columnas_extra,
                     longitudes_fuente,
                     source_order,
                     log,
+                    omitidas_ingesta=omitidas_ingesta,
                 )
+        else:
+            # Las columnas viajaron por el motor y una con el nombre de una que
+            # el motor escribe quedó PISADA: la correlativa la trae, pero con
+            # los valores del motor. Se declara choque, no «adjuntada».
+            reporte_arrastre = _reporte_arrastre_observado(
+                correlativa.columns,
+                columnas_extra,
+                COLUMNAS_QUE_PRODUCE_EL_MOTOR,
+                omitidas_ingesta,
+            )
+            _registrar_reporte_arrastre(reporte_arrastre, log)
         with cronometro.fase("exportes"):
             rutas = _exportar(config, {"golden": golden, "correlativa": correlativa}, log)
+
+    # F1: las columnas técnicas (NIT_BASE, NIT_VALID…) salieron del entregable
+    # y quedan en el checkpoint de L5 de esta carpeta; el resultado la señala
+    # para que `salida.tecnicas.adjuntar_tecnicas` las recupere sin adivinar.
+    rutas["dir_trabajo"] = dir_corrida
 
     if publicacion is not None:
         filas_correlativa = publicacion.correlativa.rows
@@ -1934,6 +2317,7 @@ def _ejecutar_cruce_medido(
         "filas_entrada": filas_entrada,
         "filas_correlativa": filas_correlativa,
         "entidades": entidades,
+        "conflictos_identificador": int(conflictos_identificador),
         "segundos_linkage": round(segundos_link, 2),
         "segundos_total": round(cronometro.total, 2),
         "segundos_por_fase": {k: round(v, 2) for k, v in cronometro.fases.items()},
@@ -1955,7 +2339,7 @@ def _ejecutar_cruce_medido(
             "dir_trabajo": str(config.ruta_trabajo),
             "colapsar_duplicados_exactos": config.colapsar_duplicados_exactos,
             "limite_filas": config.limite_filas,
-            "columnas_re_adjuntadas": columnas_extra,
+            "columnas_arrastre": reporte_arrastre.como_manifiesto(),
             "ajustes_perfil": config.ajustes_perfil,
             "perfil_multicampo": _serializar_perfil_multicampo(config.perfil_multicampo),
             "motor_ingesta": config.motor_ingesta,

@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, master, develop]
   pull_request:
-    branches: [main, master, develop]
+    # 'claude/**': los PR apilados (F1 sobre F0, F2 sobre F1…) también corren
+    # el CI, con el paso estricto diffeado contra su rama base real.
+    branches: [main, master, develop, 'claude/**']
   workflow_dispatch:
 
 # Cancela jobs viejos cuando se hace un push nuevo a la misma rama.
@@ -41,12 +43,18 @@ jobs:
       - name: Ruff format check
         run: ruff format --check src/ tests/ scripts/
 
-      # Trinquete por archivo (F0.8): la deuda heredada se tolera donde ya
-      # está (pyproject silencia esas reglas), pero el código que un PR toca
-      # cumple las reglas estrictas completas. Para scripts/ se excluye T201:
-      # imprimen a propósito. Solo en pull_request: ahí la rama destino
-      # (base_ref) define «lo tocado»; en push o workflow_dispatch no hay
-      # destino y diffear contra main lintaría toda la divergencia.
+      # Trinquete por archivo Y regla (F0.8, afinado en F1): la deuda heredada
+      # se tolera donde ya está (pyproject silencia esas reglas), pero el código
+      # que un PR toca no puede añadir violaciones de las reglas estrictas
+      # (PTH, BLE001, E722, T201, C901 con máximo 15). Para cada archivo tocado,
+      # scripts/reglas_estrictas.py cuenta por regla en la base (merge-base) y
+      # en HEAD y falla SOLO si alguna pareja (archivo, regla) sube, listando las
+      # ubicaciones nuevas; un archivo nuevo debe salir limpio. Lintar el
+      # archivo entero fallaba con la deuda heredada (158 errores en el PR de
+      # F1, casi todos previos). Para scripts/ se excluye T201: imprimen a
+      # propósito. Solo en pull_request: ahí la rama destino (base_ref) define
+      # «lo tocado»; en push o workflow_dispatch no hay destino y diffear
+      # contra main lintaría toda la divergencia.
       - name: Reglas estrictas en código tocado
         if: github.event_name == 'pull_request'
         env:
@@ -54,35 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin "$BASE"
-          # ':(glob)' es necesario: sin él, 'scripts/**/*.py' no casa con
-          # archivos directamente bajo scripts/ (pathspec de git).
-          # Asignación y no sustitución de proceso (`< <(...)`): si `git diff`
-          # falla, `set -e` aborta aquí en vez de seguir con una lista vacía y
-          # pasar en vacío.
-          LISTA=$(git diff --name-only --diff-filter=AM "origin/$BASE...HEAD" \
-            -- ':(glob)src/**/*.py' ':(glob)scripts/**/*.py')
-          if [ -z "$LISTA" ]; then
-            echo "Sin archivos .py tocados en src/ ni scripts/ respecto a origin/$BASE."
-            exit 0
-          fi
-          mapfile -t TOCADOS <<< "$LISTA"
-          printf 'Archivos tocados (%d):\n' "${#TOCADOS[@]}"
-          printf '   %s\n' "${TOCADOS[@]}"
-          EN_SRC=(); EN_SCRIPTS=()
-          for f in "${TOCADOS[@]}"; do
-            case "$f" in
-              src/*) EN_SRC+=("$f") ;;
-              scripts/*) EN_SCRIPTS+=("$f") ;;
-            esac
-          done
-          if [ "${#EN_SRC[@]}" -gt 0 ]; then
-            ruff check --isolated --select PTH,BLE001,E722,T201,C901 \
-              --config "lint.mccabe.max-complexity=15" "${EN_SRC[@]}"
-          fi
-          if [ "${#EN_SCRIPTS[@]}" -gt 0 ]; then
-            ruff check --isolated --select PTH,BLE001,E722,C901 \
-              --config "lint.mccabe.max-complexity=15" "${EN_SCRIPTS[@]}"
-          fi
+          python scripts/reglas_estrictas.py --base "origin/$BASE"
 
   typecheck:
     name: Type check debt (mypy, visible)

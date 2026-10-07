@@ -22,7 +22,10 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
+from ..pipeline.errores import ErrorPipeline
 from ..utils.logger import CustomLogger
+from ._fases import etiquetar, tiempos_por_fase
+from ._muestreo import muestra_estratificada
 from ._sqlite import open_readonly_sqlite, quote_existing_table, validate_row_limit
 from ._text_utils import strip_emojis as _strip_emojis
 
@@ -64,6 +67,8 @@ class DataVisualizer:
         self.pipeline_start_time = pipeline_start_time
         self.config = config or {}
         self.logger = CustomLogger("DataVisualizer")
+        # F1.4: (archivo, motivo) de cada figura que no se escribió.
+        self.omitidos: list[tuple[str, str]] = []
 
         # Límites de memoria
         self.sample_size = self.config.get("viz_sample_size", 50000)
@@ -164,6 +169,10 @@ class DataVisualizer:
                     df = pd.read_hdf(data_ref, key=table_name)
                     return self._apply_sample_limit(df, table_name)
 
+        except ErrorPipeline:
+            # Un fallo del muestreo (reporting._muestreo) es un defecto, no un
+            # archivo ilegible: sube en vez de volverse una muestra vacía.
+            raise
         except Exception as e:
             self.logger.error(f"Error cargando datos para visualización: {e!s}")
             self.logger.debug("Stack trace:", exc_info=True)
@@ -223,31 +232,13 @@ class DataVisualizer:
             return pd.DataFrame()
 
     def _stratified_sample(self, df: pd.DataFrame, stratify_col: str) -> pd.DataFrame:
-        """Muestreo estratificado preservando proporciones."""
-        try:
-            # Calcular tamaños por estrato
-            strata_sizes = df[stratify_col].value_counts()
-            total_size = len(df)
+        """Muestreo estratificado: delega en la regla única de ``reporting._muestreo``.
 
-            samples = []
-            for stratum, size in strata_sizes.items():
-                # Calcular proporción y número de muestras
-                prop = size / total_size
-                n_samples = max(1, int(self.sample_size * prop))
-
-                # Obtener muestra del estrato
-                stratum_df = df[df[stratify_col] == stratum]
-                if len(stratum_df) <= n_samples:
-                    samples.append(stratum_df)
-                else:
-                    samples.append(stratum_df.sample(n=n_samples, random_state=42))
-
-            result = pd.concat(samples, ignore_index=True)
-            return result.head(self.sample_size)  # Asegurar límite
-
-        except Exception as e:
-            self.logger.warning(f"Error en muestreo estratificado: {e!s}")
-            return df.sample(n=min(self.sample_size, len(df)), random_state=42)
+        La copia anterior perdía el estrato NaN (``value_counts`` lo omite y la
+        igualdad con NaN nunca acierta) y caía a una muestra simple dentro de
+        un ``except`` si era el único estrato (F1.3).
+        """
+        return muestra_estratificada(df, stratify_col, self.sample_size)
 
     def _weighted_sample(self, df: pd.DataFrame, weight_col: str) -> pd.DataFrame:
         """Muestreo ponderado para incluir más casos problemáticos."""
@@ -426,12 +417,15 @@ class DataVisualizer:
         successful = 0
         failed = 0
         skipped = 0
+        # F1.4: (archivo, motivo) de cada figura que no se escribió.
+        self.omitidos = []
 
         for viz_config in visualizations:
             try:
                 # Verificar si tenemos los datos necesarios
                 if not self._has_required_data(viz_config):
                     self.logger.info(f"⏭️  {viz_config['filename']}: Omitido (datos insuficientes)")
+                    self.omitidos.append((viz_config["filename"], "datos insuficientes"))
                     skipped += 1
                     continue
 
@@ -452,13 +446,22 @@ class DataVisualizer:
                     successful += 1
                     self.logger.info(f"✓ Guardado: {viz_config['filename']}")
                 else:
-                    self.logger.warning(f"✗ Sin datos para: {viz_config['filename']}")
-                    failed += 1
+                    # La función ya dijo en el log por qué no hay figura; la
+                    # omisión queda registrada para el manifiesto (F1.4).
+                    self.logger.info(f"⏭️  {viz_config['filename']}: Omitido (sin datos)")
+                    self.omitidos.append((viz_config["filename"], "la función no devolvió figura"))
+                    skipped += 1
 
+            except ErrorPipeline:
+                # Un defecto del pipeline (phase_times malformado) no es «una
+                # figura que no salió»: sube y la estrategia lo declara.
+                plt.close("all")
+                raise
             except Exception as e:
                 failed += 1
                 self.logger.error(f"✗ Error en {viz_config['filename']}: {e!s}")
                 self.logger.debug("Stack trace:", exc_info=True)
+                self.omitidos.append((viz_config["filename"], f"{type(e).__name__}: {e!s}"))
                 plt.close("all")  # Limpiar cualquier figura abierta
 
         # Liberar memoria
@@ -1489,24 +1492,21 @@ Grupos grandes (>20): {(group_sizes > 20).sum():,} ({(group_sizes > 20).sum() / 
 
     def plot_performance_timeline(self) -> plt.Figure | None:
         """
-        Visualiza línea de tiempo del rendimiento del proceso.
+        Línea de tiempo (Gantt + porcentajes) con los tiempos por fase.
+
+        F1.6: los tiempos son EXACTAMENTE ``metrics["phase_times"]`` (los del
+        orquestador). Sin tiempos devuelve ``None`` y lo dice en el log, y
+        ``save_all_visualizations`` registra el PNG como omitido; antes se
+        buscaban claves que nadie producía y el archivo nunca se generaba.
         """
         try:
-            # Recopilar tiempos de fases
-            phase_times = {
-                "Carga y Validación": self.metrics.get("load_validate", 0),
-                "Preprocesamiento": self.metrics.get("preprocessing_time", 0),
-                "Generación Candidatos": self.metrics.get("candidate_generation_time", 0),
-                "Scoring": self.metrics.get("scoring_time", 0),
-                "Clustering": self.metrics.get("clustering_time", 0),
-                "Golden Records": self.metrics.get("golden_records_time", 0),
-                "Exportación": self.metrics.get("export_time", 0),
-            }
-
-            # Filtrar fases con tiempo > 0
-            phase_times = {k: v for k, v in phase_times.items() if v > 0}
+            phase_times = etiquetar(tiempos_por_fase(self.metrics))
 
             if not phase_times:
+                self.logger.warning(
+                    "performance_timeline.png omitido: metrics['phase_times'] no trae "
+                    "tiempos por fase."
+                )
                 return None
 
             fig, (ax1, ax2) = plt.subplots(
@@ -1629,6 +1629,8 @@ Grupos grandes (>20): {(group_sizes > 20).sum():,} ({(group_sizes > 20).sum() / 
             plt.tight_layout()
             return fig
 
+        except ErrorPipeline:
+            raise
         except Exception as e:
             self.logger.error(f"Error en plot_performance_timeline: {e!s}")
             return None

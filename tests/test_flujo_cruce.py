@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from apoyo_cruce import LogNulo, config_cruce
 
 from record_linkage import ColumnType, SourceSpec
 from record_linkage.flujo import (
@@ -21,6 +22,9 @@ from record_linkage.flujo import (
 )
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
 from record_linkage.ingestion import DuckDBIngestionSettings
+from record_linkage.pipeline.errores import ContratoSalidaError
+from record_linkage.resultado import ResultadoLinkage
+from record_linkage.salida.completar import bases_del_motor, grupos_con_bases_distintas
 
 
 @pytest.fixture
@@ -59,19 +63,6 @@ def fuentes_csv(tmp_path: Path) -> list[SourceSpec]:
             column_types={"NIT": ColumnType.IDENTIFIER},
         ),
     ]
-
-
-def _config(fuentes, tmp_path: Path, **extra) -> ConfigCruce:
-    base = {
-        "fuentes": fuentes,
-        "workspace": tmp_path / "salida",
-        "confiables": {"PADRON"},
-        "dir_trabajo": tmp_path / "trabajo",
-        "filas_smoke": 0,
-        "exportar_excel": False,
-    }
-    base.update(extra)
-    return ConfigCruce(**base)
 
 
 # ── Validación de la configuración ────────────────────────────────────
@@ -216,7 +207,7 @@ def test_preflight_falla_antes_de_procesar_si_falta_una_fuente(fuentes_csv, tmp_
 
     rotas = [fuentes_csv[0], replace(fuentes_csv[1], path=tmp_path / "no_existe.csv")]
     with pytest.raises(FileNotFoundError, match="no existe"):
-        ejecutar_cruce(_config(rotas, tmp_path))
+        ejecutar_cruce(config_cruce(rotas, tmp_path))
 
 
 @pytest.mark.parametrize(
@@ -245,7 +236,7 @@ def test_preflight_pandas_rechaza_fuente_que_seria_sobrescrita(
 
     with pytest.raises(ValueError, match="colisiona"):
         ejecutar_cruce(
-            _config(
+            config_cruce(
                 fuentes,
                 tmp_path,
                 exportar_excel=exportar_excel,
@@ -279,7 +270,7 @@ def test_preflight_disco_rechaza_fuentes_en_controles_de_publicacion(
 
     with pytest.raises(ValueError, match=r"colisiona|solapa|nombre reservado"):
         ejecutar_cruce(
-            _config(
+            config_cruce(
                 fuentes,
                 tmp_path,
                 motor_ingesta="duckdb",
@@ -294,7 +285,7 @@ def test_preflight_disco_rechaza_fuentes_en_controles_de_publicacion(
 
 
 def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
     assert resultado.metricas["filas_entrada"] == 5
     assert len(resultado.correlativa) == 5
@@ -304,8 +295,128 @@ def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path:
     assert resultado.correlativa["ID_GRUPO"].nunique() == 4
 
 
+def test_cruce_en_memoria_responde_el_qa_sin_columnas_tecnicas(fuentes_csv, tmp_path: Path) -> None:
+    """F1.9: el entregable ya no trae NIT_BASE/NIT_VALID; el QA toma el conteo de
+    conflictos del manifiesto del contrato (calculado con las técnicas del motor)."""
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+
+    assert not {"NIT_BASE", "NIT_VALID"} & set(resultado.correlativa.columns)
+    assert {"ID_REGISTRO", "ID_ENTIDAD", "METODO_UNION"} <= set(resultado.correlativa.columns)
+    assert resultado.conflictos_identificador() == 0
+    distribucion = resultado.distribucion_grupos()
+    assert distribucion["grupos_1_fila"] == 3 and distribucion["grupos_2a5_filas"] == 1
+    assert distribucion["max_filas_por_grupo"] == 2
+    por_fuente = resultado.identificadores_por_fuente()
+    assert set(por_fuente) == {"PADRON", "CLIENTES"}
+    assert por_fuente["PADRON"].filas == 3 and por_fuente["CLIENTES"].filas == 2
+    assert resultado.entidades_multifuente() == 1
+    assert len(resultado.grupos_sospechosos()) == 0
+
+
+def test_conflictos_identificador_parten_de_las_tecnicas_del_motor() -> None:
+    """La regla única del QA (r3/r5): la base de cada registro es ``NIT_BASE``
+    del motor (NitProcessor) cuando ``NIT_VALID`` lo acepta, sin ninguna
+    reducción propia; dos bases distintas en un grupo = 1 conflicto; un NIT
+    con DV y otro sin DV traen el mismo ``NIT_BASE``; lo que el motor no
+    valida no cuenta, aunque traiga base."""
+    id_grupo = pd.Series([0, 0, 1, 1, 2, 2, 3, 3])
+    nit_base = pd.Series(
+        [
+            "900111222",  # NIT_OK 9001112221 (con DV)
+            "900111222",  # NIT_OK 900111222 (sin DV): misma base, no es conflicto
+            "800333444",
+            "700999888",  # otra base válida en el grupo → conflicto
+            "123",  # el motor no lo valida (NIT_VALID=0): no cuenta
+            "",
+            "900555666",
+            "700999888",  # válido solo el primero: no es conflicto
+        ]
+    )
+    nit_valid = pd.Series(["1", 1, True, "true", "0", "", "1", False])
+    bases = bases_del_motor(nit_base.to_numpy(), nit_valid.to_numpy())
+    assert list(bases) == [
+        "900111222",
+        "900111222",
+        "800333444",
+        "700999888",
+        "",
+        "",
+        "900555666",
+        "",
+    ]
+    assert grupos_con_bases_distintas(id_grupo, bases) == 1
+    assert grupos_con_bases_distintas(id_grupo.iloc[:2], bases[:2]) == 0
+    assert grupos_con_bases_distintas(id_grupo.iloc[4:6], bases[4:6]) == 0
+    assert grupos_con_bases_distintas(id_grupo.iloc[6:], bases[6:]) == 0
+
+
+def _fuentes_nit_flotante(tmp_path: Path) -> list[SourceSpec]:
+    """Una fuente exportada desde pandas/Excel con el NIT como flotante
+    (``900111222.0``, porque otra fila lo trae en blanco) y otra con el mismo
+    NIT en 9 dígitos. El motor las une; el QA y METODO_UNION deben decirlo."""
+    a = tmp_path / "padron_flotante.csv"
+    a.write_text(
+        "IDENT,NOMBRE_EMPRESA\n900111222.0,ACME COLOMBIA SAS\n,SIN IDENTIFICADOR SAS\n",
+        encoding="utf-8",
+    )
+    b = tmp_path / "clientes_flotante.csv"
+    b.write_text("nit_cliente,razon\n900111222,ACME COLOMBIA S.A.S.\n", encoding="utf-8")
+    return [
+        SourceSpec(
+            name="PADRON",
+            path=a,
+            column_mapping={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE_EMPRESA"},
+            column_types={"NIT": ColumnType.IDENTIFIER},
+        ),
+        SourceSpec(
+            name="CLIENTES",
+            path=b,
+            column_mapping={"NIT": "nit_cliente", "RAZON_SOCIAL": "razon"},
+            column_types={"NIT": ColumnType.IDENTIFIER},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"motor_ingesta": "duckdb", "modo_resultado": "disco"},
+    ],
+    ids=["memoria", "disco"],
+)
+def test_cruce_con_nit_flotante_no_inventa_conflictos(tmp_path: Path, extra: dict) -> None:
+    resultado = ejecutar_cruce(config_cruce(_fuentes_nit_flotante(tmp_path), tmp_path, **extra))
+
+    assert resultado.conflictos_identificador() == 0
+    assert resultado.metricas["conflictos_identificador"] == 0
+    correlativa = resultado.correlativa
+    if not isinstance(correlativa, pd.DataFrame):
+        correlativa = correlativa.to_pandas()
+    acme = correlativa[correlativa["RAZON_SOCIAL"].str.startswith("ACME")]
+    assert len(acme) == 2 and acme["ID_GRUPO"].nunique() == 1
+    assert set(acme["METODO_UNION"]) == {"identificador"}
+
+
+def test_cruce_falla_claro_si_linkage_no_trae_golden(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """Sin golden no hay cruce publicable: error accionable, no un AttributeError
+    más abajo (ni un ``assert`` que ``python -O`` borra)."""
+    import record_linkage.flujo.cruce as modulo
+
+    def linkage_falso(sources, **kwargs):
+        correlativa = pd.concat(sources.values(), ignore_index=True).copy()
+        correlativa["ID_GRUPO"] = range(len(correlativa))
+        return ResultadoLinkage(correlativa=correlativa, golden=None)
+
+    monkeypatch.setattr(modulo, "linkage", linkage_falso)
+    with pytest.raises(ContratoSalidaError, match="sin golden"):
+        ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+
+
 def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
     assert resultado.rutas["golden_parquet"].exists()
     assert resultado.rutas["correlativa_parquet"].exists()
@@ -317,6 +428,9 @@ def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Pat
     assert parametros["forzar_relectura"] is False
     assert parametros["exportar_excel"] is False
     assert parametros["dir_trabajo"] == str(tmp_path / "trabajo")
+    # F1: las técnicas salieron del entregable; el resultado dice dónde quedan.
+    assert resultado.rutas["dir_trabajo"] == tmp_path / "trabajo" / "corrida"
+    assert (resultado.rutas["dir_trabajo"] / "L5_golden" / "correlative.parquet").is_file()
     assert parametros["perfil_multicampo"] is None
     assert metadatos["metricas"]["filas_entrada"] == 5
     assert {f["nombre"] for f in parametros["fuentes"]} == {"PADRON", "CLIENTES"}
@@ -394,7 +508,7 @@ def test_metadata_pandas_preserva_version_anterior_si_falla_replace(
 
 
 def test_cruce_con_smoke_test_previo(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, filas_smoke=2))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, filas_smoke=2))
     assert len(resultado.correlativa) == 5
 
 
@@ -429,11 +543,19 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
         )
         correlativa["NAME_SIMILARITY_SCORE"] = 1.0
         correlativa["NIT_DISTANCE"] = 0
-        return {"golden": correlativa.copy(), "correlative": correlativa}
+        # F1.9 — y devuelve ResultadoLinkage, no el dict viejo: el flujo lee
+        # los campos nuevos (``.golden``/``.correlativa``) sin pasar por el shim.
+        return ResultadoLinkage(
+            correlativa=correlativa,
+            golden=correlativa.copy(),
+            # r3 — el flujo toma el conteo de conflictos del manifiesto del
+            # contrato (una regla, la del motor), así que el doble lo trae.
+            manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 0}}},
+        )
 
     monkeypatch.setattr(modulo, "linkage", linkage_falso)
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             filas_smoke=1,
@@ -452,7 +574,7 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
 
 
 def test_preflight_revalida_rutas_si_config_fue_mutada(fuentes_csv, tmp_path: Path) -> None:
-    config = _config(fuentes_csv, tmp_path, reusar_checkpoints=False)
+    config = config_cruce(fuentes_csv, tmp_path, reusar_checkpoints=False)
     config.workspace = config.ruta_trabajo / "corrida"
 
     with pytest.raises(ValueError, match="Limpieza de checkpoints insegura"):
@@ -462,7 +584,7 @@ def test_preflight_revalida_rutas_si_config_fue_mutada(fuentes_csv, tmp_path: Pa
 def test_error_al_limpiar_checkpoint_no_se_oculta(fuentes_csv, tmp_path: Path, monkeypatch) -> None:
     import record_linkage.flujo.cruce as modulo
 
-    config = _config(fuentes_csv, tmp_path, reusar_checkpoints=False)
+    config = config_cruce(fuentes_csv, tmp_path, reusar_checkpoints=False)
     (config.ruta_trabajo / "_smoke").mkdir(parents=True)
 
     def fallar(_ruta):
@@ -478,7 +600,7 @@ def test_excel_se_omite_por_encima_del_limite(fuentes_csv, tmp_path: Path, monke
     import record_linkage.flujo.cruce as modulo
 
     monkeypatch.setattr(modulo, "_LIMITE_EXCEL", 2)
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, exportar_excel=True))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, exportar_excel=True))
     assert "correlativa_excel" not in resultado.rutas
     assert resultado.rutas["correlativa_parquet"].exists()
 
@@ -568,7 +690,7 @@ def test_cache_reutiliza_la_segunda_corrida(fuentes_csv, tmp_path: Path) -> None
     from record_linkage.flujo.insumos import leer_cache, ruta_en_cache
 
     cache = tmp_path / "procesados"
-    primera = ejecutar_cruce(_config(fuentes_csv, tmp_path, dir_procesados=cache))
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, dir_procesados=cache))
     assert ruta_en_cache(fuentes_csv[0], cache).is_file()
     assert leer_cache(fuentes_csv[0], cache) is not None
 
@@ -656,7 +778,7 @@ def test_cache_no_escribible_no_tumba_la_corrida(fuentes_csv, tmp_path: Path) ->
 
 
 def test_limite_filas_recorta_y_queda_registrado(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, limite_filas={"PADRON": 2}))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, limite_filas={"PADRON": 2}))
     assert resultado.metricas["filas_entrada"] == 4  # 2 de PADRON + 2 de CLIENTES
     assert len(resultado.correlativa) == 4
     metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
@@ -674,13 +796,13 @@ def test_limite_filas_rechaza_valores_invalidos(fuentes_csv, tmp_path: Path) -> 
 
 
 def test_limite_mayor_que_la_fuente_es_no_op(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path, limite_filas={"PADRON": 999}))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, limite_filas={"PADRON": 999}))
     assert resultado.metricas["filas_entrada"] == 5
 
 
 def test_duckdb_limita_en_ingesta_y_expande_todas_las_filas(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             motor_ingesta="duckdb",
@@ -716,7 +838,7 @@ def test_duckdb_limita_en_ingesta_y_expande_todas_las_filas(fuentes_csv, tmp_pat
 
 def test_ajustes_de_perfil_llegan_al_motor(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(
+        config_cruce(
             fuentes_csv,
             tmp_path,
             ajustes_perfil={"lsh_permutations": 64, "score_threshold": 0.5},
@@ -729,11 +851,11 @@ def test_ajustes_de_perfil_llegan_al_motor(fuentes_csv, tmp_path: Path) -> None:
 def test_ajuste_desconocido_falla_con_sugerencia(fuentes_csv, tmp_path: Path) -> None:
     """Un parámetro mal escrito no puede ignorarse en silencio."""
     with pytest.raises(ValueError, match="lsh_permutations"):
-        ejecutar_cruce(_config(fuentes_csv, tmp_path, ajustes_perfil={"lsh_permutation": 64}))
+        ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, ajustes_perfil={"lsh_permutation": 64}))
 
 
 def test_tiempos_por_fase_se_registran(fuentes_csv, tmp_path: Path) -> None:
-    resultado = ejecutar_cruce(_config(fuentes_csv, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
     fases = resultado.metricas["segundos_por_fase"]
     assert {"preflight", "carga de fuentes", "cruce", "exportes"} <= set(fases)
     assert sum(fases.values()) <= resultado.metricas["segundos_total"] + 1
@@ -767,49 +889,11 @@ def test_una_sola_fuente_es_deduplicacion(fuentes_csv, tmp_path: Path) -> None:
 # RUES x Exportaciones, los representantes pasaron de 19.407 a 32.745.
 
 
-@pytest.fixture
-def fuentes_con_arrastre(tmp_path: Path) -> list[SourceSpec]:
-    """Fuentes con columnas mapeadas que NO participan en la decisión."""
-    a = tmp_path / "padron.csv"
-    a.write_text(
-        "IDENT,NOMBRE_EMPRESA,TEL,CORREO\n"
-        "900111222,ACME COLOMBIA SAS,3001112233,acme@x.co\n"
-        "800333444,BETA LTDA,3009998877,beta@x.co\n"
-        "900555666,GAMA S.A.,3005554433,gama@x.co\n",
-        encoding="utf-8",
-    )
-    b = tmp_path / "clientes.txt"
-    b.write_text(
-        "nit_cliente\trazon\tdepto\n"
-        "9001112221\tACME COLOMBIA S.A.S.\tANTIOQUIA\n"
-        "700999888\tDELTA EU\tBOGOTA\n",
-        encoding="utf-8",
-    )
-    return [
-        SourceSpec(
-            name="PADRON",
-            path=a,
-            column_mapping={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE_EMPRESA"},
-            optional_column_mapping={"TELEFONO": "TEL", "EMAIL": "CORREO"},
-            delimiter=",",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-        SourceSpec(
-            name="CLIENTES",
-            path=b,
-            column_mapping={"NIT": "nit_cliente", "RAZON_SOCIAL": "razon"},
-            optional_column_mapping={"DEPARTAMENTO": "depto"},
-            delimiter="\t",
-            column_types={"NIT": ColumnType.IDENTIFIER},
-        ),
-    ]
-
-
 def test_columnas_de_arrastre_no_entran_al_motor_pero_vuelven(
     fuentes_con_arrastre, tmp_path: Path
 ) -> None:
     """TELEFONO/EMAIL/DEPARTAMENTO no viajan por el pipeline; sí a la salida."""
-    resultado = ejecutar_cruce(_config(fuentes_con_arrastre, tmp_path))
+    resultado = ejecutar_cruce(config_cruce(fuentes_con_arrastre, tmp_path))
     corr = resultado.correlativa
     # Re-adjuntadas y con el valor EXACTO de la fila original.
     fila_acme = corr[(corr["SRC"] == "PADRON") & (corr["NIT"] == "900111222")].iloc[0]
@@ -820,18 +904,17 @@ def test_columnas_de_arrastre_no_entran_al_motor_pero_vuelven(
     # Cruzada: TELEFONO de la fila de CLIENTES es NA (no existe en esa fuente).
     assert pd.isna(fila_delta["TELEFONO"])
     metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
-    assert set(metadatos["parametros"]["columnas_re_adjuntadas"]) == {
-        "TELEFONO",
-        "EMAIL",
-        "DEPARTAMENTO",
-    }
+    # F1.8: el manifiesto declara lo que REALMENTE se adjuntó, no la unión planificada.
+    arrastre = metadatos["parametros"]["columnas_arrastre"]
+    assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
+    assert arrastre["omitidas"] == []
 
 
 def test_variable_extra_activa_se_queda_en_el_motor(fuentes_con_arrastre, tmp_path: Path) -> None:
     """Una columna declarada en variables_extra NO se separa: el motor la necesita."""
     from record_linkage.flujo.cruce import _columnas_de_motor, _separar_columnas_extra
 
-    cfg = _config(
+    cfg = config_cruce(
         fuentes_con_arrastre,
         tmp_path,
         variables_extra=[{"column": "TELEFONO", "weight": 0.1, "type": "exact_signed"}],
@@ -842,14 +925,14 @@ def test_variable_extra_activa_se_queda_en_el_motor(fuentes_con_arrastre, tmp_pa
             {"NIT": ["1"], "RAZON_SOCIAL": ["A"], "TELEFONO": ["3"], "EMAIL": ["x"]}
         )
     }
-    _rutas, union, _longitudes = _separar_columnas_extra(marcos, cfg, _LogNulo())
+    _rutas, union, _longitudes = _separar_columnas_extra(marcos, cfg, LogNulo())
     assert "TELEFONO" in marcos["PADRON"].columns, "el motor la usa: no puede separarse"
     assert union == ["EMAIL"]
 
 
 def test_separacion_desactivable(fuentes_con_arrastre, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(
-        _config(fuentes_con_arrastre, tmp_path, separar_columnas_extra=False)
+        config_cruce(fuentes_con_arrastre, tmp_path, separar_columnas_extra=False)
     )
     assert "TELEFONO" in resultado.correlativa.columns  # viajó por el pipeline
 
@@ -882,9 +965,22 @@ def test_el_colapso_mejora_sin_columnas_de_arrastre(tmp_path: Path) -> None:
     assert resultado.correlativa["CIUDAD"].nunique() == 40  # y su columna intacta
 
 
-class _LogNulo:
-    """Logger inerte para ejercitar helpers sin ruido en la salida."""
+def test_golden_de_y_conflictos_identificador_de_exigen_el_contrato() -> None:
+    """Los dos guardas que ``_ejecutar_cruce_medido`` aplica a lo que devuelve
+    ``linkage()``: sin golden no hay entregable, y el QA de identificador sale
+    del manifiesto de ``completar``, no se recalcula. Un fallo es accionable."""
+    from record_linkage.flujo.cruce import _conflictos_identificador_de, _golden_de
 
-    def info(self, *_a, **_k): ...
+    df = pd.DataFrame({"ID_GRUPO": [0]})
+    with pytest.raises(ContratoSalidaError, match="sin golden"):
+        _golden_de(ResultadoLinkage(correlativa=df, golden=None))
+    assert _golden_de(ResultadoLinkage(correlativa=df, golden=df)) is df
 
-    def warning(self, *_a, **_k): ...
+    with pytest.raises(ContratoSalidaError, match=r"sin completar\.identificador"):
+        _conflictos_identificador_de(ResultadoLinkage(correlativa=df, golden=df))
+    con_qa = ResultadoLinkage(
+        correlativa=df,
+        golden=df,
+        manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 2}}},
+    )
+    assert _conflictos_identificador_de(con_qa) == 2

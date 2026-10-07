@@ -60,7 +60,9 @@ referencia está incompleta), 2 (no se pudo medir).
 
 ``ruff`` y ``mypy`` se invocan con ``sys.executable -m <módulo>`` o, si ese
 intérprete no los tiene, con el ejecutable que ``shutil.which`` encuentre.
-Nunca por ruta fija.
+Nunca por ruta fija. Esa localización, la ejecución y la lectura del JSON de
+ruff viven en ``scripts/herramientas_lint.py``, compartido con
+``scripts/reglas_estrictas.py`` (una regla se escribe una vez).
 """
 
 from __future__ import annotations
@@ -68,17 +70,24 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
-import functools
 import importlib.metadata
 import json
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from herramientas_lint import (
+    ErrorDeMedicion,
+    Veredicto,
+    comando_herramienta,
+    correr,
+    diagnosticos_ruff,
+    version_herramienta,
+)
 
 try:
     import tomllib  # Python 3.11+
@@ -99,10 +108,6 @@ _PATRON_MYPY_ERROR = re.compile(r"^(?P<archivo>[^:\n]+):(?P<linea>\d+):(?:\d+:)?
 _PATRON_UBICACION = re.compile(r"^(?P<archivo>.*):(?P<linea>\d+)$")
 
 
-class ErrorDeMedicion(RuntimeError):
-    """Una herramienta no pudo correr o devolvió algo que no se entiende."""
-
-
 @dataclass(frozen=True)
 class Medicion:
     """Conteos por métrica y, para cada una, sus ubicaciones ``archivo:línea``."""
@@ -114,59 +119,9 @@ class Medicion:
         return {"conteos": dict(self.conteos), "ubicaciones": dict(self.ubicaciones)}
 
 
-@dataclass(frozen=True)
-class Veredicto:
-    """Resultado de comparar una medición contra la referencia."""
-
-    codigo: int
-    lineas: list[str]
-
-    @property
-    def texto(self) -> str:
-        return "\n".join(self.lineas)
-
-
 # ---------------------------------------------------------------------------
 # Herramientas externas
 # ---------------------------------------------------------------------------
-
-
-@functools.cache
-def _comando(modulo: str) -> tuple[str, ...]:
-    """``(intérprete, -m, módulo)`` si el intérprete actual lo tiene; si no, el del PATH."""
-    sondeo = subprocess.run(
-        [sys.executable, "-m", modulo, "--version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if sondeo.returncode == 0:
-        return (sys.executable, "-m", modulo)
-    ejecutable = shutil.which(modulo)
-    if ejecutable is None:
-        raise ErrorDeMedicion(
-            f"No se encuentra `{modulo}` ni como módulo de {sys.executable} ni en el PATH. "
-            f"Sin él no se puede medir la deuda. Instale las extras de desarrollo: "
-            f"pip install -e '.[dev]'."
-        )
-    return (ejecutable,)
-
-
-def _correr(comando: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        comando,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-
-
-def _version_herramienta(modulo: str) -> str:
-    salida = _correr([*_comando(modulo), "--version"], RAIZ)
-    return salida.stdout.strip().splitlines()[0] if salida.stdout.strip() else "desconocida"
 
 
 def version_instalada(distribucion: str) -> str:
@@ -184,8 +139,8 @@ DISTRIBUCIONES_QUE_MUEVEN_MYPY = ("pandas", "pandas-stubs")
 def herramientas(medicion: Medicion) -> dict[str, str]:
     """Versiones con las que se midió: ruff, mypy (si corrió) y lo que mueve a mypy."""
     versiones = {
-        "ruff": _version_herramienta("ruff"),
-        "mypy": _version_herramienta("mypy") if "mypy" in medicion.conteos else "no medido",
+        "ruff": version_herramienta("ruff", RAIZ),
+        "mypy": version_herramienta("mypy", RAIZ) if "mypy" in medicion.conteos else "no medido",
     }
     versiones.update({d: version_instalada(d) for d in DISTRIBUCIONES_QUE_MUEVEN_MYPY})
     return versiones
@@ -227,32 +182,12 @@ def ubicaciones_ruff(
 ) -> list[str]:
     """Ubicaciones únicas ``archivo:línea`` que reporta ``ruff --select <select>``.
 
-    ``--isolated`` ignora el ``pyproject.toml`` del repositorio (sus
-    ``per-file-ignores`` silencian justamente la deuda que aquí se mide) y
-    ``--ignore-noqa`` ignora los ``# noqa`` (ver el docstring del módulo);
-    ``config`` añade ajustes puntuales (``lint.mccabe.max-complexity=19``).
+    Corre con ``--isolated`` y ``--ignore-noqa`` (ver el docstring del módulo
+    y ``herramientas_lint.diagnosticos_ruff``); ``config`` añade ajustes
+    puntuales (``lint.mccabe.max-complexity=19``).
     """
-    comando = [*_comando("ruff"), "check", "--isolated", "--ignore-noqa", "--no-cache"]
-    comando += ["--exit-zero"]
-    comando += ["--select", select, "--output-format", "json"]
-    for ajuste in config:
-        comando += ["--config", ajuste]
-    comando.append(str(objetivo))
-    salida = _correr(comando, raiz)
-    if salida.returncode != 0:
-        raise ErrorDeMedicion(
-            f"ruff falló (código {salida.returncode}) midiendo {select} sobre {objetivo}:\n"
-            f"{salida.stderr.strip()}\nSin esa medición no hay trinquete; corrija la causa."
-        )
-    try:
-        diagnosticos = json.loads(salida.stdout)
-    except json.JSONDecodeError as exc:
-        raise ErrorDeMedicion(
-            f"ruff no devolvió JSON midiendo {select}: {salida.stdout[:300]!r}"
-        ) from exc
-    return _unicas(
-        {_ubicacion(raiz, d["filename"], int(d["location"]["row"])) for d in diagnosticos}
-    )
+    diagnosticos = diagnosticos_ruff(raiz, select, [objetivo], config, ignorar_noqa=True)
+    return _unicas({_ubicacion(raiz, d.archivo, d.linea) for d in diagnosticos})
 
 
 def _es_llamada_a_print(nodo: ast.AST) -> bool:
@@ -289,8 +224,8 @@ def ubicaciones_print(raiz: Path, objetivo: Path) -> list[str]:
 
 def medir_mypy(raiz: Path, objetivo: Path) -> tuple[int, list[str]]:
     """Errores de mypy (el N de «Found N errors») y sus ubicaciones únicas."""
-    comando = [*_comando("mypy"), "--config-file=pyproject.toml", str(objetivo)]
-    salida = _correr(comando, raiz)
+    comando = [*comando_herramienta("mypy"), "--config-file=pyproject.toml", str(objetivo)]
+    salida = correr(comando, raiz)
     if salida.returncode not in (0, 1):
         raise ErrorDeMedicion(
             f"mypy falló (código {salida.returncode}) sobre {objetivo}:\n"
@@ -471,7 +406,7 @@ def _commit(raiz: Path) -> str:
     git = shutil.which("git")
     if git is None:
         return "desconocido"
-    salida = _correr([git, "rev-parse", "--short", "HEAD"], raiz)
+    salida = correr([git, "rev-parse", "--short", "HEAD"], raiz)
     return salida.stdout.strip() if salida.returncode == 0 else "desconocido"
 
 

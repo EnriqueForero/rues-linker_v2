@@ -60,6 +60,9 @@ dependencies = [
     "pytz>=2023.3",
     "tqdm>=4.65",
     "openpyxl>=3.1",
+    # F1.11: Excel completo hasta 1.048.576 filas en flujo (constant_memory);
+    # openpyxl arma el libro entero en RAM. Cap major: cambios de API de escritura.
+    "xlsxwriter>=3.1,<4",
     "h5py>=3.9",
     # Backend en disco para staging, compactación exacta y expansión diferida.
     "duckdb>=1.4,<2",
@@ -100,6 +103,12 @@ dev = [
     "hypothesis>=6.90",
     # Validación formal de schema de los notebooks en la misma venv de CI.
     "nbformat>=5.10,<6",
+    # nbclient + ipykernel: ejecutan los notebooks 01–06 enteros sobre
+    # tests/data_sintetica/ (tests/test_notebooks_contrato.py, marcado `slow`;
+    # el kernel se registra con `python -m ipykernel install --user --name
+    # rues-linker-v2`). Son dependencias de prueba, no de runtime.
+    "nbclient>=0.10,<1",
+    "ipykernel>=6,<8",
     # tomli: backport de tomllib para Python 3.10 (usado por
     # scripts/verificar_coherencia_version.py, que corre en el CI de 3.10).
     "tomli>=2.0; python_version < '3.11'",
@@ -171,11 +180,13 @@ ignore = [
     "SIM117",
 ]
 
-# C901 (complejidad) no está en `select`: la vigilan el trinquete (scripts/deuda.py,
-# que ignora los noqa) y el paso «Reglas estrictas en código tocado» del CI
-# (máximo 15 sobre los archivos del PR, con --isolated). Un `# noqa: C901` en
-# una función heredada exime solo a ese paso; sin esta línea, RUF100 lo
-# reportaría aquí como «non-enabled» y la misma anotación rompería el lint.
+# C901 (complejidad) no está en `select`: la vigilan el trinquete de deuda
+# (scripts/deuda.py, que ignora los noqa) y el paso «Reglas estrictas en código
+# tocado» del CI (scripts/reglas_estrictas.py: por archivo y regla, HEAD no puede
+# superar a la base; máximo 15, con --isolated). Un `# noqa: C901` justificado en
+# el PR exime solo a ese paso (p. ej. una función heredada que un cambio mínimo
+# empuja sobre el máximo); sin esta línea, RUF100 lo reportaría aquí como
+# «non-enabled» y la misma anotación rompería el lint.
 # PTH105 (os.replace): dos sitios de ingestion/duckdb.py lo necesitan en 3.10
 # (pathlib enlaza os.replace al importar y las pruebas de fallo de commit no
 # lo interceptarían); el trinquete los sigue contando en os_path.

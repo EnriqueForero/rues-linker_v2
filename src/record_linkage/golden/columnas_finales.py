@@ -7,7 +7,8 @@ de negocio del proceso:
 
     NIT_FINAL              el identificador que el grupo adopta
     RAZON_SOCIAL_FINAL     la razón social que el grupo adopta
-    NAME_SIMILARITY_SCORE  cuánto se parece el nombre de la fila al adoptado
+    NAME_SIMILARITY_SCORE  cuánto se parece el nombre de la fila al adoptado,
+                           normalizado contra normalizado (C38, F1.14)
     NIT_DISTANCE           a qué distancia está su identificador del adoptado
 
 Las dos primeras son *el* entregable: sin ellas, la correlativa dice a qué
@@ -29,6 +30,8 @@ DataFrame intacto si no encontraba lo que buscaba.
     generator.py:1341   if missing_cols: ... return df
     orchestrator.py     except Exception: log.warning("Consolidación falló,
                         usando resultados directos")
+                        (eliminado en F1.2: hoy levanta
+                        pipeline.errores.ConsolidacionNitError)
 
 Tres caminos por los que la entrega se degrada sin que nadie se entere, en una
 corrida de cuarenta minutos cuyo registro nadie lee entero. Y ninguna
@@ -42,6 +45,21 @@ siempre, porque el golden — que se construye antes — lleva ``ID_GRUPO``,
 ``NIT_FINAL`` y ``RAZON_SOCIAL_FINAL`` por construcción. Solo cuando la
 reparación es imposible se levanta un error, y entonces sí es un fallo real.
 
+Cómo se compara el nombre (C38, F1.14 — ADR-0010)
+-------------------------------------------------
+Hasta F1.14, ``NAME_SIMILARITY_SCORE`` comparaba ``NOMBRE_LIMPIO`` —el nombre
+normalizado para el motor— contra ``RAZON_SOCIAL_FINAL`` —el adoptado, crudo—.
+Dos filas con el mismo nombre real daban 0,69 solo por eso: en el banco de
+30.486 filas apenas el 15,6 % puntuaba 1,0 y el 74 % quedaba por debajo de
+0,9. Ahora los DOS lados pasan por la misma normalización, la huella del
+selector de golden (``golden.selector.huella_de_nombre``: mayúsculas sin
+tildes, sin forma societaria ni puntuación), que es la lente bajo la cual el
+selector adoptó ese nombre. ``NOMBRE_LIMPIO`` no sirve de base porque es una
+normalización para bloquear y puntuar, con poda de palabras frecuentes y
+residuos como «S S» para «S.A.S.», que harían que «ACME S.A.S.» y «ACME SAS»
+no midieran 1,0. La columna cambia; la partición no (la huella del banco es
+la misma).
+
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-08-30  ·  Version: 0.21.0
 """
 
@@ -54,27 +72,37 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .. import contrato as _contrato
+from ..pipeline.errores import mensaje_accionable
+from .selector import huella_de_nombre
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "COLUMNAS_DIAGNOSTICO",
     "COLUMNAS_FINALES",
     "COLUMNAS_IDENTIDAD",
+    "POR_QUE_IMPORTA_SIN_IDENTIDAD",
     "ReporteColumnasFinales",
     "faltantes",
     "faltantes_en",
     "garantizar_columnas_finales",
 ]
 
-#: Identidad que el grupo adopta. Es el resultado de negocio del cruce.
-COLUMNAS_IDENTIDAD: tuple[str, ...] = ("NIT_FINAL", "RAZON_SOCIAL_FINAL")
+#: «Por qué importa» de los tres puntos que verifican que la correlativa
+#: entregue la identidad del grupo (aquí y en ``flujo.cruce``): escrito una vez.
+POR_QUE_IMPORTA_SIN_IDENTIDAD = (
+    "sin NIT_FINAL y RAZON_SOCIAL_FINAL el resultado dice a qué grupo pertenece "
+    "cada fila pero no qué identidad adoptó ese grupo, que es el entregable del cruce."
+)
 
-#: Trazabilidad de cada fila frente a la identidad adoptada. Sin esto, una
-#: revisión humana tiene que reconstruir a mano por qué se unió cada fila.
-COLUMNAS_DIAGNOSTICO: tuple[str, ...] = ("NAME_SIMILARITY_SCORE", "NIT_DISTANCE")
-
-#: El contrato completo de salida de la correlativa.
-COLUMNAS_FINALES: tuple[str, ...] = COLUMNAS_IDENTIDAD + COLUMNAS_DIAGNOSTICO
+#: Identidad que el grupo adopta, trazabilidad por fila y su unión. Desde
+#: F1.9 viven en ``record_linkage.contrato`` (una regla escrita una vez; el
+#: contrato no importa de aquí, para no crear ciclos) y este módulo las
+#: re-exporta con sus nombres históricos.
+COLUMNAS_IDENTIDAD: tuple[str, ...] = _contrato.COLUMNAS_IDENTIDAD
+COLUMNAS_DIAGNOSTICO: tuple[str, ...] = _contrato.COLUMNAS_DIAGNOSTICO
+COLUMNAS_FINALES: tuple[str, ...] = _contrato.COLUMNAS_FINALES
 
 
 @dataclass(frozen=True)
@@ -148,15 +176,30 @@ def faltantes(marco: pd.DataFrame) -> tuple[str, ...]:
     return faltantes_en(marco.columns)
 
 
-def _similitud_de_nombre(nombres_fila: pd.Series, nombres_grupo: pd.Series) -> np.ndarray:
-    """Similitud normalizada, resolviendo vacíos e idénticos sin llamar a nadie.
+def _huella_o_crudo(nombres: pd.Series) -> pd.Series:
+    """Huella normalizada; si queda vacía y el nombre no lo estaba, el crudo en mayúsculas."""
+    crudo = nombres.astype("string").fillna("").str.strip().str.upper()
+    huella = huella_de_nombre(nombres).astype("string").fillna("")
+    return huella.where(huella != "", crudo)
 
-    Solo las diferencias reales llegan a rapidfuzz, en C++. Sobre millones de
-    filas, la mayoría son idénticas —es lo que significa que el cruce funcionó—
-    y calcularlas una a una sería trabajo tirado.
+
+def _similitud_de_nombre(nombres_fila: pd.Series, nombres_grupo: pd.Series) -> np.ndarray:
+    """Similitud de Levenshtein entre las huellas normalizadas de los dos nombres.
+
+    Los dos lados pasan por :func:`huella_de_nombre` (la normalización del
+    selector de golden), así que forma societaria, puntuación, mayúsculas y
+    tildes no cuentan como diferencia (C38). Vacíos e idénticos se resuelven
+    sin llamar a nadie; solo las diferencias reales llegan a rapidfuzz, en
+    C++. Sobre millones de filas, la mayoría son idénticas —es lo que
+    significa que el cruce funcionó— y calcularlas una a una sería trabajo
+    tirado. Un lado vacío (sin nombre) da 0.
+
+    Si un nombre es SOLO forma societaria («LTDA») su huella queda vacía; en
+    ese caso se compara el texto crudo en mayúsculas, para que una fila cuyo
+    nombre es idéntico al adoptado nunca puntúe 0 por la normalización.
     """
-    izquierda = nombres_fila.astype("string").fillna("")
-    derecha = nombres_grupo.astype("string").fillna("")
+    izquierda = _huella_o_crudo(nombres_fila)
+    derecha = _huella_o_crudo(nombres_grupo)
     vacios = (izquierda.str.strip() == "") | (derecha.str.strip() == "")
     iguales = (izquierda == derecha) & ~vacios
 
@@ -226,7 +269,8 @@ def garantizar_columnas_finales(
             ``RAZON_SOCIAL_FINAL``. Es de donde sale la reparación de la
             identidad; sin él solo se pueden reparar las de diagnóstico.
         columna_nombre: columna de la correlativa con el nombre de la fila.
-            None → ``NOMBRE_LIMPIO`` si existe, si no ``RAZON_SOCIAL``.
+            None → ``RAZON_SOCIAL`` si existe (es de donde sale el adoptado y
+            los dos lados se normalizan igual), si no ``NOMBRE_LIMPIO``.
         registrador: logger opcional.
 
     Returns:
@@ -241,9 +285,11 @@ def garantizar_columnas_finales(
     log = registrador or logger
     if "ID_GRUPO" not in correlativa.columns:
         raise KeyError(
-            "Qué pasó: la correlativa no trae ID_GRUPO. Por qué importa: sin la "
-            "etiqueta de grupo no se puede adjudicar identidad a ninguna fila. "
-            "Qué hacer: no use este resultado; la fase L5 no terminó bien."
+            mensaje_accionable(
+                "la correlativa no trae ID_GRUPO.",
+                "sin la etiqueta de grupo no se puede adjudicar identidad a ninguna fila.",
+                "no use este resultado; la fase L5 no terminó bien.",
+            )
         )
 
     ausentes = faltantes(correlativa)
@@ -270,12 +316,12 @@ def garantizar_columnas_finales(
         if golden is None or not {"ID_GRUPO", *identidad_ausente} <= set(golden.columns):
             disponibles = sorted(golden.columns)[:12] if golden is not None else "sin golden"
             raise RuntimeError(
-                f"Qué pasó: la correlativa no trae {identidad_ausente} y el golden "
-                f"no permite reconstruirlas. Por qué importa: sin NIT_FINAL y "
-                f"RAZON_SOCIAL_FINAL el resultado no dice qué identidad adoptó "
-                f"cada grupo, que es el entregable del cruce. Qué hacer: no use "
-                f"este resultado; reporte el caso con el registro de la fase L5. "
-                f"Columnas del golden: {disponibles}"
+                mensaje_accionable(
+                    f"la correlativa no trae {identidad_ausente} y el golden no permite "
+                    f"reconstruirlas (columnas del golden: {disponibles}).",
+                    POR_QUE_IMPORTA_SIN_IDENTIDAD,
+                    "no use este resultado; reporte el caso con el registro de la fase L5.",
+                )
             )
         trabajo = trabajo.merge(
             golden[["ID_GRUPO", *identidad_ausente]].drop_duplicates("ID_GRUPO"),
@@ -287,14 +333,17 @@ def garantizar_columnas_finales(
 
     # ── 2. Diagnóstico: se calcula, ya con la identidad disponible ────────
     if columna_nombre is None:
-        columna_nombre = "NOMBRE_LIMPIO" if "NOMBRE_LIMPIO" in trabajo.columns else "RAZON_SOCIAL"
+        columna_nombre = "RAZON_SOCIAL" if "RAZON_SOCIAL" in trabajo.columns else "NOMBRE_LIMPIO"
 
     if "NAME_SIMILARITY_SCORE" in ausentes:
         if columna_nombre in trabajo.columns:
             trabajo["NAME_SIMILARITY_SCORE"] = _similitud_de_nombre(
                 trabajo[columna_nombre], trabajo["RAZON_SOCIAL_FINAL"]
             )
-            origen["NAME_SIMILARITY_SCORE"] = f"calculada sobre {columna_nombre}"
+            origen["NAME_SIMILARITY_SCORE"] = (
+                f"calculada sobre {columna_nombre} normalizada contra "
+                "RAZON_SOCIAL_FINAL normalizada (huella del selector, C38)"
+            )
         else:
             # Sin columna de nombre no hay similitud posible. Se emite en cero
             # y se dice de dónde salió, en vez de omitir la columna: un
