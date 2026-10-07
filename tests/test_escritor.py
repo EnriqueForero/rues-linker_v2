@@ -20,6 +20,11 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
   definitiva ni pendiente;
 * ``leer_resultado`` devuelve un ``ResultadoLinkage`` que ``validar()``
   acepta, aplica los alias en español y detecta un artefacto alterado;
+* cada libro de ``excel/`` (``correlativa.xlsx``, ``golden.xlsx`` y el
+  ``<tabla>_LEEME.xlsx`` cuando no cabe) lleva una segunda hoja ``DICCIONARIO``
+  con las filas de ``diccionario.csv`` de ESA tabla (columna · alias_es ·
+  significado · origen), neutralizada como los datos; los alias de v1 no la
+  llevan (F2.16);
 * ``revision.csv`` y ``diccionario.csv`` son FIELES a los datos (sin la
   neutralización de hoja de cálculo): lo que se escribe es lo que
   ``leer_resultado`` devuelve, también con nombres que empiezan por
@@ -231,6 +236,118 @@ def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_
     assert ids.set_index("ID_GRUPO")["N_REGISTROS"].sort_index().tolist() == esperado.tolist()
 
 
+def _filas_diccionario(carpeta: Path, tabla: str) -> list[list[object]]:
+    """Encabezado + filas de ``diccionario.csv`` de ``tabla`` con la forma de la hoja DICCIONARIO."""
+    dicc = pd.read_csv(carpeta / "diccionario.csv", dtype="string", keep_default_na=False)
+    filas = dicc[dicc["tabla"] == tabla][["columna", "alias_es", "significado", "origen"]]
+    return [list(filas.columns), *filas.to_numpy(dtype=object).tolist()]
+
+
+def _hojas(ruta: Path) -> dict[str, list[list[object]]]:
+    libro = load_workbook(ruta, read_only=True, data_only=False)
+    try:
+        return {
+            hoja.title: [list(fila) for fila in hoja.iter_rows(values_only=True)]
+            for hoja in libro.worksheets
+        }
+    finally:
+        libro.close()
+
+
+def test_cada_excel_lleva_la_hoja_diccionario_de_su_tabla(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """F2.16: quien abre el Excel entiende cada columna sin salir del libro. La hoja
+    se arma desde el mismo diccionario que ``diccionario.csv`` (nada a mano): las
+    filas de ESA tabla —contrato, fuente y adicionales— con columna · alias_es ·
+    significado · origen; los nombres de columna de los datos no cambian."""
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    for tabla, df in (("correlativa", res.correlativa), ("golden", res.golden)):
+        hojas = _hojas(man.carpeta / "excel" / f"{tabla}.xlsx")
+        assert list(hojas) == [tabla, "DICCIONARIO"], tabla
+        assert hojas[tabla][0] == list(df.columns)  # los nombres canónicos, sin alias
+        assert hojas["DICCIONARIO"] == _filas_diccionario(man.carpeta, tabla), tabla
+        # Toda columna de la hoja de datos está explicada.
+        explicadas = {fila[0] for fila in hojas["DICCIONARIO"][1:]}
+        assert set(df.columns) <= explicadas, tabla
+    correl = _hojas(man.carpeta / "excel" / "correlativa.xlsx")["DICCIONARIO"]
+    por_columna = {fila[0]: fila for fila in correl[1:]}
+    assert por_columna["CIUDAD"][3] == "fuente"  # columna de la fuente, con su origen
+    assert por_columna["ID_REGISTRO_FUENTE"][3] == "fuente"  # renombrada por colisión
+    assert por_columna["SRC"][1] == "FUENTE"  # alias en español, solo en el diccionario
+    golden = _hojas(man.carpeta / "excel" / "golden.xlsx")["DICCIONARIO"]
+    assert {fila[0]: fila[1] for fila in golden[1:]}["PRIMARY_SOURCE"] == "FUENTE_PRINCIPAL"
+    # El manifiesto no cambia de forma: el Excel sigue siendo un artefacto, sin omitidos.
+    assert {a["ruta"] for a in man.artefactos} >= {"excel/correlativa.xlsx", "excel/golden.xlsx"}
+    assert [o["artefacto"] for o in man.omitidos] == []
+
+
+def test_hoja_diccionario_se_neutraliza_como_los_datos(tmp_path: Path) -> None:
+    """Un nombre de columna que empieza por ``=`` entra al diccionario tal cual (es
+    fiel) y a la hoja DICCIONARIO con el apóstrofo, como a la hoja de datos."""
+    df = pd.DataFrame({"=COL": [1, 2], "B": ["x", "y"]})
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["correlativa", "correlativa"],
+            "columna": ["=COL", "B"],
+            "tipo": ["int64", "string"],
+            "significado": ["Columna de la fuente, sin cambios.", "=otra"],
+            "origen": ["fuente", "fuente"],
+            "alias_es": ["=COL", "B"],
+        }
+    )
+    ruta = tmp_path / "correlativa.xlsx"
+    escrito = escritor.escribir_excel_o_leeme(
+        df, ruta, hoja="correlativa", diccionario=escritor.hoja_diccionario(dicc, "correlativa")
+    )
+    assert escrito == ruta
+    hojas = _hojas(ruta)
+    assert list(hojas) == ["correlativa", "DICCIONARIO"]
+    assert hojas["correlativa"][0] == ["'=COL", "B"]
+    assert hojas["DICCIONARIO"] == [
+        ["columna", "alias_es", "significado", "origen"],
+        ["'=COL", "'=COL", "Columna de la fuente, sin cambios.", "fuente"],
+        ["B", "B", "'=otra", "fuente"],
+    ]
+    # Sin diccionario (los alias de v1 de L6) el libro no cambia: una sola hoja.
+    ruta2 = tmp_path / "sin.xlsx"
+    escritor.escribir_excel_o_leeme(df, ruta2, hoja="datos")
+    assert list(_hojas(ruta2)) == ["datos"]
+    # Un diccionario vacío tampoco deja una hoja sin filas.
+    ruta3 = tmp_path / "vacio.xlsx"
+    escritor.escribir_excel_o_leeme(
+        df, ruta3, hoja="datos", diccionario=escritor.hoja_diccionario(dicc, "golden")
+    )
+    assert list(_hojas(ruta3)) == ["datos"]
+
+
+def test_hoja_diccionario_selecciona_por_tabla_o_por_columnas() -> None:
+    """La única regla de selección (``exporters.excel.hoja_diccionario``): las filas
+    de la tabla (sin distinguir mayúsculas); si la tabla no está en el diccionario,
+    las filas de las columnas que se pasan, una por columna y en su orden."""
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["correlativa", "correlativa", "golden"],
+            "columna": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+            "tipo": ["int64", "string", "int64"],
+            "significado": ["grupo (correl)", "nombre", "grupo (golden)"],
+            "origen": ["motor", "fuente", "motor"],
+            "alias_es": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+        }
+    )
+    columnas = ["columna", "alias_es", "significado", "origen"]
+    por_tabla = escritor.hoja_diccionario(dicc, "CORRELATIVA")
+    assert list(por_tabla.columns) == columnas
+    assert por_tabla["columna"].tolist() == ["ID_GRUPO", "RAZON_SOCIAL"]
+    por_columnas = escritor.hoja_diccionario(dicc, "DUPLICADOS", ["RAZON_SOCIAL", "ID_GRUPO", "X"])
+    assert por_columnas["columna"].tolist() == ["RAZON_SOCIAL", "ID_GRUPO"]
+    assert por_columnas["significado"].tolist() == ["nombre", "grupo (correl)"]  # la primera
+    assert escritor.hoja_diccionario(dicc, "RESUMEN", ["metrica"]).empty
+    assert escritor.hoja_diccionario(dicc, "RESUMEN").empty
+    with pytest.raises(ValueError, match=r"diccionario.*columna"):
+        escritor.hoja_diccionario(pd.DataFrame({"tabla": ["a"], "columna": ["b"]}), "a")
+
+
 def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     assert not (man.carpeta / "excel").exists()
@@ -279,10 +396,13 @@ def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
     ]
     libro = load_workbook(excel / "correlativa_LEEME.xlsx", read_only=True)
     try:
-        assert libro.sheetnames == ["LEEME"]
+        # F2.16: el LEEME también lleva la hoja DICCIONARIO de su tabla.
+        assert libro.sheetnames == ["LEEME", "DICCIONARIO"]
         celdas = [str(c.value) for fila in libro["LEEME"].iter_rows() for c in fila if c.value]
+        filas_dicc = [list(f) for f in libro["DICCIONARIO"].iter_rows(values_only=True)]
     finally:
         libro.close()
+    assert filas_dicc == _filas_diccionario(man.carpeta, "correlativa")
     texto = "\n".join(celdas)
     assert f"{len(res.correlativa):,}".replace(",", ".") in texto
     assert "read_parquet" in texto and "duckdb" in texto.lower() and "Power Query" in texto

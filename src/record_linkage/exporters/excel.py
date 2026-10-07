@@ -37,6 +37,22 @@ Lo que Excel no representa como xlsxwriter lo escribiría
   como ``EscrituraSalidaError`` que nombra fila, columna y tipo, sin dejar
   restos; el escritor del estándar lo deja en ``omitidos`` y publica el resto.
 
+La hoja DICCIONARIO (F2.16)
+---------------------------
+Los Excel los abren equipos que no leen ``diccionario.csv`` (sectoriales,
+logística, vicepresidencias): cada libro del estándar lleva una segunda hoja
+``DICCIONARIO`` con las filas de ESA tabla —columna · alias_es · significado ·
+origen; del contrato, de la fuente y las adicionales— para que quien lo abra
+entienda cada columna sin salir del libro. Los nombres de columna de la hoja de
+datos NO cambian (una columna, un nombre, igual en parquet/csv/xlsx; el alias en
+español vive solo en el diccionario y en ``leer_resultado(alias="es")``). La
+hoja se arma desde el mismo diccionario que ``diccionario.csv`` con la única
+regla de selección ``hoja_diccionario`` (nada escrito a mano), va DESPUÉS de los
+datos (o del LEEME cuando la tabla no cabe) y pasa por la misma neutralización
+que los datos. Un diccionario ``None`` o vacío no deja hoja: los alias de v1 de
+L6 no la llevan y una hoja sin filas no explica nada. La hoja es pequeña (una
+fila por columna) y se escribe con el mismo libro ``constant_memory``.
+
 Por qué no ``pd.ExcelWriter(engine="xlsxwriter", constant_memory=True)``
 -------------------------------------------------------------------------
 Era lo previsto en la especificación de F1.11 y se descartó al medirlo:
@@ -71,11 +87,14 @@ from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ._spreadsheet import escape_spreadsheet_value, prepare_spreadsheet_data
 
 __all__ = [
+    "COLUMNAS_HOJA_DICCIONARIO",
     "FILAS_POR_LOTE",
+    "HOJA_DICCIONARIO",
     "LIMITE_FILAS_EXCEL",
     "SUFIJO_LEEME",
     "escribir_excel_o_leeme",
     "hoja_de_lineas",
+    "hoja_diccionario",
     "leeme_no_cabe",
     "miles",
     "motivo_no_cabe",
@@ -93,6 +112,18 @@ SUFIJO_LEEME = "_LEEME"
 
 #: Nombre de la hoja LEEME (va primero cuando existe).
 HOJA_LEEME = "LEEME"
+
+#: Nombre de la hoja DICCIONARIO (va DESPUÉS de los datos, o del LEEME).
+HOJA_DICCIONARIO = "DICCIONARIO"
+
+#: Columnas de la hoja DICCIONARIO, en su orden: lo que un lector no técnico
+#: necesita de ``diccionario.csv`` (``tabla`` es la del libro y ``tipo`` es
+#: jerga de pyarrow; los dos siguen en el csv).
+COLUMNAS_HOJA_DICCIONARIO: tuple[str, ...] = ("columna", "alias_es", "significado", "origen")
+
+#: Lo que la selección necesita del diccionario: ``tabla`` para elegir y las
+#: columnas de la hoja.
+_COLUMNAS_DICCIONARIO_NECESARIAS: tuple[str, ...] = ("tabla", *COLUMNAS_HOJA_DICCIONARIO)
 
 #: Opciones del libro xlsxwriter. ``constant_memory`` vuelca cada fila al
 #: escribir la siguiente; ``strings_to_formulas``/``strings_to_urls`` en False
@@ -213,6 +244,52 @@ def leeme_no_cabe(
             "Power Query (Excel 365): Datos → Obtener datos → De archivo → Parquet.",
         ]
     )
+
+
+def hoja_diccionario(
+    diccionario: pd.DataFrame, tabla: str, columnas: Sequence[Any] | None = None
+) -> pd.DataFrame:
+    """Las filas del diccionario que explican ``tabla``, con la forma de la hoja DICCIONARIO.
+
+    Es la ÚNICA regla de selección (la usan el escritor del estándar y
+    ``exportar_vistas``):
+
+    1. las filas con ``tabla == tabla`` (sin distinguir mayúsculas: la vista
+       ``CORRELATIVA`` de un notebook es la tabla ``correlativa``), en el orden
+       del diccionario, que es el del contrato; si no hay ninguna,
+    2. las filas cuya ``columna`` está en ``columnas`` (la hoja de datos de una
+       vista derivada: DUPLICADOS trae columnas de la correlativa), una por
+       columna —la primera del diccionario— y en el orden de ``columnas``.
+
+    Devuelve un DataFrame con ``COLUMNAS_HOJA_DICCIONARIO``; vacío si nada
+    aplica (y entonces no se escribe hoja).
+
+    Raises:
+        ValueError: si ``diccionario`` no trae las columnas del estándar
+            (``tabla`` y las de la hoja): no se adivina su forma.
+    """
+    faltan = [c for c in _COLUMNAS_DICCIONARIO_NECESARIAS if c not in diccionario.columns]
+    if faltan:
+        raise ValueError(
+            mensaje_accionable(
+                f"El diccionario no trae las columnas {faltan} (trae {list(diccionario.columns)}).",
+                "La hoja DICCIONARIO se arma desde el mismo diccionario que diccionario.csv; "
+                "con otra forma no se sabe qué fila explica qué columna.",
+                "Pase contrato.diccionario(...), ResultadoLinkage.diccionario o el "
+                "diccionario.csv leído de una carpeta del estándar.",
+            )
+        )
+    seleccion = list(COLUMNAS_HOJA_DICCIONARIO)
+    por_tabla = diccionario[diccionario["tabla"].astype("string").str.lower() == tabla.lower()]
+    if not por_tabla.empty:
+        return por_tabla[seleccion].reset_index(drop=True)
+    if not columnas:
+        return pd.DataFrame(columns=seleccion)
+    nombres = [str(c) for c in columnas]
+    primeras = diccionario.drop_duplicates("columna")
+    primeras = primeras.set_index(primeras["columna"].astype(str))
+    presentes = [c for c in nombres if c in primeras.index]
+    return primeras.loc[presentes, seleccion].reset_index(drop=True)
 
 
 def _lotes_de_df(df: pd.DataFrame, filas_por_lote: int) -> Iterator[pd.DataFrame]:
@@ -429,6 +506,7 @@ def escribir_excel_o_leeme(
     leeme: pd.DataFrame | None = None,
     filas_por_lote: int = FILAS_POR_LOTE,
     ruta_parquet: str | None = None,
+    diccionario: pd.DataFrame | None = None,
 ) -> Path:
     """Escribe ``df`` completo en ``ruta`` o, si no cabe, ``<base>_LEEME.xlsx``.
 
@@ -447,6 +525,9 @@ def escribir_excel_o_leeme(
         filas_por_lote: tamaño del lote de escritura.
         ruta_parquet: ruta del parquet relativa a la carpeta del LEEME (ver
             ``leeme_no_cabe``); ``None`` cita ``<base>.parquet``.
+        diccionario: la hoja ``DICCIONARIO`` ya seleccionada para esta tabla
+            (``hoja_diccionario``); va DESPUÉS de los datos, también en el
+            ``_LEEME.xlsx``. ``None`` o vacío: sin hoja (F2.16).
 
     Returns:
         La ruta escrita: ``ruta`` o ``ruta.with_name(f"{base}_LEEME.xlsx")``.
@@ -474,14 +555,14 @@ def escribir_excel_o_leeme(
         hoja_leeme = leeme_no_cabe(base, n_filas, limite=tope, ruta_parquet=ruta_parquet)
         if leeme is not None:
             hoja_leeme = pd.concat([leeme, hoja_leeme], ignore_index=True)
-        _con_libro(destino, hoja_leeme, None, (), iter(()))
+        _con_libro(destino, hoja_leeme, None, (), iter(()), diccionario)
         return destino
 
     columnas = _columnas_de_parquet(df) if es_parquet else list(df.columns)
     lotes = (
         _lotes_de_parquet(df, filas_por_lote) if es_parquet else _lotes_de_df(df, filas_por_lote)
     )
-    _con_libro(ruta, leeme, hoja, columnas, lotes)
+    _con_libro(ruta, leeme, hoja, columnas, lotes, diccionario)
     return ruta
 
 
@@ -491,14 +572,23 @@ def _con_libro(
     hoja: str | None,
     columnas: Sequence[Any],
     lotes: Iterator[pd.DataFrame],
+    diccionario: pd.DataFrame | None = None,
 ) -> None:
-    """Abre el libro, escribe LEEME (si hay) y datos (si ``hoja``); si falla, no deja restos."""
+    """Abre el libro, escribe LEEME (si hay), datos (si ``hoja``) y DICCIONARIO (si trae filas).
+
+    Si falla, no deja restos. La hoja DICCIONARIO pasa por ``_escribir_datos``:
+    la misma neutralización y los mismos mensajes que la hoja de datos.
+    """
     libro = xlsxwriter.Workbook(str(ruta), _OPCIONES_LIBRO)
     try:
         if leeme is not None:
             _escribir_hoja_leeme(libro, leeme)
         if hoja is not None:
             _escribir_datos(libro, hoja, columnas, lotes, ruta)
+        if diccionario is not None and not diccionario.empty:
+            _escribir_datos(
+                libro, HOJA_DICCIONARIO, list(diccionario.columns), iter([diccionario]), ruta
+            )
         try:
             libro.close()  # en constant_memory aquí se vuelca la hoja y puede rechazar una celda
         except TypeError as exc:

@@ -11,6 +11,10 @@ Qué congela
 * sin ``nombre`` el archivo se llama ``<vista>.<ext>``; con ``libro`` hace falta;
 * fail-fast con mensaje accionable: sin vistas, un valor que no es DataFrame,
   una vista o un nombre con separadores de ruta, ``libro`` con ``formato="csv"``;
+* con ``diccionario=`` (el mismo que ``diccionario.csv``) cada ``.xlsx`` lleva
+  la hoja ``DICCIONARIO`` de su vista (F2.16): las filas de la tabla homónima
+  del diccionario o, si no la hay, las de sus columnas; en un libro, una sola
+  hoja al final con la columna ``hoja``; ``formato="csv"`` no lo admite;
 * ``PipelineResult.to_excel``/``to_csv`` son ALIAS de esta función: avisan con
   ``DeprecationWarning`` y ya no escriben nada por su cuenta.
 
@@ -215,3 +219,91 @@ def test_esta_en_la_api_publica() -> None:
 
     assert record_linkage.exportar_vistas is exportar_vistas
     assert "exportar_vistas" in escritor.__all__
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hoja DICCIONARIO (F2.16)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _diccionario() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "tabla": ["correlativa", "correlativa", "golden"],
+            "columna": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+            "tipo": ["int64", "string", "int64"],
+            "significado": ["Grupo del registro.", "Nombre de la fuente.", "Grupo (golden)."],
+            "origen": ["motor", "fuente", "motor"],
+            "alias_es": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+        }
+    )
+
+
+ENCABEZADO_DICCIONARIO = ["columna", "alias_es", "significado", "origen"]
+
+
+def test_con_diccionario_cada_xlsx_lleva_la_hoja_de_su_vista(tmp_path: Path) -> None:
+    rutas = exportar_vistas(_vistas(), tmp_path, "dedup", diccionario=_diccionario())
+    assert rutas == [tmp_path / "dedup__DUPLICADOS.xlsx", tmp_path / "dedup__RESUMEN.xlsx"]
+    duplicados = _hojas(rutas[0])
+    assert list(duplicados) == ["DUPLICADOS", "DICCIONARIO"]
+    assert duplicados["DUPLICADOS"][0] == ["ID_GRUPO", "RAZON_SOCIAL"]  # nombres sin alias
+    assert duplicados["DICCIONARIO"] == [
+        ENCABEZADO_DICCIONARIO,
+        ["ID_GRUPO", "ID_GRUPO", "Grupo del registro.", "motor"],
+        ["RAZON_SOCIAL", "RAZON_SOCIAL", "Nombre de la fuente.", "fuente"],
+    ]
+    # RESUMEN no tiene ninguna columna en el diccionario: sin hoja vacía.
+    assert list(_hojas(rutas[1])) == ["RESUMEN"]
+
+
+def test_con_diccionario_la_vista_homonima_de_una_tabla_lleva_las_filas_de_la_tabla(
+    tmp_path: Path,
+) -> None:
+    vista = pd.DataFrame({"ID_GRUPO": [1], "RAZON_SOCIAL": ["ACME"]})
+    (ruta,) = exportar_vistas({"CORRELATIVA": vista}, tmp_path, diccionario=_diccionario())
+    hojas = _hojas(ruta)
+    assert list(hojas) == ["CORRELATIVA", "DICCIONARIO"]
+    assert [f[0] for f in hojas["DICCIONARIO"][1:]] == ["ID_GRUPO", "RAZON_SOCIAL"]
+
+
+def test_libro_con_diccionario_lleva_una_sola_hoja_al_final_con_la_columna_hoja(
+    tmp_path: Path,
+) -> None:
+    (ruta,) = exportar_vistas(
+        _vistas(), tmp_path, "resultado", libro=True, diccionario=_diccionario()
+    )
+    hojas = _hojas(ruta)
+    assert list(hojas) == ["DUPLICADOS", "RESUMEN", "DICCIONARIO"]
+    assert hojas["DICCIONARIO"] == [
+        ["hoja", *ENCABEZADO_DICCIONARIO],
+        ["DUPLICADOS", "ID_GRUPO", "ID_GRUPO", "Grupo del registro.", "motor"],
+        ["DUPLICADOS", "RAZON_SOCIAL", "RAZON_SOCIAL", "Nombre de la fuente.", "fuente"],
+    ]
+
+
+def test_libro_una_vista_llamada_diccionario_no_choca_con_la_hoja(tmp_path: Path) -> None:
+    vistas = {"DICCIONARIO": pd.DataFrame({"ID_GRUPO": [1]}), "RESUMEN": _vistas()["RESUMEN"]}
+    (ruta,) = exportar_vistas(vistas, tmp_path, "x", libro=True, diccionario=_diccionario())
+    nombres = list(_hojas(ruta))
+    assert nombres[:2] == ["DICCIONARIO", "RESUMEN"] and len(nombres) == 3
+    assert nombres[2] != "DICCIONARIO" and nombres[2].startswith("DICCIONARIO")
+
+
+def test_sin_diccionario_nada_cambia(tmp_path: Path) -> None:
+    rutas = exportar_vistas(_vistas(), tmp_path, "dedup")
+    assert [list(_hojas(r)) for r in rutas] == [["DUPLICADOS"], ["RESUMEN"]]
+
+
+def test_formato_csv_no_admite_diccionario(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="diccionario"):
+        exportar_vistas(_vistas(), tmp_path, formato="csv", diccionario=_diccionario())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_diccionario_sin_las_columnas_del_estandar_falla_antes_de_escribir(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="diccionario"):
+        exportar_vistas(_vistas(), tmp_path, "x", diccionario=pd.DataFrame({"columna": ["a"]}))
+    assert list(tmp_path.iterdir()) == []

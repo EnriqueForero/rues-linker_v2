@@ -299,7 +299,15 @@ print(res.manifiesto["carpeta_salida"])    # salidas/<AAAA-MM-DD_HHMM>_dedupe/: 
 `carpeta_salida=` escribe la carpeta del estándar de salida con el escritor
 único (atómica, con `manifest.json` y `diccionario.csv`); vale igual para
 `rl.link(...)` y `rl.linkage(...)`. Sin ella, nada se escribe fuera del
-directorio de trabajo.
+directorio de trabajo. Cada Excel de `excel/` (`correlativa.xlsx`,
+`golden.xlsx`, o el `<tabla>_LEEME.xlsx` cuando la tabla no cabe) lleva una
+segunda hoja `DICCIONARIO` con las columnas de esa tabla —columna · alias_es ·
+significado · origen, de la fuente incluidas— armada desde el mismo
+`diccionario.csv`: quien abre el libro entiende cada columna sin salir de él.
+Los nombres de columna son los mismos en parquet, csv y xlsx; el alias en
+español vive solo en el diccionario y en `rl.leer_resultado(ruta, alias="es")`.
+`rl.exportar_vistas(..., diccionario=res.diccionario)` pone la misma hoja en
+las vistas derivadas de un notebook.
 
 ### Un cruce completo, con preflight y evidencia (v0.17.3)
 

@@ -13,7 +13,8 @@ forma exacta del estándar de salida (``ESTANDAR_SALIDA``)::
     ├── revision.csv               pares por decidir (forma del archivo de decisiones)
     ├── diccionario.csv            tabla · columna · tipo · significado · origen · alias_es
     ├── manifest.json              contrato, versión, huellas, parámetros, conteos, métricas…
-    ├── excel/                     correlativa.xlsx, golden.xlsx (o *_LEEME.xlsx si no caben)
+    ├── excel/                     correlativa.xlsx, golden.xlsx (o *_LEEME.xlsx si no caben),
+    │                              cada uno con su hoja DICCIONARIO (F2.16)
     ├── figuras/                   las PNG que se le pasen
     └── _trabajo/                  L1…L5, si linkage() lo dejó aquí (borrable)
 
@@ -63,6 +64,13 @@ Reglas
   ``omitidos`` con su motivo. La regla y la escritura en flujo (xlsxwriter,
   ``constant_memory``) viven en ``exporters.excel`` (F1.11); los alias de v1
   de L6 usan la misma función: nunca más la muestra recortada de v1.
+* **Cada Excel se explica solo (F2.16).** Los libros de ``excel/`` (también
+  el ``_LEEME.xlsx``) llevan una segunda hoja ``DICCIONARIO`` con las filas
+  de ``diccionario.csv`` de ESA tabla (columna · alias_es · significado ·
+  origen): los equipos que abren el Excel no leen el csv. Los nombres de
+  columna de la hoja de datos no cambian; la selección de filas es
+  ``exporters.excel.hoja_diccionario`` y ``exportar_vistas`` la usa igual
+  cuando recibe ``diccionario=``. Los alias de v1 no la llevan.
 * **Un solo punto de escritura.** Es el ÚNICO módulo que escribe la carpeta
   del estándar; ``tests/test_escritor.py`` lo verifica sobre ``src/``. L6
   (``reporting/strategies.py``) escribe sus alias de v1 a través de las
@@ -124,9 +132,11 @@ from ..resultado import ResultadoLinkage
 from . import excel
 from ._spreadsheet import prepare_spreadsheet_data, safe_sheet_name, validate_leaf_name
 from .excel import (
+    HOJA_DICCIONARIO,
     LIMITE_FILAS_EXCEL,
     escribir_excel_o_leeme,
     hoja_de_lineas,
+    hoja_diccionario,
     leeme_no_cabe,
     miles,
     motivo_no_cabe,
@@ -146,6 +156,7 @@ __all__ = [
     "escribir_resultado",
     "escribir_xlsx",
     "exportar_vistas",
+    "hoja_diccionario",
     "leeme_alias_v1",
     "leeme_no_cabe",
     "leer_resultado",
@@ -539,6 +550,7 @@ def exportar_vistas(
     libro: bool = False,
     formato: FormatoVista = "auto",
     limite: int | None = None,
+    diccionario: pd.DataFrame | None = None,
 ) -> list[Path]:
     """Escribe las VISTAS derivadas (``tablas``) en ``carpeta``; devuelve las rutas escritas.
 
@@ -565,11 +577,19 @@ def exportar_vistas(
       dict/list en una celda como texto) y NUNCA muta la tabla de entrada.
     * Una vista vacía se escribe con su encabezado: «0 duplicados» es
       información, no silencio.
+    * ``diccionario=`` (F2.16; el mismo DataFrame que ``diccionario.csv``:
+      ``res.diccionario`` o ``contrato.diccionario(...)``): cada ``.xlsx``
+      lleva la hoja ``DICCIONARIO`` de su vista —las filas de la tabla
+      homónima del diccionario o, si no la hay, las de sus columnas
+      (``exporters.excel.hoja_diccionario``)—; en un libro, UNA hoja al final
+      con la columna ``hoja`` delante. Una vista sin ninguna columna explicada
+      no deja hoja vacía. ``formato="csv"`` no lo admite (un CSV no tiene hojas).
 
     Fail-fast, antes de tocar el disco: sin vistas (``ValueError``), un valor
     que no es DataFrame (``TypeError``), un ``nombre`` o una vista que nombra
     un archivo con separadores de ruta o caracteres de control (``ValueError``,
-    ``validate_leaf_name``), ``libro`` sin ``nombre`` o con ``formato="csv"``.
+    ``validate_leaf_name``), ``libro`` sin ``nombre`` o con ``formato="csv"``,
+    ``diccionario`` con ``formato="csv"`` o sin las columnas del estándar.
 
     Hasta F2.11 vivía copiada en los notebooks 01–04 y como
     ``PipelineResult.to_excel``/``to_csv`` (hoy alias de esta función).
@@ -598,9 +618,22 @@ def exportar_vistas(
                 "Pase nombre='<tronco del archivo>' (sin extensión ni rutas).",
             )
         )
+    if diccionario is not None and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: diccionario= no se combina con formato="csv".',
+                "La hoja DICCIONARIO va dentro de cada .xlsx; un CSV no tiene hojas.",
+                'Quite diccionario= para csv, o use formato="auto" y recibirá la hoja.',
+            )
+        )
     if nombre is not None:
         validate_leaf_name(nombre, "nombre")
     vistas = _vistas_validadas(tablas)
+    # La hoja DICCIONARIO de cada vista se selecciona ANTES de escribir: un
+    # diccionario con otra forma falla aquí, sin dejar archivos a medias.
+    diccionarios: dict[str, pd.DataFrame] = {}
+    if diccionario is not None:
+        diccionarios = {v: hoja_diccionario(diccionario, v, list(t.columns)) for v, t in vistas}
     prefijo = "" if nombre is None else f"{nombre}__"
     tope = excel._limite(limite)
     # Se valida TODO antes de escribir: una vista mal nombrada no deja a medias
@@ -636,8 +669,21 @@ def exportar_vistas(
     if libro:
         # Primero el libro (lo que cabe), después los .csv.gz de lo que no cabe.
         usados: set[str] = set()
-        hojas = [(safe_sheet_name(v, usados), t) for v, t in vistas if len(t) <= tope]
+        caben = [(v, t) for v, t in vistas if len(t) <= tope]
+        hojas = [(safe_sheet_name(v, usados), t) for v, t in caben]
         if hojas:
+            # Una sola hoja DICCIONARIO al final, con la vista (``hoja``) delante;
+            # su nombre se sanea DESPUÉS de las vistas: una vista llamada
+            # DICCIONARIO conserva el suyo.
+            con_hoja = [
+                diccionarios[v].assign(hoja=v)
+                for v, _ in caben
+                if v in diccionarios and not diccionarios[v].empty
+            ]
+            if con_hoja:
+                union = pd.concat(con_hoja, ignore_index=True)
+                union = union[["hoja", *(c for c in union.columns if c != "hoja")]]
+                hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), union))
             ruta = carpeta / f"{nombre}.xlsx"
             _escribir_libro(hojas, ruta)
             escritas.append(ruta)
@@ -647,7 +693,11 @@ def exportar_vistas(
         for vista, tabla in vistas:
             if len(tabla) <= tope:
                 ruta = carpeta / f"{prefijo}{vista}.xlsx"
-                escribir_xlsx(tabla, ruta, hoja=safe_sheet_name(vista, set()))
+                usados = set()
+                hojas = [(safe_sheet_name(vista, usados), tabla)]
+                if vista in diccionarios and not diccionarios[vista].empty:
+                    hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), diccionarios[vista]))
+                _escribir_libro(hojas, ruta)
                 escritas.append(ruta)
             else:
                 escritas.append(_csv_gz(vista, tabla))
@@ -928,7 +978,10 @@ def _excel(
     excel: bool,
     artefactos: list[dict[str, Any]],
     omitidos: list[dict[str, str]],
+    diccionario: pd.DataFrame | None = None,
 ) -> None:
+    """``excel/<tabla>.xlsx`` (o ``_LEEME``) por tabla; con ``diccionario`` (el de
+    ``diccionario.csv``) cada libro lleva su hoja DICCIONARIO (F2.16)."""
     tablas: list[tuple[str, pd.DataFrame | None]] = [
         ("correlativa", res.correlativa),
         ("golden", res.golden),
@@ -956,6 +1009,7 @@ def _excel(
                 limite=LIMITE_FILAS_EXCEL,
                 hoja=tabla,
                 ruta_parquet=f"../{tabla}.parquet",
+                diccionario=None if diccionario is None else hoja_diccionario(diccionario, tabla),
             )
         except EscrituraSalidaError as exc:
             # El Excel es opcional: un valor que xlsxwriter rechaza (celda > 32.767
@@ -1060,10 +1114,11 @@ def _escribir_en(
     _registrar(artefactos, carpeta, ruta)
 
     ruta = carpeta / "diccionario.csv"
-    escribir_csv(_diccionario_completo(res, entidades_ids), ruta)
+    diccionario = _diccionario_completo(res, entidades_ids)
+    escribir_csv(diccionario, ruta)
     _registrar(artefactos, carpeta, ruta)
 
-    _excel(res, carpeta, excel, artefactos, omitidos)
+    _excel(res, carpeta, excel, artefactos, omitidos, diccionario)
 
     if figuras:
         dir_figuras = carpeta / "figuras"
