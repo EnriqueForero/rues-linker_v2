@@ -61,6 +61,7 @@ moverla sin declararlo rompe la suite.
 | `deuda_f0.json` | el techo de deuda técnica (sección anterior); el nombre es el de F0, el contenido es el techo VIGENTE (F1 lo bajó: `except` 121 → 103, mypy 108 → 102) | job `deuda` del CI |
 | `escala_f1.json` | la misma medición que `escala_base_f0.json` sobre el tronco de F1 (contrato de salida); `scripts/escala.py --comparar base_f0 f1` es la compuerta | `tests/test_escala.py` |
 | `../../tests/contratos/esquema_salida_v0.json` | columnas, tipos y archivos que `linkage()` produce hoy (contrato de salida v0) | `tests/test_contrato_salida_v0.py` |
+| `cobertura_umbral.json` | la tabla de decisión del umbral de `cobertura_sin_identificador` (F2.2, ADR-0011): por umbral, precisión, recall por régimen, macro-F1 y FP sobre negativos en el banco, y precisión, FP sobre negativos y grupo mayor sin identificador a 139k; la regla aplicada y el elegido. Las corridas del barrido NO se versionan (se corren con `--evidencia` fuera de esta carpeta); la tabla se compone con `scripts/cobertura_umbral.py` | `tests/test_cobertura_umbral_f22.py` (reaplica la regla y exige que el elegido sea el del perfil) |
 
 El determinismo entre procesos (dos `PYTHONHASHSEED` distintos → misma huella)
 no deja JSON: lo verifica `tests/test_determinismo_linkage_procesos.py` en cada

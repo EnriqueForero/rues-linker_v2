@@ -53,6 +53,8 @@ el work_dir temporal de la corrida, que se borra al terminar salvo con
 USO
     python scripts/escala.py --etiqueta base_f0                 # 139k y 463k
     python scripts/escala.py --etiqueta prueba --tamanos 139k
+    python scripts/escala.py --etiqueta u075 --tamanos 139k --evidencia /tmp/barrido \\
+        --ajuste cobertura_sin_identificador.umbral=0.75      # medir una perilla (F2.2)
     python scripts/escala.py --solo-generar
     python scripts/escala.py --comparar base_f0 despues         # exit 1 si FALLA
 
@@ -82,7 +84,12 @@ RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
 import record_linkage as rl
-from record_linkage.evaluation.banco import Corrida, EspecificacionBanco, correr_banco
+from record_linkage.evaluation.banco import (
+    Corrida,
+    EspecificacionBanco,
+    correr_banco,
+    parsear_ajustes,
+)
 from record_linkage.evaluation.comparador import (
     Comparacion,
     Veredicto,
@@ -242,6 +249,11 @@ class OpcionesCorrida:
         conservar_trabajo: no borrar el work_dir (incluye el parquet de predicción).
         silencioso: bajar el logging del pipeline.
         nota: qué cambió en esta corrida.
+        ajustes_perfil: sobrescrituras puntuales del perfil (``--ajuste``), las
+            mismas que recibe ``scripts/banco.py``; None = el perfil tal cual.
+            Una corrida con ajustes NO es comparable con la línea base de la
+            compuerta: sirve para medir una perilla (F2.2, barrido del umbral
+            de cobertura) y queda registrada en el JSON.
     """
 
     etiqueta: str
@@ -251,6 +263,7 @@ class OpcionesCorrida:
     conservar_trabajo: bool = False
     silencioso: bool = True
     nota: str = ""
+    ajustes_perfil: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.dir_trabajo is not None and not Path(self.dir_trabajo).is_dir():
@@ -279,6 +292,7 @@ def correr_tamano(nombre: str, opciones: OpcionesCorrida) -> dict[str, Any]:
         etiqueta=f"{opciones.etiqueta}_{nombre}",
         datos=ruta_datos,
         perfil=PERFIL,
+        ajustes_perfil=opciones.ajustes_perfil,
         dir_trabajo=trabajo,
         dir_evidencia=trabajo,
         nota=opciones.nota,
@@ -354,6 +368,7 @@ def correr_escala(tamanos: Sequence[str], opciones: OpcionesCorrida) -> Path:
         "version": rl.__version__,
         "entorno": _maquina(),
         "nota": opciones.nota,
+        "ajustes_perfil": dict(opciones.ajustes_perfil) if opciones.ajustes_perfil else None,
         "tamanos": {},
     }
     destino = guardar_evidencia(documento, opciones.dir_evidencia, opciones.etiqueta)
@@ -625,6 +640,16 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--verboso", action="store_true", help="dejar pasar el logging del pipeline")
     p.add_argument("--nota", default="", help="qué cambió en esta corrida")
     p.add_argument(
+        "--ajuste",
+        nargs="*",
+        default=[],
+        metavar="CLAVE=VALOR",
+        help=(
+            "sobrescritura puntual del perfil, como en banco.py "
+            "(p. ej. cobertura_sin_identificador.umbral=0.75); queda en el JSON"
+        ),
+    )
+    p.add_argument(
         "--comparar", nargs=2, metavar=("BASE", "NUEVA"), help="compara dos corridas guardadas"
     )
     p.add_argument(
@@ -668,6 +693,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{nombre}: {ruta} ({'generado' if generado else 'reutilizado'})")
         return 0
 
+    try:
+        ajustes = parsear_ajustes(args.ajuste)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     if not args.etiqueta:
         raise SystemExit("--etiqueta es obligatoria (o use --comparar / --solo-generar)")
 
@@ -679,6 +709,7 @@ def main(argv: list[str] | None = None) -> int:
         conservar_trabajo=args.conservar_trabajo,
         silencioso=not args.verboso,
         nota=args.nota,
+        ajustes_perfil=ajustes or None,
     )
     destino = correr_escala(tamanos or tuple(TAMANOS), opciones)
     print(f"\n💾 Evidencia: {destino}")

@@ -1,0 +1,386 @@
+{
+  "perilla": "cobertura_sin_identificador.umbral",
+  "adr": "docs/adr/0011-cobertura-por-estrellas-en-linkage.md",
+  "nota": "F2.2, 2026-10-07, worktree claude/f2/t2 sobre cee54e2 (F2.1). Banco: data/benchmark/benchmark_institucional.csv.gz (30.486 filas), scripts/banco.py --ajuste cobertura_sin_identificador.umbral=<u>. Escala: scripts/escala.py --tamanos 139k --ajuste ... (sintético gt_s42_e48000_i9600, 139.028 filas). Máquina 4 vCPU / 16 GiB; las corridas de 139k se ejecutaron de dos y tres en paralelo, así que sus tiempos (≈ 396–420 s) no son comparables con escala_f1.json; la calidad y las huellas no dependen de ello (0,80 reproduce d904ea16 y el banco 5bfed0d1 de ADR-0011).",
+  "compuerta": {
+    "macro_f1_minimo": 0.88,
+    "fp_negativos_maximo": 287,
+    "grupo_mayor_maximo": 50
+  },
+  "regla": "Pasan la compuerta: macro-F1 >= macro_f1_minimo y FP sobre negativos <= fp_negativos_maximo en el banco institucional, grupo mayor sin identificador <= grupo_mayor_maximo filas a 139k. Entre los que pasan gana el que menos une mal (regla de Enrique): menos FP sobre negativos; a igual cifra, mayor precisión en el banco, luego a 139k, luego el umbral más alto.",
+  "sin_estrellas": {
+    "precision": 0.9385,
+    "recall": 0.8249,
+    "f1": 0.878,
+    "macro_f1": 0.892,
+    "fp_que_tocan_negativo": 287,
+    "recall_por_regimen": {
+      "CON_ID": 0.9768,
+      "SIN_ID": 0.6523
+    },
+    "calidad_por_estrato": {
+      "REAL": {
+        "precision": 1.0,
+        "recall": 0.9319,
+        "f1": 0.9648,
+        "pares": 4996.0
+      },
+      "REAL_NEG": {
+        "precision": null,
+        "recall": null,
+        "f1": null
+      },
+      "CONTACTO": {
+        "precision": 0.976,
+        "recall": 0.956,
+        "f1": 0.9659,
+        "pares": 22073.0
+      },
+      "RUIDO": {
+        "precision": 0.8786,
+        "recall": 0.6472,
+        "f1": 0.7454,
+        "pares": 19305.0
+      }
+    },
+    "huella": "1e365ba81c4df45e410dd09154cafef1d38e96d9fb2846998260c10ad69cbe31",
+    "etiqueta": "apagada",
+    "segundos_total": 48.46
+  },
+  "umbrales": [
+    {
+      "umbral": 0.7,
+      "pasa_compuerta": false,
+      "banco": {
+        "precision": 0.9469,
+        "recall": 0.8224,
+        "f1": 0.8803,
+        "macro_f1": 0.8935,
+        "fp_que_tocan_negativo": 277,
+        "recall_por_regimen": {
+          "CON_ID": 0.9768,
+          "SIN_ID": 0.6471
+        },
+        "calidad_por_estrato": {
+          "REAL": {
+            "precision": 1.0,
+            "recall": 0.9319,
+            "f1": 0.9648,
+            "pares": 4996.0
+          },
+          "REAL_NEG": {
+            "precision": null,
+            "recall": null,
+            "f1": null
+          },
+          "CONTACTO": {
+            "precision": 0.9831,
+            "recall": 0.9534,
+            "f1": 0.968,
+            "pares": 22073.0
+          },
+          "RUIDO": {
+            "precision": 0.891,
+            "recall": 0.6443,
+            "f1": 0.7478,
+            "pares": 19305.0
+          }
+        },
+        "huella": "1f0f8d1056a13225a316b79d45989b2090329501b0aaf2ddde796ac289b99182",
+        "etiqueta": "u070",
+        "segundos_total": 54.0
+      },
+      "escala": {
+        "filas": 139028,
+        "precision": 0.799,
+        "recall": 0.9507,
+        "f1": 0.8683,
+        "fp_que_tocan_negativo": 94,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.7365
+        },
+        "grupo_mayor_sin_identificador": {
+          "filas": 100,
+          "entidades": 52,
+          "grupos": 6162,
+          "grupos_grandes": 8
+        },
+        "huella": "09d9527d87dad65492372d88ab0598c6ebc08593a08562f83a1c516fd7e41c13",
+        "etiqueta": "u070",
+        "segundos_total": 396.03
+      }
+    },
+    {
+      "umbral": 0.75,
+      "pasa_compuerta": true,
+      "banco": {
+        "precision": 0.9513,
+        "recall": 0.8142,
+        "f1": 0.8774,
+        "macro_f1": 0.8906,
+        "fp_que_tocan_negativo": 264,
+        "recall_por_regimen": {
+          "CON_ID": 0.9768,
+          "SIN_ID": 0.6297
+        },
+        "calidad_por_estrato": {
+          "REAL": {
+            "precision": 1.0,
+            "recall": 0.9319,
+            "f1": 0.9648,
+            "pares": 4996.0
+          },
+          "REAL_NEG": {
+            "precision": null,
+            "recall": null,
+            "f1": null
+          },
+          "CONTACTO": {
+            "precision": 0.9891,
+            "recall": 0.9494,
+            "f1": 0.9688,
+            "pares": 22073.0
+          },
+          "RUIDO": {
+            "precision": 0.8928,
+            "recall": 0.6293,
+            "f1": 0.7382,
+            "pares": 19305.0
+          }
+        },
+        "huella": "43ebf7467e1f14c85e799f9aa475c797d0876b267f65bc395f6ef6ce82fff982",
+        "etiqueta": "u075",
+        "segundos_total": 51.94
+      },
+      "escala": {
+        "filas": 139028,
+        "precision": 0.9191,
+        "recall": 0.9478,
+        "f1": 0.9332,
+        "fp_que_tocan_negativo": 92,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.7163
+        },
+        "grupo_mayor_sin_identificador": {
+          "filas": 33,
+          "entidades": 20,
+          "grupos": 6983,
+          "grupos_grandes": 0
+        },
+        "huella": "0b12d8e748d66d1c1c1967a9b051970e5552e475bc0cf11405e84e217776d0c2",
+        "etiqueta": "u075",
+        "segundos_total": 398.2
+      }
+    },
+    {
+      "umbral": 0.8,
+      "pasa_compuerta": true,
+      "banco": {
+        "precision": 0.9557,
+        "recall": 0.7927,
+        "f1": 0.8666,
+        "macro_f1": 0.8803,
+        "fp_que_tocan_negativo": 246,
+        "recall_por_regimen": {
+          "CON_ID": 0.9768,
+          "SIN_ID": 0.5836
+        },
+        "calidad_por_estrato": {
+          "REAL": {
+            "precision": 1.0,
+            "recall": 0.9319,
+            "f1": 0.9648,
+            "pares": 4996.0
+          },
+          "REAL_NEG": {
+            "precision": null,
+            "recall": null,
+            "f1": null
+          },
+          "CONTACTO": {
+            "precision": 0.9952,
+            "recall": 0.9393,
+            "f1": 0.9665,
+            "pares": 22073.0
+          },
+          "RUIDO": {
+            "precision": 0.8927,
+            "recall": 0.5889,
+            "f1": 0.7097,
+            "pares": 19305.0
+          }
+        },
+        "huella": "5bfed0d16d078380ca26f3a6fe230c85203ab64b5eeb7612b5f4f8c46308d59b",
+        "etiqueta": "u080",
+        "segundos_total": 52.81
+      },
+      "escala": {
+        "filas": 139028,
+        "precision": 0.9856,
+        "recall": 0.9475,
+        "f1": 0.9662,
+        "fp_que_tocan_negativo": 34,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.7145
+        },
+        "grupo_mayor_sin_identificador": {
+          "filas": 13,
+          "entidades": 3,
+          "grupos": 8161,
+          "grupos_grandes": 0
+        },
+        "huella": "d904ea161a33c8dbb97aca663e122762bce73eda7ad00c6430e78f55e821399f",
+        "etiqueta": "u080",
+        "segundos_total": 396.91
+      }
+    },
+    {
+      "umbral": 0.84,
+      "pasa_compuerta": false,
+      "banco": {
+        "precision": 0.9577,
+        "recall": 0.7645,
+        "f1": 0.8503,
+        "macro_f1": 0.8647,
+        "fp_que_tocan_negativo": 180,
+        "recall_por_regimen": {
+          "CON_ID": 0.9768,
+          "SIN_ID": 0.5235
+        },
+        "calidad_por_estrato": {
+          "REAL": {
+            "precision": 1.0,
+            "recall": 0.9319,
+            "f1": 0.9648,
+            "pares": 4996.0
+          },
+          "REAL_NEG": {
+            "precision": null,
+            "recall": null,
+            "f1": null
+          },
+          "CONTACTO": {
+            "precision": 0.9996,
+            "recall": 0.9265,
+            "f1": 0.9617,
+            "pares": 22073.0
+          },
+          "RUIDO": {
+            "precision": 0.885,
+            "recall": 0.536,
+            "f1": 0.6677,
+            "pares": 19305.0
+          }
+        },
+        "huella": "787e42d7dc6edb72921b594dd9acc9f278d61256ef2126b484e87b7768eda14d",
+        "etiqueta": "u084",
+        "segundos_total": 54.04
+      },
+      "escala": {
+        "filas": 139028,
+        "precision": 0.9971,
+        "recall": 0.9402,
+        "f1": 0.9678,
+        "fp_que_tocan_negativo": 5,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.6637
+        },
+        "grupo_mayor_sin_identificador": {
+          "filas": 11,
+          "entidades": 2,
+          "grupos": 8917,
+          "grupos_grandes": 0
+        },
+        "huella": "a5a48394b179383ee413d611bb8dd2034c25faf36481751350c6294833178a20",
+        "etiqueta": "u084",
+        "segundos_total": 401.01
+      }
+    },
+    {
+      "umbral": 0.88,
+      "pasa_compuerta": false,
+      "banco": {
+        "precision": 0.9569,
+        "recall": 0.7363,
+        "f1": 0.8322,
+        "macro_f1": 0.8471,
+        "fp_que_tocan_negativo": 160,
+        "recall_por_regimen": {
+          "CON_ID": 0.9768,
+          "SIN_ID": 0.4633
+        },
+        "calidad_por_estrato": {
+          "REAL": {
+            "precision": 1.0,
+            "recall": 0.9319,
+            "f1": 0.9648,
+            "pares": 4996.0
+          },
+          "REAL_NEG": {
+            "precision": null,
+            "recall": null,
+            "f1": null
+          },
+          "CONTACTO": {
+            "precision": 1.0,
+            "recall": 0.9144,
+            "f1": 0.9553,
+            "pares": 22073.0
+          },
+          "RUIDO": {
+            "precision": 0.8737,
+            "recall": 0.4821,
+            "f1": 0.6213,
+            "pares": 19305.0
+          }
+        },
+        "huella": "fd3e5bd1ffa8b92acd0dc44f15f31b0153b78fa3bc62dcbf36eccaccf2963f51",
+        "etiqueta": "u088",
+        "segundos_total": 52.9
+      },
+      "escala": {
+        "filas": 139028,
+        "precision": 0.9994,
+        "recall": 0.9327,
+        "f1": 0.9649,
+        "fp_que_tocan_negativo": 0,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.6117
+        },
+        "grupo_mayor_sin_identificador": {
+          "filas": 10,
+          "entidades": 2,
+          "grupos": 9420,
+          "grupos_grandes": 0
+        },
+        "huella": "c6226dd1b4e93aae2d8c0b1fb8554d8fa85bdf5145c8f953ad614dc0cb8c1fee",
+        "etiqueta": "u088",
+        "segundos_total": 399.31
+      }
+    }
+  ],
+  "decision": {
+    "umbral": 0.8,
+    "motivo": "entre 0.75, 0.8 (pasan la compuerta) gana el que menos une mal: 246 FP sobre negativos y precisión 0.9557 en el banco, precisión 0.9856 a 139,028 filas. Maximizar la macro-F1 habría elegido 0.75 (macro-F1 0.8906 frente a 0.8803) a cambio de 18 FP sobre negativos más en el banco y 58 más a 139,028 filas: la regla de Enrique rompe el empate hacia la precisión.",
+    "alternativa_mayor_macro_f1": 0.75,
+    "descartados": [
+      {
+        "umbral": 0.7,
+        "motivo": "grupo mayor sin identificador 100 filas > 50 a 139,028 filas"
+      },
+      {
+        "umbral": 0.84,
+        "motivo": "macro-F1 0.8647 < 0.880"
+      },
+      {
+        "umbral": 0.88,
+        "motivo": "macro-F1 0.8471 < 0.880"
+      }
+    ]
+  }
+}

@@ -361,16 +361,21 @@ def test_con_la_perilla_apagada_el_banco_reproduce_la_huella_de_f0(tmp_path: Pat
 
 
 def test_banco_parsea_ajustes_anidados_con_punto() -> None:
+    """Desde F2.2 el parseador vive en ``evaluation.banco.parsear_ajustes`` (lo
+    comparten banco.py y escala.py); el script lo expone con ese nombre."""
     from cargar_script import cargar_script
 
     banco = cargar_script("banco", nombre_modulo="banco_script_f21")
-    ajustes = banco._parsear_ajustes(
+    ajustes = banco.parsear_ajustes(
         ["cobertura_sin_identificador.umbral=0.70", "cobertura_sin_identificador.activa=true"]
     )
     assert ajustes == {"cobertura_sin_identificador": {"umbral": 0.70, "activa": True}}
-    assert banco._parsear_ajustes(["cobertura_sin_identificador=false", "lsh_threshold=0.5"]) == {
+    assert banco.parsear_ajustes(["cobertura_sin_identificador=false", "lsh_threshold=0.5"]) == {
         "cobertura_sin_identificador": False,
         "lsh_threshold": 0.5,
     }
+    with pytest.raises(ValueError, match="escalar y diccionario"):
+        banco.parsear_ajustes(["a=1", "a.b=2"])
+    # Desde la línea de comandos el error sigue siendo un SystemExit legible.
     with pytest.raises(SystemExit):
-        banco._parsear_ajustes(["a=1", "a.b=2"])
+        banco.main(["--etiqueta", "x", "--ajuste", "a=1", "a.b=2"])
