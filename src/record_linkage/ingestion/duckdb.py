@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -525,7 +526,7 @@ class _ManifestFileLock:
                 stream.write(b"\0")
                 stream.flush()
             stream.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":  # mypy solo tipa msvcrt bajo esta guardia
                 import msvcrt
 
                 while True:
@@ -551,7 +552,7 @@ class _ManifestFileLock:
         self._stream = None
         try:
             stream.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":  # mypy solo tipa msvcrt bajo esta guardia
                 import msvcrt
 
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
@@ -654,7 +655,11 @@ def _write_manifest_atomic(
                 f"Ya existe el manifiesto autoritativo {manifest_path}; "
                 "use overwrite=True para publicar una nueva generación."
             )
-        os.replace(pending, manifest_path)
+        # os.replace y no Path.replace: en Python 3.10 pathlib enlaza os.replace
+        # al importar, y las pruebas de fallo en la frontera de commit (que
+        # parchean os.replace) no lo interceptarían. Se conserva hasta que la
+        # matriz deje 3.10.
+        os.replace(pending, manifest_path)  # noqa: PTH105
         _fsync_directory(manifest_path.parent)
     finally:
         _cleanup_file(pending, purpose="manifiesto pendiente")
@@ -996,7 +1001,11 @@ class DuckDBSourceCompactor:
         compact_rows = int(connection.execute("SELECT count(*) FROM _rues_compact").fetchone()[0])
         return invalid_values, input_rows, compact_rows
 
-    def compact(
+    # Complejidad ciclomática 22 heredada del notebook. El noqa la exime de la
+    # compuerta por archivo del CI (máximo 15 en código tocado); el trinquete
+    # (scripts/deuda.py, --ignore-noqa) la sigue contando en deuda_f0.json
+    # hasta que F5 la descomponga. No añada ramas aquí: extraiga funciones.
+    def compact(  # noqa: C901
         self,
         spec: SourceSpec,
         output_directory: str | Path,
@@ -1208,7 +1217,7 @@ class DuckDBSourceCompactor:
                 if preserve_payload and payload_columns:
                     _fsync_file(payload_pending)
                 _fsync_directory(pending_dir)
-                os.replace(pending_dir, generation_dir)
+                os.replace(pending_dir, generation_dir)  # noqa: PTH105 (ver _write_manifest_atomic)
                 _fsync_directory(generations_dir)
                 published_payload = payload_path if preserve_payload and payload_columns else None
                 manifest = {

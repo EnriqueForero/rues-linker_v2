@@ -88,10 +88,12 @@
       "nombre": "Match NIT cercano (dist≤3), nombre similar",
       "tipo_esperado": "TP_DIFICIL",
       "pares": 1,
-      "aciertos": 1,
-      "pasa": true,
+      "aciertos": 0,
+      "pasa": false,
       "frontera": true,
-      "detalle": []
+      "detalle": [
+        "(24,25)"
+      ]
     },
     {
       "codigo": "C11",
@@ -178,10 +180,12 @@
       "nombre": "Grupo multi-NIT legítimo",
       "tipo_esperado": "TP_DIFICIL",
       "pares": 1,
-      "aciertos": 1,
-      "pasa": true,
+      "aciertos": 0,
+      "pasa": false,
       "frontera": true,
-      "detalle": []
+      "detalle": [
+        "(31,32)"
+      ]
     },
     {
       "codigo": "C22",
@@ -265,9 +269,11 @@
     }
   ],
   "precision": 1.0,
-  "recall": 1.0,
-  "f1": 1.0,
-  "nota": "",
+  "recall": 0.9847,
+  "f1": 0.9923,
+  "nota": "sin corroboración por contacto (F3 apagado)",
+  "corroborar": false,
+  "camino": "dedupe_esquema",
   "extra": {
     "registros": 166,
     "pares": 140

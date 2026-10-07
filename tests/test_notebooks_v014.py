@@ -511,7 +511,10 @@ def test_el_pyproject_declara_los_marcadores_que_los_tests_usan() -> None:
     "@pytest.mark.slow" en una cadena no lo está usando, y la primera versión
     de esta prueba se detectó a sí misma.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
 
     raiz = Path(__file__).resolve().parents[1]
     with open(raiz / "pyproject.toml", "rb") as fh:
