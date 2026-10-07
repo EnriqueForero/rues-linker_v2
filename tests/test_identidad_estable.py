@@ -19,13 +19,19 @@ crosswalk ``entidades_ids.parquet`` escrito con el contrato:
 * un id retirado no resucita: si el contenido vuelve a dar ese hash, el grupo
   recibe otro id (determinista) y el reporte lo cuenta;
 * una entidad anterior sin ningún registro en esta corrida desaparece del
-  crosswalk activo y el reporte la cuenta;
+  crosswalk activo y el reporte la cuenta; los retiros que apuntaban a ella
+  dejan de arrastrarse (todo ``RETIRADO_EN`` publicado es un id activo del
+  mismo crosswalk) y el reporte los cuenta;
+* un ``ID_REGISTRO`` que contenga ``|`` (el separador de ``REGISTROS``) falla
+  rápido con ``ContratoSalidaError``: el crosswalk no podría representarlo;
 * ``cargar_corrida_anterior`` falla rápido (ruta inexistente, crosswalk sin
   ``REGISTROS``) con mensaje accionable;
 * ``linkage(corrida_anterior=…)`` hereda desde la carpeta del estándar de la
   corrida previa, el manifiesto declara la huella usada y el escritor publica
   el crosswalk con ``REGISTROS`` y ``RETIRADO_EN``;
-* ``ConfigCruce(corrida_anterior=…)`` valida la ruta al construirse.
+* ``ConfigCruce(corrida_anterior=…)`` carga y valida el crosswalk al
+  construirse (ruta inexistente y crosswalk sin ``REGISTROS`` fallan ahí);
+* ``leer_resultado`` devuelve ``ID_GRUPO`` del crosswalk como ``Int64``.
 
 Las empresas son inventadas. Ningún dato licenciado entra aquí.
 """
@@ -53,7 +59,7 @@ from record_linkage.identidad.estable import (
     crosswalk_de_corrida,
     localizar_crosswalk,
 )
-from record_linkage.pipeline.errores import CorridaAnteriorError
+from record_linkage.pipeline.errores import ContratoSalidaError, CorridaAnteriorError
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilidades
@@ -227,6 +233,42 @@ def test_entidad_anterior_sin_registros_desaparece_y_se_cuenta(tmp_path: Path) -
     assert r2.reporte["desaparecidas"] == 1
 
 
+def test_un_retiro_sin_sobreviviente_deja_de_arrastrarse_y_se_cuenta(tmp_path: Path) -> None:
+    """Corrida 1: E1, E2. Corrida 2: fusión → E2 retirado en E1. Corrida 3: ni A
+    ni B tienen registros → E1 desaparece y E2 → E1 no puede seguir
+    publicándose apuntando a un id que no está en la tabla."""
+    r1 = _asignar({1: ["A-1", "A-2", "A-3"], 2: ["B-1", "B-2"]})
+    e1, e2 = _id_de(r1, 1), _id_de(r1, 2)
+    r2 = _asignar({1: ["A-1", "A-2", "A-3", "B-1", "B-2"]}, anterior=_guardar(r1, tmp_path / "r1"))
+    assert _retirados(r2).loc[e2, "RETIRADO_EN"] == e1
+    r3 = _asignar({9: ["Z-1"]}, anterior=_guardar(r2, tmp_path / "r2"))
+    x = r3.entidades_ids
+    assert e1 not in set(x["ID_ENTIDAD"]) and e2 not in set(x["ID_ENTIDAD"])
+    activos = set(x.loc[x["RETIRADO_EN"].isna(), "ID_ENTIDAD"])
+    assert x["RETIRADO_EN"].dropna().isin(activos).all()
+    assert x["ID_GRUPO"].notna().all()
+    assert r3.reporte["desaparecidas"] == 1
+    assert r3.reporte["arrastres_sin_sobreviviente"] == 1
+    # Con sobreviviente, el arrastre sigue intacto (y lo cuenta como 0).
+    r3b = _asignar({9: ["A-1"]}, anterior=_guardar(r2, tmp_path / "r2b"))
+    assert _id_de(r3b, 9) == e1 and _retirados(r3b).loc[e2, "RETIRADO_EN"] == e1
+    assert r3b.reporte["arrastres_sin_sobreviviente"] == 0
+
+
+def test_un_id_registro_con_el_separador_falla_rapido(tmp_path: Path) -> None:
+    with pytest.raises(ContratoSalidaError, match=r"1 ID_REGISTRO contienen '\|'") as exc:
+        _asignar({1: ["A-x|y", "A-z"]})
+    assert "col_id" in str(exc.value) and "'A-x|y'" in str(exc.value)
+    # También con corrida anterior, y la carga de la anterior no se ve afectada.
+    previa = _guardar(_asignar({1: ["A-1"]}), tmp_path / "r1")
+    with pytest.raises(ContratoSalidaError, match="ID_REGISTRO contienen"):
+        _asignar({1: ["A-1", "B-1|2"]}, anterior=previa)
+    correl = _correl({1: ["A-1|2"]})
+    correl["ID_ENTIDAD"] = "ENT-x"
+    with pytest.raises(ContratoSalidaError, match="ID_REGISTRO contienen"):
+        crosswalk_de_corrida(correl)
+
+
 def test_un_nit_anterior_no_se_hereda_a_un_grupo_sin_identificador(tmp_path: Path) -> None:
     r1 = _asignar({1: ["A-1", "A-2"]}, nit={1: "900111222"})
     r2 = _asignar({1: ["A-1", "A-2"]}, anterior=_guardar(r1, tmp_path / "r1"))
@@ -334,12 +376,14 @@ def test_linkage_hereda_desde_la_carpeta_de_la_corrida_anterior(tmp_path: Path) 
     assert dos.entidades_ids is not None
 
     carpeta_dos = Path(dos.manifiesto["carpeta_salida"])
-    publicado = pd.read_parquet(carpeta_dos / NOMBRE_CROSSWALK)
-    pd.testing.assert_frame_equal(
-        publicado.astype("string"), dos.entidades_ids.astype("string"), check_dtype=False
-    )
     leido = leer_resultado(carpeta_dos)
-    assert leido.entidades_ids is not None and len(leido.entidades_ids) == len(publicado)
+    assert leido.entidades_ids is not None
+    assert leido.entidades_ids["ID_GRUPO"].dtype == "Int64"
+    assert dos.entidades_ids["ID_GRUPO"].dtype == "Int64"
+    texto = ["ID_ENTIDAD", "RETIRADO_EN", COLUMNA_REGISTROS]
+    publicado = leido.entidades_ids.astype(dict.fromkeys(texto, "string"))
+    en_memoria = dos.entidades_ids.astype(dict.fromkeys(texto, "string"))
+    pd.testing.assert_frame_equal(publicado, en_memoria)
 
 
 def test_linkage_corrida_anterior_inexistente_falla_antes_de_correr(tmp_path: Path) -> None:
@@ -362,6 +406,20 @@ def test_config_cruce_valida_corrida_anterior(tmp_path: Path) -> None:
     )
     with pytest.raises(CorridaAnteriorError):
         ConfigCruce(fuentes=[spec], workspace=tmp_path / "ws", corrida_anterior=tmp_path / "x")
+    # Un crosswalk anterior a F2.4 (sin REGISTROS) existe pero no sirve para
+    # heredar: debe fallar al construir, no dentro de linkage().
+    viejo = tmp_path / "viejo"
+    viejo.mkdir()
+    pd.DataFrame(
+        {
+            "ID_ENTIDAD": pd.Series(["ENT-0123456789abcdef"], dtype="string"),
+            "ID_GRUPO": pd.Series([0], dtype="int64"),
+            "N_REGISTROS": pd.Series([2], dtype="int64"),
+            "RETIRADO_EN": pd.Series([pd.NA], dtype="string"),
+        }
+    ).to_parquet(viejo / NOMBRE_CROSSWALK)
+    with pytest.raises(CorridaAnteriorError, match=COLUMNA_REGISTROS):
+        ConfigCruce(fuentes=[spec], workspace=tmp_path / "ws", corrida_anterior=viejo)
     _guardar(_asignar({1: ["A-1"]}), tmp_path / "r1")
     cfg = ConfigCruce(fuentes=[spec], workspace=tmp_path / "ws", corrida_anterior=tmp_path / "r1")
     assert cfg.corrida_anterior == tmp_path / "r1"

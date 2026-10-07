@@ -33,9 +33,15 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
    columna `REGISTROS` (los `ID_REGISTRO` de la entidad, ordenados y separados
    por `|`). Con ella, la corrida siguiente mide el solapamiento leyendo un
    solo archivo: no hace falta la correlativa anterior ni reconstruir nada.
+   Un `ID_REGISTRO` que contenga `|` (el id nativo de `col_id` lo pone la
+   fuente) no cabe en esa columna: el módulo falla con `ContratoSalidaError`
+   (qué hacer: otro `col_id`, limpiar la columna o `col_id=None`) en vez de
+   escribir un crosswalk que la corrida siguiente partiría mal en silencio.
    El parámetro `corrida_anterior=` (en `linkage()` y en `ConfigCruce`) acepta
-   la carpeta del estándar o el archivo, se valida ANTES de L1
-   (`CorridaAnteriorError` con qué pasó · por qué importa · qué hacer) y el
+   la carpeta del estándar o el archivo, se carga y valida ANTES de L1 —en
+   `ConfigCruce.__post_init__` y en `linkage()`: existe, trae `REGISTROS`,
+   `ID_ENTIDAD` únicos— (`CorridaAnteriorError` con qué pasó · por qué
+   importa · qué hacer) y el
    manifiesto declara la ruta y la huella SHA-256 usadas
    (`completar.id_entidad.herencia`, `parametros.corrida_anterior`).
 
@@ -57,7 +63,13 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
    - *Arrastre*: los retiros anteriores se copian y las cadenas se comprimen
      (`X → Y`, `Y → Z` ⇒ `X → Z`): cualquier id publicado se resuelve con un
      salto. Una entidad sin ningún registro en esta corrida desaparece del
-     crosswalk y el reporte la cuenta.
+     crosswalk y el reporte la cuenta (`desaparecidas`). Un retiro que
+     apuntaba a ella (o a un `NIT-…` ausente en esta corrida) se deja de
+     arrastrar y se cuenta (`arrastres_sin_sobreviviente`): la alternativa,
+     conservarlo apuntando a un id que ya no está en la tabla, rompería la
+     promesa del salto único y arrastraría la fila para siempre. Invariante
+     publicado: todo `RETIRADO_EN` no nulo es un `ID_ENTIDAD` activo del
+     mismo crosswalk, y `ID_GRUPO` nunca es nulo.
 
 4. **Id nuevo = id por contenido (no ULID).** Sin corrida anterior el
    resultado es el de F1, byte a byte: misma entrada → mismos ids, sin
@@ -99,7 +111,9 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
   final (añadir, no reordenar) y `RETIRADO_EN` deja de estar siempre vacío.
   `diccionario.csv` la documenta sola (viene del contrato).
 - `ResultadoLinkage.entidades_ids` (opcional) lleva el crosswalk de la corrida;
-  `leer_resultado` lo devuelve. `ReporteCompletar.entidades_ids` lo transporta
+  `leer_resultado` lo devuelve con `ID_GRUPO` como `Int64` (el mismo tipo que
+  `cargar_corrida_anterior`; `pd.read_parquet` daría `float64` si hubiera un
+  nulo e `int64` si no). `ReporteCompletar.entidades_ids` lo transporta
   desde `completar_correlativa` sin pasar por el manifiesto (es una tabla).
 - Un crosswalk escrito antes de F2.4 (sin `REGISTROS`) no sirve para heredar:
   `cargar_corrida_anterior` lo dice y dice qué hacer (correr sin
@@ -117,5 +131,8 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
 - Pruebas: `tests/test_identidad_estable.py` congela (a) determinismo con y
   sin corrida anterior, (b) fila nueva, (c) fusión con retiro y desempate,
   (d) división, `ENT → NIT`, arrastre con compresión de cadenas, no
-  resurrección, desaparecidas, `NIT-…` no heredable, fail-fast de la carga,
-  `linkage(corrida_anterior=…)` de punta a punta y `ConfigCruce`.
+  resurrección, desaparecidas, retiros sin sobreviviente que dejan de
+  arrastrarse, `ID_REGISTRO` con `|` rechazado, `NIT-…` no heredable,
+  fail-fast de la carga (también desde `ConfigCruce`),
+  `linkage(corrida_anterior=…)` de punta a punta y `ID_GRUPO` `Int64` en
+  `leer_resultado`.

@@ -40,7 +40,11 @@ La regla de herencia, en el orden en que se aplica (todo vectorizado con
    nuevo y las cadenas se comprimen (``X → Y`` y luego ``Y → Z`` queda
    ``X → Z``): un consumidor resuelve cualquier id que se haya publicado con
    un solo salto. Una entidad anterior sin ningún registro en esta corrida no
-   tiene sobreviviente: desaparece del crosswalk y el reporte la cuenta.
+   tiene sobreviviente: desaparece del crosswalk y el reporte la cuenta
+   (``desaparecidas``); los retiros que apuntaban a ella (o a un ``NIT-…``
+   ausente en esta corrida) se dejan de arrastrar y se cuentan en
+   ``arrastres_sin_sobreviviente``, de modo que todo ``RETIRADO_EN`` del
+   crosswalk publicado es un ``ID_ENTIDAD`` activo del mismo crosswalk.
 5. **Un id retirado no resucita.** El id por contenido de un grupo nuevo se
    compara con todos los ids del crosswalk anterior (activos y retirados) y
    con los de esta corrida; si choca (el mismo conjunto de registros volvió a
@@ -72,7 +76,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from .. import contrato
-from ..pipeline.errores import CorridaAnteriorError, mensaje_accionable
+from ..pipeline.errores import ContratoSalidaError, CorridaAnteriorError, mensaje_accionable
 
 __all__ = [
     "COLUMNA_REGISTROS",
@@ -92,8 +96,10 @@ __all__ = [
 NOMBRE_CROSSWALK = "entidades_ids.parquet"
 #: Columna del crosswalk con los ``ID_REGISTRO`` de la entidad (ordenados).
 COLUMNA_REGISTROS = "REGISTROS"
-#: Separador de ``REGISTROS``. ``ID_REGISTRO`` nunca lo contiene: el contrato
-#: lo arma como ``<SRC>-<id>`` y las fuentes se nombran sin ``|``.
+#: Separador de ``REGISTROS``. ``ID_REGISTRO`` no puede contenerlo (el id
+#: nativo de ``col_id`` lo pone la fuente): :func:`_claves_por_grupo` lo exige
+#: y falla con ``ContratoSalidaError`` antes de escribir un crosswalk que la
+#: corrida siguiente partiría mal.
 SEPARADOR_REGISTROS = "|"
 PREFIJO_NIT = "NIT-"
 PREFIJO_ENT = "ENT-"
@@ -141,7 +147,9 @@ class ResultadoIdentidad:
         reporte: lo que va al manifiesto (``completar.id_entidad.herencia``):
             ruta y huella de la corrida anterior, cuántas entidades se
             heredaron, cuántas son nuevas, retiradas, pasadas a ``NIT-…``,
-            desaparecidas, ``NIT-…`` anteriores ausentes y colisiones resueltas;
+            desaparecidas, retiros anteriores que se dejaron de arrastrar por
+            no tener sobreviviente, ``NIT-…`` anteriores ausentes y colisiones
+            resueltas;
             sin corrida anterior, el motivo.
     """
 
@@ -264,15 +272,46 @@ def _sha16(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:_LARGO_HASH]
 
 
+_EJEMPLOS_EN_ERROR = 3
+
+
+def _exigir_sin_separador(id_registro: pd.Series) -> None:
+    """Falla si algún ``ID_REGISTRO`` contiene ``|``: ``REGISTROS`` no podría representarlo.
+
+    El crosswalk une los ``ID_REGISTRO`` con ``|`` y la corrida siguiente los
+    parte por ``|``: un id con el separador quedaría partido en dos, nunca
+    contaría como compartido y la entidad se daría por desaparecida sin aviso.
+    """
+    texto = id_registro.astype("string")
+    con_sep = texto.str.contains(SEPARADOR_REGISTROS, regex=False).fillna(False)
+    n = int(con_sep.sum())
+    if n == 0:
+        return
+    ejemplos = ", ".join(repr(v) for v in texto[con_sep].head(_EJEMPLOS_EN_ERROR))
+    raise ContratoSalidaError(
+        [
+            f"entidades_ids.{COLUMNA_REGISTROS}: {n} ID_REGISTRO contienen "
+            f"{SEPARADOR_REGISTROS!r} (p. ej. {ejemplos}); el crosswalk une los ID_REGISTRO "
+            f"de cada entidad con {SEPARADOR_REGISTROS!r} y la herencia de la corrida "
+            "siguiente los partiría, con lo que esos registros nunca contarían como "
+            "compartidos. Qué hacer: pase en col_id= otra columna única por fila sin "
+            f"{SEPARADOR_REGISTROS!r}, limpie esa columna en la fuente, o use col_id=None "
+            "(ID_REGISTRO = <SRC>-F<ORIGINAL_INDEX>)."
+        ]
+    )
+
+
 def _claves_por_grupo(grupos: pd.DataFrame) -> pd.Series:
     """``ID_REGISTRO`` ordenados y unidos por ``|``, por ``ID_GRUPO`` (índice ordenado).
 
     Vectorizado con Arrow (``binary_join`` sobre una lista por grupo):
     ``groupby().agg("|".join)`` recorta un sub-DataFrame por grupo en Python y
-    medido costaba 3,0 s a 139k filas / 50k grupos; esto, 0,1 s.
+    medido costaba 3,0 s a 139k filas / 50k grupos; esto, 0,1 s. Antes de unir
+    exige que ningún ``ID_REGISTRO`` contenga el separador.
     """
     if grupos.empty:
         return pd.Series(dtype="string", index=pd.Index([], name="ID_GRUPO"))
+    _exigir_sin_separador(grupos["ID_REGISTRO"])
     orden = grupos.sort_values(["ID_GRUPO", "ID_REGISTRO"], kind="stable")
     ids = orden["ID_GRUPO"].to_numpy()
     limites = np.flatnonzero(ids[1:] != ids[:-1]) + 1
@@ -506,18 +545,26 @@ def _heredar(
     )
     nuevos_retiros["ID_GRUPO"] = nuevos_retiros["ID_GRUPO"].astype("Int64")
 
-    # 4. Arrastre con compresión de cadenas: X → Y, Y → Z  ⇒  X → Z.
+    # 4. Arrastre con compresión de cadenas: X → Y, Y → Z  ⇒  X → Z. Solo se
+    # arrastra lo que apunta a un id activo de ESTA corrida: si el
+    # sobreviviente desapareció (o era un NIT-… ausente), el retiro se queda
+    # sin destino y se cuenta; así cualquier RETIRADO_EN publicado existe
+    # como ID_ENTIDAD activo en el mismo crosswalk.
     redireccion = nuevos_retiros.set_index("ID_ENTIDAD")["RETIRADO_EN"]
     hacia = retirados_prev["RETIRADO_EN"].astype("string")
     hacia = hacia.map(redireccion).fillna(hacia).astype("string")
     grupo_de = pd.Series(final_por_grupo.index, index=final_por_grupo.to_numpy(dtype=object))
+    con_sobreviviente = hacia.isin(grupo_de.index).to_numpy(dtype=bool)
     arrastrados = pd.DataFrame(
         {
-            "ID_ENTIDAD": retirados_prev["ID_ENTIDAD"].astype("string").to_numpy(),
-            "RETIRADO_EN": hacia.to_numpy(),
-            "ID_GRUPO": pd.array(hacia.map(grupo_de).to_numpy(), dtype="Int64"),
+            "ID_ENTIDAD": retirados_prev.loc[con_sobreviviente, "ID_ENTIDAD"]
+            .astype("string")
+            .to_numpy(),
+            "RETIRADO_EN": hacia[con_sobreviviente].to_numpy(),
+            "ID_GRUPO": pd.array(hacia[con_sobreviviente].map(grupo_de).to_numpy(), dtype="Int64"),
         }
     )
+    arrastres_sin_sobreviviente = int((~con_sobreviviente).sum())
     retirados = pd.concat([nuevos_retiros, arrastrados], ignore_index=True)
 
     desaparecidas = int((~ent_prev["ID_ENTIDAD"].isin(destino["PREVIA"])).sum())
@@ -537,6 +584,7 @@ def _heredar(
         "retiradas": len(nuevos_retiros),
         "ent_a_nit": ent_a_nit,
         "desaparecidas": desaparecidas,
+        "arrastres_sin_sobreviviente": arrastres_sin_sobreviviente,
         "nit_anteriores_ausentes": nit_ausentes,
         "colisiones_resueltas": colisiones,
     }

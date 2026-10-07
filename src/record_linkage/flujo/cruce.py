@@ -38,7 +38,7 @@ from ..golden.columnas_finales import (
     faltantes,
     faltantes_en,
 )
-from ..identidad.estable import localizar_crosswalk
+from ..identidad.estable import cargar_corrida_anterior
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -246,8 +246,10 @@ class ConfigCruce:
         if not isinstance(self.preservar_payload, bool):
             raise TypeError("preservar_payload debe ser bool.")
         if self.corrida_anterior is not None:
-            # Falla al construirse, no tras cuarenta minutos de corrida.
-            localizar_crosswalk(Path(self.corrida_anterior))
+            # Falla al construirse, no tras cuarenta minutos de corrida: lee y
+            # valida el crosswalk (existe, trae REGISTROS, ids únicos), no solo
+            # la ruta. Es un parquet pequeño; linkage() lo vuelve a leer.
+            cargar_corrida_anterior(Path(self.corrida_anterior))
         if self.perfil_multicampo is not None and not isinstance(
             self.perfil_multicampo, (str, MatchingProfile)
         ):

@@ -1094,6 +1094,19 @@ def _aplicar_alias(df: pd.DataFrame, diccionario: pd.DataFrame, tabla: str, alia
         df.rename(columns=mapa, inplace=True)
 
 
+def _leer_entidades_ids(ruta: Path) -> pd.DataFrame:
+    """Lee el crosswalk con ``ID_GRUPO`` como ``Int64`` (nulo donde no aplica).
+
+    ``pd.read_parquet`` devuelve ``float64`` si la columna trae algún nulo e
+    ``int64`` si no: el mismo archivo cambiaría de tipo según su contenido.
+    Mismo tipo que ``identidad.estable.cargar_corrida_anterior``.
+    """
+    ids = pd.read_parquet(ruta)
+    if "ID_GRUPO" in ids.columns:
+        ids["ID_GRUPO"] = ids["ID_GRUPO"].astype("Int64")
+    return ids
+
+
 def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     """Lee una carpeta del estándar y devuelve el ``ResultadoLinkage``.
 
@@ -1181,7 +1194,7 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         **man.conteos,
     }
     ruta_ids = carpeta / "entidades_ids.parquet"
-    entidades_ids = pd.read_parquet(ruta_ids) if ruta_ids.is_file() else None
+    entidades_ids = _leer_entidades_ids(ruta_ids) if ruta_ids.is_file() else None
     return ResultadoLinkage(
         correlativa=correlativa,
         golden=golden,

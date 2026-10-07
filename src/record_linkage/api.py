@@ -369,7 +369,9 @@ def linkage(
             primaria). Si existe y es única y no vacía en una fuente,
             ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
             None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
-            Un nombre que no existe en ninguna fuente falla de inmediato.
+            Un nombre que no existe en ninguna fuente falla de inmediato; un
+            valor que contenga ``|`` falla con ``ContratoSalidaError`` (es el
+            separador de ``REGISTROS`` en ``entidades_ids.parquet``).
         carpeta_salida: si se da, al terminar se escribe la carpeta del
             estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
             (``exporters.escritor.escribir_resultado``: parquet, csv,

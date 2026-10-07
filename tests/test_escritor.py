@@ -219,6 +219,35 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
     assert isinstance(Manifiesto.desde_dict(texto), Manifiesto)
 
 
+def test_leer_resultado_devuelve_id_grupo_del_crosswalk_como_int64(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Con una retirada sin grupo, ``pd.read_parquet`` daría ``float64``; el
+    lector normaliza a ``Int64`` (el tipo de ``cargar_corrida_anterior``)."""
+    assert res.entidades_ids is not None
+    retirada = pd.DataFrame(
+        {
+            "ID_ENTIDAD": pd.Series(["ENT-ffffffffffffffff"], dtype="string"),
+            "ID_GRUPO": pd.Series([pd.NA], dtype="Int64"),
+            "N_REGISTROS": pd.Series([0], dtype="int64"),
+            "RETIRADO_EN": pd.Series(
+                [str(res.entidades_ids["ID_ENTIDAD"].iloc[0])], dtype="string"
+            ),
+            "REGISTROS": pd.Series([pd.NA], dtype="string"),
+        }
+    )
+    con_nulo = pd.concat([res.entidades_ids, retirada], ignore_index=True)
+    man = escribir_resultado(
+        _con(res, entidades_ids=con_nulo), tmp_path, "prueba", marca_tiempo=MARCA, excel=False
+    )
+    assert pd.read_parquet(man.carpeta / "entidades_ids.parquet")["ID_GRUPO"].dtype == "float64"
+    leido = leer_resultado(man.carpeta)
+    assert leido.entidades_ids is not None
+    assert leido.entidades_ids["ID_GRUPO"].dtype == "Int64"
+    assert leido.entidades_ids["ID_GRUPO"].isna().sum() == 1
+    assert len(leido.entidades_ids) == len(con_nulo)
+
+
 def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_path: Path) -> None:
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     ids = pd.read_parquet(man.carpeta / "entidades_ids.parquet")
