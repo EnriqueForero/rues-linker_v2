@@ -329,3 +329,51 @@ def test_columna_declarada_que_choca_falla_con_mensaje() -> None:
     cfg = ConfigImportadores(col_razon_social="RAZON_SOCIAL", col_pais="PAIS_FINAL", verboso=False)
     with pytest.raises(ContratoSalidaError, match="PAIS_FINAL"):
         deduplicar_importadores(df, cfg)
+
+
+# ── Ronda 1 de revisión ───────────────────────────────────────────────────
+
+
+def test_manifiesto_declara_la_regla_real_de_id_registro() -> None:
+    """Con col_id único cuyos valores empiezan por 'F' el manifiesto no dice «fila»."""
+    df = _base()
+    df["REF"] = [f"F{i:02d}" for i in range(1, len(df) + 1)]
+    r = deduplicar_importadores(df, _cfg(col_id="REF"))
+    assert r.correlativa["ID_REGISTRO"].tolist() == [f"IMPORTADORES-F{i:02d}" for i in range(1, 10)]
+    assert r.manifiesto["completar"]["id_registro"]["IMPORTADORES"] == {
+        "regla": "col_id",
+        "columna": "REF",
+    }
+
+
+def test_sin_col_id_el_manifiesto_lo_dice() -> None:
+    r = deduplicar_importadores(_base(), _cfg())
+    assert r.manifiesto["completar"]["id_registro"]["IMPORTADORES"] == {
+        "regla": "fila",
+        "motivo": "sin col_id",
+    }
+
+
+@pytest.mark.parametrize("interna", ["ES_LIDER", "NOMBRE_NORM_FINAL"])
+def test_columna_interna_del_merge_en_la_fuente_se_conserva_renombrada(interna: str) -> None:
+    df = _base().assign(**{interna: 1})
+    assert renombres_por_colision(df, _cfg()) == {interna: f"{interna}_FUENTE"}
+    r = deduplicar_importadores(df, _cfg())
+    assert r.todo_ok
+    assert (r.correlativa[f"{interna}_FUENTE"] == 1).all()
+    assert interna not in r.correlativa.columns
+    assert r.manifiesto["completar"]["renombres"] == {interna: f"{interna}_FUENTE"}
+
+
+def test_sufijo_de_colision_es_el_de_salida_completar() -> None:
+    """Una regla se escribe una vez: el sufijo viene de salida.completar, sin copia local."""
+    import inspect
+    import re
+
+    from record_linkage.flujo import importadores
+    from record_linkage.salida import completar
+
+    assert importadores._SUFIJO_COLISION == completar._SUFIJO_COLISION
+    fuente = inspect.getsource(importadores)
+    assert re.search(r"^_SUFIJO_COLISION\s*=", fuente, re.M) is None
+    assert "_SUFIJO_COLISION" in fuente.split("from ..salida.completar import", 1)[1][:200]

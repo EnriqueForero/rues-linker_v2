@@ -65,8 +65,10 @@ escritor del estándar), igual que ``linkage()``:
   los ``sin_nombre_utilizable``, que no forman par) sigue en
   ``revision_grupos``. ``paises`` sigue en memoria (es un agrupado de la
   correlativa; no es un artefacto del estándar).
-* Una columna de la fuente que choca con una columna del contrato o de las
-  propias se conserva renombrada ``<col>_FUENTE`` (``renombres_por_colision``)
+* Una columna de la fuente que choca con una columna del contrato, de las
+  propias o de las de trabajo del merge (``_COLUMNAS_INTERNAS``) se conserva
+  renombrada ``<col>_FUENTE`` (``renombres_por_colision``; el sufijo es el de
+  ``salida.completar``)
   y el renombre va al manifiesto y al diccionario; una columna DECLARADA en
   la configuración que choca detiene la corrida con mensaje accionable.
 """
@@ -113,7 +115,12 @@ from ..processing.saneamiento import (
     unir_iniciales,
 )
 from ..resultado import ResultadoLinkage
-from ..salida.completar import _asignar_id_registro, _id_entidad, _recodificar_id_grupo
+from ..salida.completar import (
+    _SUFIJO_COLISION,
+    _asignar_id_registro,
+    _id_entidad,
+    _recodificar_id_grupo,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - solo para tipar sin importar el escritor
     from ..exporters.escritor import Manifiesto
@@ -170,9 +177,13 @@ COLUMNAS_PROPIAS: tuple[str, ...] = (
     "SIM_MINIMA",
 )
 
-#: Sufijo con el que se conserva una columna de la fuente que choca con el
-#: contrato o con las propias (la misma convención que ``salida.completar``).
-_SUFIJO_COLISION = "_FUENTE"
+#: Columnas de trabajo que ``construir_entregables`` trae de ``representantes``
+#: al merge con la base y que NO salen en la correlativa: si la fuente trae una
+#: con ese nombre, el merge la sufijaría ``_x``/``_y`` y el flujo seguiría con
+#: la columna equivocada. Se reservan igual que las del contrato y las propias
+#: (``renombres_por_colision``). El sufijo ``_FUENTE`` es el de
+#: ``salida.completar._SUFIJO_COLISION`` (una sola convención).
+_COLUMNAS_INTERNAS: tuple[str, ...] = ("ES_LIDER", "NOMBRE_NORM_FINAL")
 
 #: Qué significa cada columna propia, para ``diccionario.csv``.
 _SIGNIFICADOS_PROPIOS: dict[str, str] = {
@@ -720,11 +731,13 @@ def renombres_por_colision(df: pd.DataFrame, cfg: ConfigImportadores) -> dict[st
     """``{columna_de_la_fuente: <columna>_FUENTE}`` para lo que choca con el estándar.
 
     Una columna de la fuente que se llama como una columna fija del contrato
-    (``ID_GRUPO``, ``SRC``…) o como una propia del flujo (``PAIS_FINAL``,
-    ``ID_IMPORTADOR``…) se conserva renombrada: la correlativa lleva TODAS las
-    columnas de la fuente y una columna no puede significar dos cosas. Es una
-    función pura de ``df.columns``: ``preparar`` la aplica y
-    ``deduplicar_importadores`` la anota en el manifiesto y el diccionario.
+    (``ID_GRUPO``, ``SRC``…), como una propia del flujo (``PAIS_FINAL``,
+    ``ID_IMPORTADOR``…) o como una de trabajo del merge con los representantes
+    (``_COLUMNAS_INTERNAS``: ``ES_LIDER``, ``NOMBRE_NORM_FINAL``) se conserva
+    renombrada: la correlativa lleva TODAS las columnas de la fuente y una
+    columna no puede significar dos cosas. Es una función pura de
+    ``df.columns``: ``preparar`` la aplica y ``deduplicar_importadores`` la
+    anota en el manifiesto y el diccionario.
 
     Raises:
         ContratoSalidaError: si una columna DECLARADA en la configuración
@@ -732,7 +745,9 @@ def renombres_por_colision(df: pd.DataFrame, cfg: ConfigImportadores) -> dict[st
             choca —renombrarla dejaría la configuración apuntando a otra
             cosa—, o si ya existe ``<col>_FUENTE`` y no hay nombre libre.
     """
-    reservadas = set(contrato.COLUMNAS_CORRELATIVA) | set(COLUMNAS_PROPIAS)
+    reservadas = (
+        set(contrato.COLUMNAS_CORRELATIVA) | set(COLUMNAS_PROPIAS) | set(_COLUMNAS_INTERNAS)
+    )
     chocan = [str(c) for c in df.columns if str(c) in reservadas]
     if not chocan:
         return {}
@@ -1064,7 +1079,12 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
 def construir_entregables(
     prep: pd.DataFrame, corrida: dict, cfg: ConfigImportadores
 ) -> dict[str, pd.DataFrame]:
-    """CORRELATIVA, GOLDEN, PAISES y REVISION a partir de la corrida."""
+    """CORRELATIVA, GOLDEN, PAISES, REVISION y REVISION_GRUPOS a partir de la corrida.
+
+    Deja en ``corrida["regla_id_registro"]`` el reporte de
+    ``salida.completar._asignar_id_registro`` (``{fuente: {regla, columna,
+    motivo}}``): el manifiesto lo publica tal cual, sin recomputar la regla.
+    """
     rep = corrida["representantes"]
     lideres = rep.loc[rep.ES_LIDER, ["ID_IMPORTADOR", "NOMBRE_NORM"]].rename(
         columns={"NOMBRE_NORM": "NOMBRE_NORM_FINAL"}
@@ -1175,12 +1195,24 @@ def construir_entregables(
     # salida.completar (la misma que recodifica C<n>/S<n> de dedupe).
     corr["ID_GRUPO"] = corr["ID_IMPORTADOR"].astype("string")
     _recodificar_id_grupo(corr)
-    id_registro, _ = _asignar_id_registro(corr, cfg.col_id or None)
+    id_registro, regla_id = _asignar_id_registro(corr, cfg.col_id or None)
+    corrida["regla_id_registro"] = regla_id
     corr["ID_REGISTRO"] = id_registro.astype(str)
+    # Defensa: _asignar_id_registro cae a <SRC>-F<ORIGINAL_INDEX> cuando col_id
+    # no es único, así que hoy solo un merge que multiplique filas llegaría aquí.
     repetidos = int(corr["ID_REGISTRO"].duplicated().sum())
     if repetidos:
         raise ContratoSalidaError(
-            [f"ID_REGISTRO no es único ({repetidos} repetido(s)); col_id={cfg.col_id!r}."]
+            [
+                mensaje_accionable(
+                    f"ID_REGISTRO no es único ({repetidos} repetido(s); "
+                    f"col_id={cfg.col_id!r}; regla: {regla_id}).",
+                    "cada fila de entrada debe tener un ID_REGISTRO propio o la "
+                    "correlativa no es trazable.",
+                    "revise que el merge con los representantes no multiplique filas "
+                    "(invariante «una fila por fila de entrada»); reporte el manifiesto.",
+                )
+            ]
         )
     # ID_ENTIDAD: ningún grupo adopta identificador (la base no lo trae): todos ENT-….
     sin_identificador = pd.Series(pd.NA, index=corr.index, dtype="string")
@@ -1795,18 +1827,6 @@ def _manifiesto_importadores(
     manifiesto = _manifiesto(
         "deduplicar_importadores", _parametros_llamada(cfg), {cfg.nombre_fuente: df}
     )
-    por_fila = correl["ID_REGISTRO"].str.startswith(f"{cfg.nombre_fuente}-F").all()
-    if cfg.col_id and por_fila:
-        id_registro = {
-            "regla": "fila",
-            "columna": cfg.col_id,
-            "motivo": f"col_id='{cfg.col_id}' trae vacíos o repetidos (no es único por fila): "
-            f"se usó <SRC>-F<ORIGINAL_INDEX>. Vea _asignar_id_registro en salida.completar.",
-        }
-    elif cfg.col_id:
-        id_registro = {"regla": "col_id", "columna": cfg.col_id}
-    else:
-        id_registro = {"regla": "fila", "motivo": "sin col_id"}
     manifiesto["contrato"] = {"version": contrato.VERSION_CONTRATO}
     manifiesto["configuracion"] = _configuracion_motor(cfg)
     manifiesto["dir_trabajo"] = None
@@ -1817,7 +1837,9 @@ def _manifiesto_importadores(
             for c in correl.columns
             if c not in contrato.COLUMNAS_CORRELATIVA and c not in COLUMNAS_PROPIAS
         ],
-        "id_registro": {cfg.nombre_fuente: id_registro},
+        # La regla que _asignar_id_registro aplicó de verdad (construir_entregables
+        # la deja en corrida): no se recompone a partir de los valores.
+        "id_registro": corrida["regla_id_registro"],
         "id_grupo": {
             "regla": "entero por orden de primera aparición en ORIGINAL_INDEX, uno por "
             "ID_IMPORTADOR"
