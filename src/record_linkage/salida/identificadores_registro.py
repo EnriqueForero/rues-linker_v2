@@ -13,16 +13,29 @@ Qué hay aquí
   entre las claves mínimas de todos los grupos, ordenadas (``factorize``
   con ``sort=True``: entero denso desde 0, estable ante cualquier reorden de
   las filas y ante cualquier relabel previo). Misma entrada → mismos ids.
+* ``recodificar_id_grupo``: aplica esa regla a una correlativa y, con el
+  MISMO mapa, a su golden; devuelve qué cambió (``recodificado``,
+  ``valores_cambiados``) para que el manifiesto lo declare.
 * ``nombre_efectivo``: cómo se llama en el motor la columna que el usuario
   nombró (renombres canónicos de la ingesta: ``col_name`` → ``RAZON_SOCIAL``…).
 
 Quién las usa
 -------------
-L4 (``engine/clusterer.py`` vía ``pipeline/orchestrator.py``) y
-``salida/completar.py``. Antes de F2.3 ``ID_GRUPO`` era la posición mínima
-del grupo y cambiaba con cualquier fila nueva o reordenada; la huella del
-banco (``evaluation.banco.huella_particion``) no depende del valor del id,
-así que el cambio no mueve la huella (medido: 1e365ba8 antes y después).
+L4 (``engine/clusterer.py`` vía ``pipeline/orchestrator._run_L4``), el cierre
+de L5 (``pipeline/orchestrator._run_L5``: cannot-link y la consolidación por
+NIT renumeran, así que la regla se vuelve a aplicar antes de persistir para que
+``_trabajo/L5_golden/*.parquet`` y los reportes L6 lleven los ids del
+entregable) y ``salida/completar.py`` (red de seguridad: ``dedupe`` llega con
+etiquetas de texto y el colapso exacto reasigna ``ORIGINAL_INDEX``). Antes de
+F2.3 ``ID_GRUPO`` era la posición mínima del grupo y cambiaba con cualquier
+fila nueva o reordenada; la huella del banco
+(``evaluation.banco.huella_particion``) no depende del valor del id, así que
+el cambio no mueve la huella (medido: 1e365ba8 antes y después).
+
+Las claves deben ser únicas por fila: con repetidos el «mínimo» de un grupo
+dependería del orden de las filas (``sort_indices`` es estable y da rangos
+distintos a claves iguales), así que ``id_grupo_por_clave_minima`` falla, y
+falla ya en L4, no al final de la corrida.
 
 Por qué el orden es lexicográfico y no numérico
 -----------------------------------------------
@@ -39,6 +52,7 @@ Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -47,7 +61,12 @@ import pyarrow.compute as pc
 
 from ..pipeline.errores import mensaje_accionable
 
-__all__ = ["asignar_id_registro", "id_grupo_por_clave_minima", "nombre_efectivo"]
+__all__ = [
+    "asignar_id_registro",
+    "id_grupo_por_clave_minima",
+    "nombre_efectivo",
+    "recodificar_id_grupo",
+]
 
 
 def nombre_efectivo(col: str, presentes: Collection[str], canonicos: Mapping[str, str]) -> str:
@@ -170,7 +189,8 @@ def id_grupo_por_clave_minima(
         ``np.ndarray`` de ``int64`` alineado con la entrada.
 
     Raises:
-        ValueError: longitudes distintas o claves nulas.
+        ValueError: longitudes distintas, claves nulas o claves repetidas (con
+            repetidos el id dependería del orden de las filas).
     """
     etiquetas = np.asarray(grupos)
     if len(etiquetas) != len(claves):
@@ -193,6 +213,16 @@ def id_grupo_por_clave_minima(
                 "construya las claves con asignar_id_registro (SRC y ORIGINAL_INDEX sin nulos).",
             )
         )
+    n_unicas = len(pc.unique(textos))
+    if n_unicas != n:
+        raise ValueError(
+            mensaje_accionable(
+                f"{n - n_unicas:,} clave(s) repetida(s) en claves.",
+                "ID_REGISTRO debe ser único por fila; con repetidos el id de grupo dependería "
+                "del orden.",
+                "revise col_id (única por fila en la fuente) o los nombres de fuente (sin «-»).",
+            )
+        )
     orden = pc.sort_indices(textos).to_numpy()
     rango = np.empty(n, dtype=np.int64)
     rango[orden] = np.arange(n, dtype=np.int64)
@@ -204,3 +234,58 @@ def id_grupo_por_clave_minima(
         len(unicos), dtype=np.int64
     )
     return id_por_grupo[codigos_grupo]
+
+
+def recodificar_id_grupo(
+    correl: pd.DataFrame, golden: pd.DataFrame | None, claves: np.ndarray | pd.Series
+) -> tuple[pd.DataFrame | None, dict[str, Any]]:
+    """``ID_GRUPO`` entero determinista por contenido en la correlativa y, con el mismo mapa, en el golden.
+
+    La regla es UNA (:func:`id_grupo_por_clave_minima`); quien la aplica es
+    el cierre de L5 (``pipeline/orchestrator._run_L5``, tras cannot-link y la
+    consolidación por NIT, que renumeran) y ``salida/completar`` (red de
+    seguridad: ``dedupe`` trae texto ``C<n>``/``S<n>`` y el colapso exacto
+    reasigna ``ORIGINAL_INDEX``). Si el motor ya venía por contenido no cambia
+    nada y lo dice (``recodificado: False``).
+
+    Muta ``correl["ID_GRUPO"]`` (el llamador pasa su propio frame o una copia
+    superficial). El golden no se muta: se devuelve una copia superficial con
+    el mismo mapa; sus filas huérfanas (grupos que no están en la correlativa)
+    quedan con ``-1`` y se cuentan en ``huerfanas_golden`` para que el llamador
+    las retire o las denuncie.
+
+    Args:
+        correl: correlativa con ``ID_GRUPO`` (cualquier etiqueta).
+        golden: golden con ``ID_GRUPO``, o None (``dedupe``).
+        claves: ``ID_REGISTRO`` por fila de ``correl`` (de ``asignar_id_registro``).
+
+    Returns:
+        ``(golden_recodificado, info)`` con ``info`` = ``recodificado``,
+        ``regla``, ``n_grupos``, ``valores_cambiados``, ``huerfanas_golden`` y,
+        si venía texto, ``desde``.
+    """
+    viejos = correl["ID_GRUPO"].to_numpy()
+    nuevos = id_grupo_por_clave_minima(viejos, claves)
+    cambiados = int(
+        (pd.Series(viejos).astype("string") != pd.Series(nuevos).astype("string")).sum()
+    )
+    desde_texto = not pd.api.types.is_integer_dtype(correl["ID_GRUPO"])
+    correl["ID_GRUPO"] = nuevos
+    huerfanas = 0
+    if golden is not None:
+        mapa = pd.Series(nuevos, index=pd.Index(viejos)).groupby(level=0).first()
+        golden = golden.copy(deep=False)
+        recodificado = golden["ID_GRUPO"].map(mapa)
+        huerfanas = int(recodificado.isna().sum())
+        golden["ID_GRUPO"] = recodificado.fillna(-1).astype("int64")
+    info: dict[str, Any] = {
+        "recodificado": bool(cambiados) or desde_texto,
+        "regla": "entero: posición lexicográfica del menor ID_REGISTRO del grupo "
+        "(determinista por contenido)",
+        "n_grupos": len(np.unique(nuevos)),
+        "valores_cambiados": cambiados,
+        "huerfanas_golden": huerfanas,
+    }
+    if desde_texto:
+        info["desde"] = "etiquetas de texto (p. ej. C<n>/S<n> por régimen en dedupe)"
+    return golden, info

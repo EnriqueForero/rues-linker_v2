@@ -240,12 +240,14 @@ def _barajar(fuentes: dict[str, pd.DataFrame], semilla: int) -> dict[str, pd.Dat
     return {n: f.iloc[rng.permutation(len(f))].reset_index(drop=True) for n, f in fuentes.items()}
 
 
-def _linkage(fuentes: dict[str, pd.DataFrame], dir_trabajo: Path) -> ResultadoLinkage:
+def _linkage(
+    fuentes: dict[str, pd.DataFrame], dir_trabajo: Path, *, skip_reporting: bool = True
+) -> ResultadoLinkage:
     with contextlib.redirect_stdout(io.StringIO()):
         return rl.linkage(
             fuentes,
             work_dir=str(dir_trabajo),
-            skip_reporting=True,
+            skip_reporting=skip_reporting,
             col_ciudad="CIUDAD",
             col_id="CODIGO",
         )
@@ -286,3 +288,91 @@ def test_id_grupo_del_entregable_es_el_rango_del_menor_id_registro(tmp_path: Pat
     assert set(res.golden["ID_GRUPO"]) == set(correl["ID_GRUPO"])
     # El motor (L4/L5 en _trabajo/) ya dejó el mismo id: completar no tuvo que recodificar.
     assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
+
+
+# ── L5 renumera (cannot-link, fusión por NIT): _trabajo/ y L6 llevan los ids finales ──
+
+
+def _fuentes_con_puente() -> dict[str, pd.DataFrame]:
+    """Un registro sin NIT une por nombre dos NIT válidos distintos: cannot-link separa en L5."""
+    nombre = "COMERCIALIZADORA PRUEBA DEL NORTE S.A.S."
+    a = pd.DataFrame(
+        [
+            {"NIT": "800300001", "RAZON_SOCIAL": nombre, "CIUDAD": "BOGOTA", "CODIGO": "A001"},
+            {"NIT": "", "RAZON_SOCIAL": nombre, "CIUDAD": "BOGOTA", "CODIGO": "A002"},
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": "PANADERIA LA ESPIGA DORADA LTDA",
+                "CIUDAD": "CALI",
+                "CODIGO": "A003",
+            },
+            {"NIT": "", "RAZON_SOCIAL": "ASERRIO MONTE ALTO", "CIUDAD": "PASTO", "CODIGO": "A004"},
+        ],
+        dtype=str,
+    )
+    b = pd.DataFrame(
+        [
+            {"NIT": "800300002", "RAZON_SOCIAL": nombre, "CIUDAD": "BOGOTA", "CODIGO": "B001"},
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": "PANADERIA LA ESPIGA DORADA LIMITADA",
+                "CIUDAD": "CALI",
+                "CODIGO": "B002",
+            },
+            {
+                "NIT": "",
+                "RAZON_SOCIAL": "VIVERO FLOR DE LOTO",
+                "CIUDAD": "CUCUTA",
+                "CODIGO": "B003",
+            },
+        ],
+        dtype=str,
+    )
+    return {"CRM": a, "ADUANAS": b}
+
+
+def _ids_por_registro(marco: pd.DataFrame) -> dict[tuple[str, int], int]:
+    return {
+        (str(s), int(i)): int(g)
+        for s, i, g in zip(marco["SRC"], marco["ORIGINAL_INDEX"], marco["ID_GRUPO"], strict=True)
+    }
+
+
+def test_trabajo_y_reportes_llevan_los_ids_del_entregable_cuando_l5_renumera(
+    tmp_path: Path,
+) -> None:
+    """Revisión F2.3 (hallazgo 1): cannot-link renumera (``max+1``) y la fusión por NIT
+    también; sin recodificar al cierre de L5, ``_trabajo/L5_golden/*.parquet`` y los
+    reportes L6 llevaban otros ``ID_GRUPO`` que el entregable (en el banco, 30.112 de
+    30.486). La misma regla se aplica al cierre de L5 y ``completar`` no cambia nada."""
+    dir_trabajo = tmp_path / "puente"
+    res = _linkage(_fuentes_con_puente(), dir_trabajo, skip_reporting=False)
+    correl = res.correlativa
+    # El cannot-link sí actuó: L4 tenía menos grupos que el entregable.
+    l4 = pd.read_parquet(dir_trabajo / "L4_clustering" / "clusters.parquet")
+    assert l4["ID_GRUPO"].nunique() < correl["ID_GRUPO"].nunique()
+    grupo = dict(zip(correl["ID_REGISTRO"], correl["ID_GRUPO"], strict=True))
+    assert len({grupo["CRM-A001"], grupo["CRM-A002"], grupo["ADUANAS-B001"]}) > 1
+
+    # completar no tuvo que recodificar: L5 ya dejó los ids por contenido.
+    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
+    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
+
+    # _trabajo/L5_golden: mismo id por registro y mismo conjunto en el golden.
+    l5_correl = pd.read_parquet(dir_trabajo / "L5_golden" / "correlative.parquet")
+    assert _ids_por_registro(l5_correl) == _ids_por_registro(correl)
+    assert set(l5_correl["ID_GRUPO"]) == set(correl["ID_GRUPO"])
+    l5_golden = pd.read_parquet(dir_trabajo / "L5_golden" / "golden.parquet")
+    assert res.golden is not None
+    assert set(l5_golden["ID_GRUPO"]) == set(res.golden["ID_GRUPO"])
+
+    # Reportes L6: la correlativa exportada y los grupos que listan los reportes.
+    l6 = dir_trabajo / "L6_reporting"
+    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
+        _ids_por_registro(correl)
+    )
+    grupos_entregable = set(correl["ID_GRUPO"].tolist())
+    for nombre in ("reporte_casos_revision.xlsx", "reporte_estadisticas_grupos.xlsx"):
+        for _, hoja in pd.read_excel(l6 / nombre, sheet_name=None).items():
+            if "ID_GRUPO" in hoja.columns:
+                assert set(hoja["ID_GRUPO"].dropna().astype(int)) <= grupos_entregable

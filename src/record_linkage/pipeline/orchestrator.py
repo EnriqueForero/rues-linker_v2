@@ -54,7 +54,11 @@ from ..reporting.strategies import (
     ReportingContext,
     VisualizationsStrategy,
 )
-from ..salida.identificadores_registro import asignar_id_registro, nombre_efectivo
+from ..salida.identificadores_registro import (
+    asignar_id_registro,
+    nombre_efectivo,
+    recodificar_id_grupo,
+)
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
@@ -1855,6 +1859,11 @@ class Orchestrator:
         Consolida clusters en Golden Records únicos usando
         GoldenRecordGeneratorV7 y consolidate_groups_by_nit_balanced.
 
+        F2.3: al cierre (tras cannot-link y consolidación por NIT, que
+        renumeran) ``ID_GRUPO`` se recodifica por contenido con la misma
+        regla y clave que L4, para que lo persistido y los reportes L6 lleven
+        los ids del entregable.
+
         Returns:
             Tupla (dict con 'golden' y 'correlative', [Path, Path])
 
@@ -1962,6 +1971,25 @@ class Orchestrator:
         if golden_final is not golden:
             del golden
         self.log.info("   ✅ Consolidación por NIT completada")
+
+        # F2.3: L4 etiquetó por contenido, pero el cannot-link (max+1 por orden
+        # de aparición) y la consolidación por NIT renumeran. La MISMA regla se
+        # aplica otra vez aquí, con la misma clave que L4, antes de persistir:
+        # así _trabajo/L5_golden/*.parquet y los reportes L6 (que leen este
+        # resultado) llevan los ID_GRUPO del entregable y quien abra un reporte
+        # encuentra el grupo en la correlativa. completar_correlativa vuelve a
+        # aplicarla como red de seguridad y declara que no cambió nada.
+        claves, _ = asignar_id_registro(correl_final, self._col_id_efectivo(correl_final))
+        golden_final, info_grupo = recodificar_id_grupo(correl_final, golden_final, claves)
+        if info_grupo["huerfanas_golden"]:
+            self.log.warning(
+                f"   ⚠️ {info_grupo['huerfanas_golden']:,} fila(s) del golden sin grupo en la "
+                "correlativa tras la consolidación (ID_GRUPO = -1)"
+            )
+        self.log.info(
+            f"   🔢 ID_GRUPO por contenido tras L5: {info_grupo['valores_cambiados']:,} "
+            f"valor(es) recodificado(s) en {info_grupo['n_grupos']:,} grupos"
+        )
 
         # F1.1: red final antes de persistir. Fuera del try anterior a propósito:
         # un golden con métricas nulas o columnas de la correlativa no se

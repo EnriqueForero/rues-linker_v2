@@ -12,11 +12,14 @@ las dos tablas con la forma del estándar (``contrato.py``):
   vive en ``salida/identificadores_registro.py`` (F2.3): L4 la usa para
   etiquetar y aquí se aplica sobre la correlativa final.
 * ``ID_GRUPO`` entero determinista por contenido (F2.3, ADR-0013): posición
-  lexicográfica del menor ``ID_REGISTRO`` del grupo. L4 ya etiqueta así; aquí
-  se garantiza en el entregable (L5 renumera al separar y al fusionar por
-  NIT; ``dedupe`` trae texto ``C<n>``/``S<n>``) con la misma función, y el
+  lexicográfica del menor ``ID_REGISTRO`` del grupo. L4 etiqueta así y el
+  cierre de L5 vuelve a aplicar la regla tras separar (cannot-link) y
+  fusionar por NIT, de modo que ``_trabajo/`` y los reportes L6 ya llevan los
+  ids del entregable; aquí es la red de seguridad (``dedupe`` trae texto
+  ``C<n>``/``S<n>``; el colapso exacto reasigna ``ORIGINAL_INDEX``) con la
+  misma función (``identificadores_registro.recodificar_id_grupo``), y el
   golden recibe el mismo mapa. ``reporte.id_grupo["recodificado"]`` dice si
-  hubo que cambiar algo.
+  hubo que cambiar algo (en ``linkage()`` sin colapso: False).
 * ``ID_ENTIDAD`` = ``NIT-<base sin DV>`` si el grupo adopta un identificador
   válido (``matching.identificadores.base_canonica`` con al menos
   ``LONGITUD_MINIMA_BASE`` dígitos); si no, ``ENT-<16 hex de SHA-256 de los
@@ -103,8 +106,8 @@ from ..matching.identificadores import bases_validas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
 from .identificadores_registro import (
     asignar_id_registro,
-    id_grupo_por_clave_minima,
     nombre_efectivo,
+    recodificar_id_grupo,
 )
 
 __all__ = [
@@ -159,7 +162,8 @@ class ReporteCompletar:
         id_grupo: la regla de ``ID_GRUPO`` (entero determinista por
             contenido, F2.3), ``n_grupos``, ``valores_cambiados`` y si hubo
             que recodificar (``recodificado``: False cuando el motor ya venía
-            por contenido; True tras L5 renumerar o desde texto en ``dedupe``).
+            por contenido, que es lo normal en ``linkage()``; True desde texto
+            en ``dedupe`` o tras el colapso exacto).
         id_entidad: cuántos grupos recibieron ``NIT-…`` y cuántos ``ENT-…``,
             y los grupos que comparten NIT con otro y por eso se desplazaron
             a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo).
@@ -351,45 +355,6 @@ def _resolver_colisiones(
             stacklevel=4,
         )
     return correl, renombres, no_recuperables
-
-
-def _recodificar_id_grupo(
-    correl: pd.DataFrame, golden: pd.DataFrame | None
-) -> tuple[pd.DataFrame | None, dict[str, Any]]:
-    """``ID_GRUPO`` entero determinista por contenido (F2.3), en correlativa y golden.
-
-    La regla es UNA (``identificadores_registro.id_grupo_por_clave_minima``):
-    posición lexicográfica del menor ``ID_REGISTRO`` del grupo. L4 ya la
-    aplica, pero L5 renumera al separar (cannot-link: ``max+1`` por orden de
-    aparición) y al fusionar por NIT, y el ``dedupe`` llega con etiquetas de
-    texto (``C<n>``/``S<n>``): aquí se garantiza en el entregable. Si el motor
-    ya venía por contenido, no cambia nada y el reporte lo dice
-    (``recodificado: False``). Muta ``correl`` (copia superficial del
-    llamador); el golden se devuelve recodificado con el MISMO mapa y sus
-    filas huérfanas (grupos que no están en la correlativa) quedan con -1,
-    que ``_completar_golden`` retira y cuenta.
-    """
-    viejos = correl["ID_GRUPO"].to_numpy()
-    nuevos = id_grupo_por_clave_minima(viejos, correl["ID_REGISTRO"].to_numpy(dtype=object))
-    cambiados = int(
-        (pd.Series(viejos).astype("string") != pd.Series(nuevos).astype("string")).sum()
-    )
-    desde_texto = not pd.api.types.is_integer_dtype(correl["ID_GRUPO"])
-    correl["ID_GRUPO"] = nuevos
-    if golden is not None:
-        mapa = pd.Series(nuevos, index=pd.Index(viejos)).groupby(level=0).first()
-        golden = golden.copy(deep=False)
-        golden["ID_GRUPO"] = golden["ID_GRUPO"].map(mapa).fillna(-1).astype("int64")
-    info: dict[str, Any] = {
-        "recodificado": bool(cambiados) or desde_texto,
-        "regla": "entero: posición lexicográfica del menor ID_REGISTRO del grupo "
-        "(determinista por contenido)",
-        "n_grupos": len(np.unique(nuevos)),
-        "valores_cambiados": cambiados,
-    }
-    if desde_texto:
-        info["desde"] = "etiquetas de texto (p. ej. C<n>/S<n> por régimen en dedupe)"
-    return golden, info
 
 
 def _sha16(texto: str) -> str:
@@ -735,7 +700,9 @@ def completar_correlativa(
     correl["ID_REGISTRO"] = id_registro.astype(str)
 
     # ID_GRUPO determinista por contenido (F2.3): necesita ID_REGISTRO ya puesto.
-    golden, info_grupo = _recodificar_id_grupo(correl, golden)
+    # L5 ya dejó los ids así (orchestrator._run_L5); aquí es la red de seguridad
+    # (dedupe trae texto; el colapso exacto reasigna ORIGINAL_INDEX).
+    golden, info_grupo = recodificar_id_grupo(correl, golden, correl["ID_REGISTRO"])
 
     if "SCORE_PAR" in correl.columns and score_par_previo is not None:
         info_score = dict(score_par_previo)

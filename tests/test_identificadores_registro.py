@@ -18,6 +18,7 @@ from record_linkage.salida.identificadores_registro import (
     asignar_id_registro,
     id_grupo_por_clave_minima,
     nombre_efectivo,
+    recodificar_id_grupo,
 )
 
 # ── id_grupo_por_clave_minima ─────────────────────────────────────────────
@@ -69,6 +70,51 @@ def test_id_grupo_vacio() -> None:
 def test_id_grupo_falla_si_las_longitudes_no_coinciden() -> None:
     with pytest.raises(ValueError, match="claves"):
         id_grupo_por_clave_minima(np.array([0, 0]), np.array(["a"], dtype=object))
+
+
+def test_id_grupo_falla_con_claves_repetidas() -> None:
+    """Con claves repetidas el id dependería del orden de las filas: se rechaza (ADR-0013, 5)."""
+    with pytest.raises(ValueError, match="repetida"):
+        id_grupo_por_clave_minima(np.array([0, 1]), np.array(["a", "a"], dtype=object))
+
+
+def test_id_grupo_falla_con_claves_repetidas_entre_fuentes_con_guion() -> None:
+    """``SRC='X-Y'`` + id ``1`` y ``SRC='X'`` + id ``Y-1`` dan la misma clave ``X-Y-1``."""
+    marco = pd.DataFrame({"SRC": ["X-Y", "X"], "ORIGINAL_INDEX": [0, 1], "CODIGO": ["1", "Y-1"]})
+    claves, _ = asignar_id_registro(marco, "CODIGO")
+    assert claves.tolist() == ["X-Y-1", "X-Y-1"]
+    with pytest.raises(ValueError, match="repetida"):
+        id_grupo_por_clave_minima(np.array([0, 1]), claves)
+
+
+# ── recodificar_id_grupo (correlativa + golden con el mismo mapa) ─────────
+
+
+def test_recodificar_id_grupo_aplica_el_mismo_mapa_al_golden() -> None:
+    """La misma función para L5 y ``completar``: correlativa y golden hablan el mismo idioma."""
+    correl = pd.DataFrame({"ID_GRUPO": [7, 7, 3, 9]})
+    golden = pd.DataFrame({"ID_GRUPO": [3, 7, 9], "RAZON_SOCIAL_FINAL": ["c", "a", "d"]})
+    claves = np.array(["S-F1", "S-F0", "S-F2", "S-F3"], dtype=object)
+    golden_rec, info = recodificar_id_grupo(correl, golden, claves)
+    # {7: S-F0} → 0; {3: S-F2} → 1; {9: S-F3} → 2
+    assert correl["ID_GRUPO"].tolist() == [0, 0, 1, 2]
+    assert golden_rec is not None
+    assert golden_rec["ID_GRUPO"].tolist() == [1, 0, 2]
+    assert golden["ID_GRUPO"].tolist() == [3, 7, 9], "no muta el golden del llamador"
+    assert info["recodificado"] is True and info["valores_cambiados"] == 4
+    assert info["n_grupos"] == 3 and info["huerfanas_golden"] == 0
+
+
+def test_recodificar_id_grupo_declara_identidad_y_huerfanas() -> None:
+    correl = pd.DataFrame({"ID_GRUPO": [0, 0, 1]})
+    golden = pd.DataFrame({"ID_GRUPO": [0, 1, 5]})
+    claves = np.array(["S-F0", "S-F1", "S-F2"], dtype=object)
+    golden_rec, info = recodificar_id_grupo(correl, golden, claves)
+    assert info["recodificado"] is False and info["valores_cambiados"] == 0
+    assert golden_rec is not None and golden_rec["ID_GRUPO"].tolist() == [0, 1, -1]
+    assert info["huerfanas_golden"] == 1
+    sin_golden, info2 = recodificar_id_grupo(correl, None, claves)
+    assert sin_golden is None and info2["recodificado"] is False
 
 
 def test_huella_no_depende_del_valor_del_id() -> None:

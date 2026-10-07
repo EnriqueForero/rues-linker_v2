@@ -38,15 +38,30 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    mismos ids. El contrato no cambia (`ID_GRUPO` sigue siendo `int64`;
    versión 1.0).
 
-3. **Dónde se aplica:** en L4 (el motor etiqueta así desde `clusters.parquet`)
-   **y** en `completar_correlativa`, con la misma función, porque L5 renumera
-   al separar (`cannot_link`: `max+1` por orden de aparición) y al fusionar por
-   NIT, y `dedupe` llega con etiquetas de texto (`C<n>`/`S<n>`). Si el motor ya
-   venía por contenido, `completar` no cambia nada y el reporte lo declara
-   (`id_grupo.recodificado: False`); el golden se recodifica con el mismo mapa.
-   Sin claves (`claves_registro=None`, llamadores heredados del clusterer) el
+3. **Dónde se aplica (tres veces, una función):** en L4 (el motor etiqueta
+   así desde `clusters.parquet`); **al cierre de L5** (`orchestrator._run_L5`,
+   después del cannot-link, que renumera con `max+1` por orden de aparición, y
+   de la consolidación por NIT, que fusiona), con la misma clave que L4
+   (`asignar_id_registro(correlativa, col_id efectivo)`) y antes de persistir,
+   para que `_trabajo/L5_golden/*.parquet` y los reportes L6 (que leen ese
+   resultado) lleven los `ID_GRUPO` del entregable; **y** en
+   `completar_correlativa`, como red de seguridad, porque `dedupe` llega con
+   etiquetas de texto (`C<n>`/`S<n>`) y el colapso de duplicados exactos
+   reasigna `ORIGINAL_INDEX`. La recodificación de correlativa y golden con el
+   mismo mapa vive en `identificadores_registro.recodificar_id_grupo`. Si el
+   motor ya venía por contenido, `completar` no cambia nada y el reporte lo
+   declara (`id_grupo.recodificado: False`, `valores_cambiados: 0`: es lo que
+   ocurre en `linkage()` sin colapso, medido en el banco). Sin claves
+   (`claves_registro=None`, llamadores heredados del clusterer) el
    representante sigue siendo el nodo mínimo: la partición es la misma en
    ambos casos.
+
+   *Revisión (ronda 1):* la primera versión aplicaba la regla solo en L4 y en
+   `completar`, y como `completar` corre DESPUÉS de L6, en el banco 30.112 de
+   30.486 `ID_GRUPO` de `L5_golden/correlative.parquet` y de los reportes eran
+   otros que los del entregable (L4 12.232 grupos → L5 13.069): quien abría el
+   reporte de casos de revisión no encontraba el grupo en la correlativa. Por
+   eso la regla se aplica también al cierre de L5.
 
 4. **Orden lexicográfico, no numérico.** `ID_REGISTRO` es texto; el único
    orden total válido para cualquier fuente es el de cadenas (`RUES-F10` <
@@ -55,6 +70,13 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
 
 5. **Una `col_id` inexistente falla en L4** (mensaje accionable), no al final
    de la corrida como antes: el mismo `ValueError` de `asignar_id_registro`.
+   **Claves repetidas también fallan en L4:** `id_grupo_por_clave_minima`
+   exige claves únicas (con repetidos el «mínimo» de un grupo, y el id de los
+   grupos siguientes, dependería del orden de las filas: `sort_indices` es
+   estable y da rangos distintos a claves iguales). `asignar_id_registro`
+   garantiza unicidad por fuente, no entre fuentes: `SRC='X-Y'` + id `1` y
+   `SRC='X'` + id `Y-1` dan la misma clave `X-Y-1`; el mensaje lo dice (revise
+   `col_id` o los nombres de fuente sin «-»).
 
 ## Medición
 
@@ -85,8 +107,14 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
 - `dedupe` cambia el valor de `ID_GRUPO` (antes: entero por primera aparición
   en `ORIGINAL_INDEX`; ahora: la misma regla que los demás caminos). La huella
   de conformidad no depende del valor.
-- Los `ID_GRUPO` de `_trabajo/L4_clustering/clusters.parquet` y
-  `L5_golden/correlative.parquet` ya son por contenido; con
-  `collapse_exact_duplicates` la expansión reasigna `ORIGINAL_INDEX` y
+- Los `ID_GRUPO` de `_trabajo/L4_clustering/clusters.parquet` son por
+  contenido sobre la partición de L4; los de `_trabajo/L5_golden/*.parquet` y
+  de los reportes L6 son los del entregable (`completar` declara
+  `valores_cambiados: 0` en el banco y en
+  `tests/test_id_grupo_determinista.py::test_trabajo_y_reportes_llevan_los_ids_del_entregable_cuando_l5_renumera`).
+  Como el cannot-link y la fusión por NIT cambian la partición entre L4 y L5,
+  los ids de `clusters.parquet` NO son, en general, los del entregable: son
+  trazables por `record_id` (posición de L1 = `ORIGINAL_INDEX`), no por valor.
+  Con `collapse_exact_duplicates` la expansión reasigna `ORIGINAL_INDEX` y
   `completar` vuelve a aplicar la regla sobre el `ID_REGISTRO` final.
 - Pendiente (F2.4): la herencia entre corridas vive en `ID_ENTIDAD`, no aquí.
