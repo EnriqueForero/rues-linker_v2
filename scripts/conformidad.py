@@ -9,6 +9,7 @@ invisible en un F1 sobre 46.000 pares, y aquí sale en rojo.
 USO
     python scripts/conformidad.py                      # dedup + linkage, motor multicampo
     python scripts/conformidad.py --corroborar         # con levantamiento de veto (F3)
+    python scripts/conformidad.py --camino dedupe_esquema --corroborar --etiqueta corroborado
     python scripts/conformidad.py --camino linkage     # los mismos 43 por api.linkage()
     python scripts/conformidad.py --camino flujo.cruce # … y por flujo.cruce (archivos + arrastre)
     python scripts/conformidad.py --camino todos
@@ -32,9 +33,12 @@ LOS TRES CAMINOS (F2.13)
                     DEPARTAMENTO, SECTOR…) que viajan fuera del motor y se
                     re-adjuntan: comprueba que el re-adjunte no cambia el
                     grupo de nadie.
-    `--corroborar` solo existe en el motor multicampo; pedirlo con otro camino
-    es un error (la evidencia diría `corroborar: true` sobre un motor que no
-    lo tiene). Cada camino escribe su propia evidencia
+    `--corroborar` y `--con-geo` solo existen en el motor multicampo; pedirlos
+    con otro camino (o con `todos`) es un error, no un flag que se ignora: la
+    evidencia diría `corroborar: true` sobre un motor que no lo tiene, o
+    callaría que linkage()/flujo.cruce nunca recibieron LATITUD/LONGITUD. Para
+    la corrida corroborada del camino histórico se invoca el script aparte
+    con `--camino dedupe_esquema`. Cada camino escribe su propia evidencia
     (`conformidad_<escenario>[_<camino>]_<etiqueta>.json`) y cada uno tiene su
     línea base: un caso que da distinto entre caminos se registra tal cual.
 
@@ -73,6 +77,7 @@ from record_linkage.evaluation.conformidad import (
     evaluar_dedup,
     evaluar_linkage,
 )
+from record_linkage.pipeline.errores import ColumnasArrastreError, mensaje_accionable
 
 #: Fuentes que el DICCIONARIO del libro declara confiables (NIT verificado).
 #: Para `linkage()`/`flujo.cruce`, donde la confianza es por fuente, una
@@ -235,8 +240,16 @@ def _grupos_desde_correlativa(correlativa: pd.DataFrame, datos: pd.DataFrame) ->
         correlativa["ID_GRUPO"].to_numpy(), index=correlativa["REG_ID"].astype(str).to_numpy()
     )
     if grupo.index.has_duplicates:
+        repetidos = sorted(grupo.index[grupo.index.duplicated()].unique().tolist())[:5]
         raise ValueError(
-            "La correlativa trae REG_ID repetidos; la partición no se puede alinear con la verdad."
+            mensaje_accionable(
+                que_paso=f"la correlativa trae REG_ID repetidos (p. ej. {repetidos})",
+                por_que_importa="la partición no se puede alinear con la verdad del conjunto",
+                que_hacer=(
+                    "compruebe que REG_ID es única por fila en cada fuente antes de "
+                    "particionar (o pase `col_id` con una columna que sí lo sea)"
+                ),
+            )
         )
     return pd.Series(datos["REG_ID"].astype(str).map(grupo).to_numpy(), index=datos.index)
 
@@ -315,10 +328,17 @@ def _particion_flujo_cruce(
         reporte_arrastre = manifiesto["parametros"]["columnas_arrastre"]
     faltan = sorted(set(arrastre) - set(reporte_arrastre["adjuntadas"]))
     if faltan or reporte_arrastre["omitidas"]:
-        raise RuntimeError(
+        raise ColumnasArrastreError(
             f"flujo.cruce no re-adjuntó las columnas de arrastre {faltan} "
-            f"(omitidas: {reporte_arrastre['omitidas']}). Este camino mide justamente "
-            "que el arrastre no cambia la partición; sin él la medición no es la pedida."
+            f"(omitidas: {reporte_arrastre['omitidas']}); este camino mide justamente "
+            "que el arrastre no cambia la partición, así que sin él la medición no es "
+            "la pedida",
+            que_hacer=(
+                "no use esta evidencia; revise `parametros.columnas_arrastre` en el "
+                "manifiesto de la corrida y el registro de flujo.cruce para ver por qué "
+                "se omitieron, y vuelva a correr `--camino flujo.cruce` cuando las "
+                "columnas de COLUMNAS_ARRASTRE existan en el conjunto"
+            ),
         )
     detalle = {
         "fuentes": {n: len(f) for n, f in fuentes.items()},
@@ -459,7 +479,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     analizador.add_argument(
         "--con-geo",
         action="store_true",
-        help="añade LATITUD/LONGITUD al esquema (medido: baja la precisión en sedes urbanas)",
+        help=(
+            "añade LATITUD/LONGITUD al esquema (medido: baja la precisión en sedes "
+            "urbanas). `--con-geo` solo existe en dedupe_esquema: linkage() y "
+            "flujo.cruce no reciben coordenadas por este script"
+        ),
     )
     analizador.add_argument(
         "--corroborar",
@@ -477,7 +501,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "camino del motor que produce la partición (F2.13): dedupe_esquema "
             "(multicampo, histórico), linkage (api.linkage, producción), flujo.cruce "
             "(ejecutar_cruce sobre archivos con columnas de arrastre) o todos. "
-            "La evidencia lleva el camino en el JSON y en el nombre del archivo"
+            "La evidencia lleva el camino en el JSON y en el nombre del archivo. "
+            "`todos` no admite `--corroborar` ni `--con-geo`; para la corrida "
+            "corroborada use `--camino dedupe_esquema`"
         ),
     )
     analizador.add_argument("--nota", default="")
@@ -497,6 +523,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Por qué importa: linkage() y flujo.cruce no tienen esa perilla y una evidencia "
             "con corroborar=true sobre ellos mentiría. Qué hacer: quite --corroborar para "
             "esos caminos (C09 y C21 quedan en frontera) o use --camino dedupe_esquema."
+        )
+
+    if args.con_geo and any(c != CAMINO_POR_DEFECTO for c in caminos):
+        analizador.error(
+            "--con-geo solo existe en el camino dedupe_esquema. Qué pasó: se pidió "
+            f"LATITUD/LONGITUD para {[c for c in caminos if c != CAMINO_POR_DEFECTO]}. "
+            "Por qué importa: linkage() y flujo.cruce no reciben coordenadas por este "
+            "script y la evidencia no lo registraría: se publicaría como medida con "
+            "geo lo que no lo fue. Qué hacer: quite --con-geo o use --camino dedupe_esquema."
         )
 
     conjunto = cargar_conjunto(args.datos)

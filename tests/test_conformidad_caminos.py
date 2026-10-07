@@ -314,3 +314,91 @@ def test_la_documentacion_nombra_los_43_casos_y_los_tres_caminos() -> None:
     assert not faltan, f"docs/CONFORMIDAD.md no tiene veredicto para: {faltan}"
     for camino in CAMINOS:
         assert camino in texto
+
+
+# ── 5. Ronda 1 de revisión: nada se ignora en silencio ───────────────────
+
+
+@pytest.mark.parametrize("camino", ["linkage", "flujo.cruce", "todos"])
+def test_con_geo_no_existe_fuera_del_motor_multicampo(tmp_path: Path, capsys, camino: str) -> None:
+    """``--con-geo`` solo llega al esquema multicampo; en otro camino se rechaza.
+
+    Antes de la ronda 1 el flag se descartaba sin aviso (CLAUDE.md regla 5):
+    ``--camino todos --con-geo`` daba tres bloques donde solo uno midió con geo
+    y la evidencia no lo decía.
+    """
+    with pytest.raises(SystemExit) as salida:
+        _correr(tmp_path, "--camino", camino, "--con-geo")
+    assert salida.value.code == 2
+    mensaje = capsys.readouterr().err
+    assert "con-geo" in mensaje and "dedupe_esquema" in mensaje
+    assert not list(tmp_path.glob("*.json")), "no se escribe evidencia a medias"
+
+
+def test_reg_id_repetido_en_la_correlativa_dice_que_hacer() -> None:
+    import pandas as pd
+
+    datos = pd.DataFrame({"REG_ID": ["1", "2"]})
+    correlativa = pd.DataFrame({"REG_ID": ["1", "1"], "ID_GRUPO": [1, 1]})
+    with pytest.raises(ValueError, match="Qué hacer") as error:
+        script_conformidad._grupos_desde_correlativa(correlativa, datos)
+    assert "REG_ID" in str(error.value) and "Qué pasó" in str(error.value)
+
+
+def test_arrastre_omitido_en_flujo_cruce_levanta_la_excepcion_especifica(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Si el manifiesto declara columnas omitidas, el camino falla con el tipo del pipeline."""
+    import pandas as pd
+
+    from record_linkage import flujo
+    from record_linkage.pipeline.errores import ColumnasArrastreError
+
+    metadatos = tmp_path / "metadatos.json"
+    metadatos.write_text(
+        json.dumps(
+            {
+                "parametros": {
+                    "columnas_arrastre": {
+                        "adjuntadas": ["REG_ID", "DIRECCION", "DEPARTAMENTO"],
+                        "omitidas": ["SECTOR"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Resultado:
+        correlativa = pd.DataFrame({"REG_ID": ["1"], "ID_GRUPO": [1]})
+        rutas = {"metadatos": metadatos}
+
+    monkeypatch.setattr(flujo, "ejecutar_cruce", lambda config: _Resultado())
+    datos = pd.DataFrame(
+        {
+            "REG_ID": ["1"],
+            "SRC": ["CRM"],
+            "NIT": ["900123456"],
+            "RAZON_SOCIAL": ["EMPRESA INVENTADA SAS"],
+            "CIUDAD": ["BOGOTA"],
+            "TELEFONO": [""],
+            "EMAIL": [""],
+            "DIRECCION": ["CL 1"],
+            "DEPARTAMENTO": ["BOGOTA"],
+            "SECTOR": ["X"],
+        }
+    )
+    with pytest.raises(ColumnasArrastreError, match="SECTOR") as error:
+        script_conformidad._particion_flujo_cruce(datos, "SRC", None)
+    assert "Qué hacer" in str(error.value)
+
+
+def test_el_libro_del_script_documenta_etiqueta_y_la_exclusion_de_todos(capsys) -> None:
+    """La docstring de USO muestra ``--etiqueta`` y ``--help`` avisa que ``todos`` no corrobora."""
+    assert "--corroborar --etiqueta corroborado" in script_conformidad.__doc__
+    with pytest.raises(SystemExit) as salida:
+        script_conformidad.main(["--help"])
+    assert salida.value.code == 0
+    ayuda = " ".join(capsys.readouterr().out.split())
+    assert "`todos` no admite `--corroborar`" in ayuda
+    assert "`--con-geo` solo existe en dedupe_esquema" in ayuda
