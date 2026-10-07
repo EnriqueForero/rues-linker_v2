@@ -3,18 +3,21 @@
 
 Qué congela
 -----------
-Sobre un conjunto sintético inventado (64 filas, dos fuentes, duplicados
-CON_NIT y SIN_NIT, una fuente con su propia columna ``ID_REGISTRO`` y una
-columna extra del usuario), para las tres fachadas y los dos modos del cruce
-(el de disco se lee de vuelta con ``leer_resultado`` desde la generación
-publicada, que tiene la forma del estándar):
+Sobre un conjunto sintético inventado (66 filas, dos fuentes, duplicados
+CON_NIT y SIN_NIT, dos copias exactas en ADUANAS —una con NIT y una sin— para
+que el motor DuckDB colapse y expanda de verdad, una fuente con su propia
+columna ``ID_REGISTRO`` y una columna extra del usuario), para las tres
+fachadas y los dos modos del cruce (el de disco se lee de vuelta con
+``leer_resultado`` desde la generación publicada, que tiene la forma del
+estándar):
 
 * esquema y orden de las columnas fijas de la correlativa y del golden;
 * tipos (enteros, booleanos, decimales, texto);
 * ``ID_REGISTRO`` único; correlativa con N filas = N de entrada;
 * golden sin NaN en métricas y una fila por ``ID_GRUPO``;
 * ``ID_ENTIDAD`` ``NIT-…`` para grupos con identificador válido y ``ENT-…``
-  estable entre dos corridas (determinista por contenido);
+  estable entre dos corridas y exactamente SHA-256 de los ``ID_REGISTRO``
+  publicados del grupo, en los cinco caminos (determinista por contenido);
 * ``METODO_UNION`` coherente (singleton → ``sin_pareja``; mismo NIT →
   ``identificador``) y ``SCORE_PAR`` > 0 en una unión por nombre;
 * el diccionario cubre todas las columnas entregadas;
@@ -83,7 +86,7 @@ _NOMBRES_SINGLETON = [
 
 
 def conjunto_sintetico() -> dict[str, pd.DataFrame]:
-    """64 filas inventadas en dos fuentes.
+    """66 filas inventadas en dos fuentes.
 
     * 12 entidades CON_NIT: dos filas en CRM (variantes SAS / S.A.S.) y una en
       ADUANAS → 36 filas, unión por identificador.
@@ -91,6 +94,11 @@ def conjunto_sintetico() -> dict[str, pd.DataFrame]:
       (LTDA / LIMITADA) → 20 filas, unión por nombre.
     * 8 singletons (2 en CRM, 6 en ADUANAS) con nombres sin palabras en
       común: en los tres caminos quedan en grupos de uno.
+    * 2 copias exactas en ADUANAS (NIT, RAZON_SOCIAL, CIUDAD y SECTOR
+      iguales; solo cambia su ``ID_REGISTRO`` propio): la fila CON_NIT de la
+      entidad 00 y la SIN_NIT de la entidad 0. Son lo único que el motor
+      DuckDB colapsa antes del motor y expande después: sin ellas el camino
+      ``cruce_disco`` no ejercitaría lo que lo distingue (F2.5).
 
     CRM trae ``CODIGO`` (único por fila: sirve de ``col_id``) y ``SECTOR``
     (columna extra del usuario). ADUANAS trae su propia ``ID_REGISTRO``, que
@@ -167,6 +175,9 @@ def conjunto_sintetico() -> dict[str, pd.DataFrame]:
                 "SECTOR": "OTRO",
             }
         )
+    # Copias exactas (en las columnas que el motor ve) de dos filas de ADUANAS.
+    for original, propio in ((b[0], "B-0D"), (b[12], "B-90D")):
+        b.append({**original, "ID_REGISTRO": propio})
     return {FUENTE_A: pd.DataFrame(a, dtype=str), FUENTE_B: pd.DataFrame(b, dtype=str)}
 
 
@@ -272,7 +283,9 @@ def res_cruce_disco(tmp_path_factory: pytest.TempPathFactory) -> ResultadoLinkag
             )
         )
     leido = resultado.leer()
-    assert leido.correlativa.equals(leer_resultado(resultado.carpeta).correlativa)
+    # Lo que el flujo declaró (TablaParquet, sin materializar) es lo que se lee.
+    assert resultado.correlativa.path == resultado.carpeta / "correlativa.parquet"
+    assert resultado.correlativa.rows == len(leido.correlativa)
     return leido
 
 
@@ -386,7 +399,7 @@ def test_id_registro_unico_y_n_filas(resultado: ResultadoLinkage) -> None:
     c = resultado.correlativa
     assert c["ID_REGISTRO"].is_unique and c["ID_REGISTRO"].notna().all()
     n_entrada = sum(e["filas"] for e in resultado.manifiesto["entradas"].values())
-    assert len(c) == n_entrada == 64
+    assert len(c) == n_entrada == 66
 
 
 def test_id_registro_usa_col_id_cuando_es_unico(res_linkage: ResultadoLinkage) -> None:
@@ -451,17 +464,47 @@ def test_id_entidad_nit_y_ent(resultado: ResultadoLinkage) -> None:
     assert fila["ID_ENTIDAD"] == "NIT-" + str(fila["NIT"]).lstrip("0")
 
 
-def test_ent_es_determinista_por_contenido(res_linkage: ResultadoLinkage, tmp_path: Path) -> None:
+def test_ent_es_determinista_entre_corridas(res_linkage: ResultadoLinkage, tmp_path: Path) -> None:
     otra = _correr_linkage(tmp_path / "segunda")
     a = res_linkage.correlativa.set_index("ID_REGISTRO")["ID_ENTIDAD"].sort_index()
     b = otra.correlativa.set_index("ID_REGISTRO")["ID_ENTIDAD"].sort_index()
     pd.testing.assert_series_equal(a, b)
-    # Y es exactamente SHA-256 de los ID_REGISTRO ordenados del grupo.
-    c = res_linkage.correlativa
-    grupo = c[c["ID_ENTIDAD"].str.startswith("ENT-")].groupby("ID_GRUPO")["ID_REGISTRO"]
-    for _, ids in grupo:
-        esperado = "ENT-" + hashlib.sha256("|".join(sorted(ids)).encode()).hexdigest()[:16]
-        assert c.loc[c["ID_REGISTRO"].isin(ids), "ID_ENTIDAD"].eq(esperado).all()
+
+
+def _sha16(texto: str) -> str:
+    return hashlib.sha256(texto.encode()).hexdigest()[:16]
+
+
+def test_ent_es_sha16_de_los_id_registro_publicados(resultado: ResultadoLinkage) -> None:
+    """``ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados>`` en los
+    cinco caminos. En ``cruce_disco`` los ``ID_REGISTRO`` publicados son los de
+    las filas expandidas (``<SRC>-F<fila>``), no los de los representantes que
+    vio el motor: el hash debe ser el de lo que se entrega, o la misma entrada
+    daría ids distintos por motor."""
+    c = resultado.correlativa
+    ent = c[c["ID_ENTIDAD"].str.startswith("ENT-")]
+    assert ent["ID_GRUPO"].nunique() >= 10  # las 10 SIN_NIT, al menos
+    esperado = (
+        ent.sort_values(["ID_GRUPO", "ID_REGISTRO"], kind="stable")
+        .groupby("ID_GRUPO")["ID_REGISTRO"]
+        .agg("|".join)
+        .map(lambda clave: "ENT-" + _sha16(clave))
+    )
+    observado = ent.groupby("ID_GRUPO")["ID_ENTIDAD"].first()
+    pd.testing.assert_series_equal(observado, esperado, check_names=False)
+
+
+def test_cruce_disco_colapsa_copias_exactas_y_las_expande(
+    res_cruce_disco: ResultadoLinkage,
+) -> None:
+    """El camino ``cruce_disco`` pasa por el colapso de DuckDB y lo declara:
+    ADUANAS trae 2 copias exactas (representantes < filas) y la correlativa
+    publicada las devuelve como filas propias."""
+    insumos = res_cruce_disco.manifiesto["entradas"]
+    assert insumos[FUENTE_B]["representantes"] == 28 < insumos[FUENTE_B]["filas"] == 30
+    assert insumos[FUENTE_A]["representantes"] == insumos[FUENTE_A]["filas"] == 36
+    assert len(res_cruce_disco.correlativa) == 66
+    assert res_cruce_disco.metricas["n_registros"] == 66
 
 
 def test_metodo_union_coherente(resultado: ResultadoLinkage) -> None:
@@ -474,7 +517,7 @@ def test_metodo_union_coherente(resultado: ResultadoLinkage) -> None:
     assert (c.loc[tam == 1, "METODO_UNION"] == "sin_pareja").all()
     assert (c.loc[tam == 1, "SCORE_PAR"].isna()).all()
     con_nit = c[(c["NIT"].fillna("").astype(str).str.len() > 0) & (tam > 1)]
-    assert len(con_nit) == 36
+    assert len(con_nit) == 37
     assert (con_nit["METODO_UNION"] == "identificador").all()
     por_nombre = c[c["METODO_UNION"] == "nombre"]
     assert len(por_nombre) > 0
@@ -573,7 +616,7 @@ def test_validar_filas_y_consistencia_entidad(res_linkage: ResultadoLinkage) -> 
     reporte = roto.validar()
     assert not reporte.ok
     texto = "\n".join(reporte.fallos)
-    assert "64" in texto and "63" in texto  # N entrada vs N correlativa
+    assert "66" in texto and "65" in texto  # N entrada vs N correlativa
     assert "ID_ENTIDAD" in texto and "ID_GRUPO" in texto
 
 
@@ -1048,9 +1091,9 @@ def test_col_id_renombrado_por_el_motor_se_resuelve(tmp_path: Path) -> None:
     """``col_nit="IDENT", col_id="IDENT"``: el motor renombra ``IDENT`` → ``NIT``.
 
     Se resuelve al nombre efectivo (nunca ``ValueError``) y, como el sintético
-    repite el NIT en CRM (2 filas por entidad CON_NIT) y lo deja vacío en las
-    SIN_NIT y singletons, ambas fuentes caen a la regla ``fila`` con el motivo
-    exacto que lo explica."""
+    repite el NIT en CRM (2 filas por entidad CON_NIT) y en ADUANAS (la copia
+    exacta) y lo deja vacío en las SIN_NIT y singletons, ambas fuentes caen a
+    la regla ``fila`` con el motivo exacto que lo explica."""
     fuentes = {
         n: f.rename(columns={"NIT": "IDENT", "RAZON_SOCIAL": "NOMBRE"})
         for n, f in conjunto_sintetico().items()
@@ -1075,7 +1118,8 @@ def test_col_id_renombrado_por_el_motor_se_resuelve(tmp_path: Path) -> None:
     assert notas[FUENTE_B] == {
         "regla": "fila",
         "columna": "NIT",
-        "motivo": f"col_id='NIT' en la fuente '{FUENTE_B}': 16 vacío(s)/ausente(s)",
+        "motivo": f"col_id='NIT' en la fuente '{FUENTE_B}': 17 vacío(s)/ausente(s); "
+        "no es único por fila (2 repetido(s))",
     }
     assert res.correlativa["ID_REGISTRO"].str.match(r"^(CRM|ADUANAS)-F\d+$").all()
 

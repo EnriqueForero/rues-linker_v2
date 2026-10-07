@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,7 @@ from record_linkage.ingestion import (
     SourceSpec,
     compact_source_to_parquet,
 )
+from record_linkage.pipeline.errores import ContratoSalidaError
 
 
 def _settings(tmp_path: Path) -> DuckDBIngestionSettings:
@@ -236,7 +238,7 @@ def test_publicacion_invalida_no_deja_archivos_parciales(tmp_path: Path) -> None
     )
     output = tmp_path / "results"
 
-    with pytest.raises(RuntimeError, match="difieren"):
+    with pytest.raises(ContratoSalidaError, match="difieren") as exc:
         publicar_resultados_duckdb(
             pd.DataFrame({"ID_GRUPO": [99]}),
             correlativa,
@@ -245,6 +247,7 @@ def test_publicacion_invalida_no_deja_archivos_parciales(tmp_path: Path) -> None
             output_directory=output,
             settings=_settings(tmp_path),
         )
+    assert "Qué hacer" in str(exc.value)
 
     assert not (output / "golden.parquet").exists()
     assert not (output / "correlativa.parquet").exists()
@@ -330,7 +333,7 @@ def test_publicacion_rechaza_golden_con_entidad_duplicada(tmp_path: Path) -> Non
     )
     golden = pd.DataFrame({"ID_GRUPO": [0, 0], "LABEL": ["ACME", "DUPLICADA"]})
 
-    with pytest.raises(RuntimeError, match="exactamente una fila no nula por entidad"):
+    with pytest.raises(ContratoSalidaError, match="exactamente una fila no nula por entidad"):
         publicar_resultados_duckdb(
             golden,
             correlativa,
@@ -341,6 +344,69 @@ def test_publicacion_rechaza_golden_con_entidad_duplicada(tmp_path: Path) -> Non
         )
 
     assert not (tmp_path / "results" / "resultados.manifest.json").exists()
+
+
+def test_publicacion_rechaza_golden_sin_id_grupo(tmp_path: Path) -> None:
+    """Fallo de invariante del contrato: excepción específica y mensaje accionable."""
+    compact = _compact(tmp_path, "A", [("111111", "ACME", "a1")])
+    correlativa = pd.DataFrame(
+        {
+            "NIT": ["111111"],
+            "RAZON_SOCIAL": ["ACME"],
+            "SRC": ["A"],
+            "ORIGINAL_INDEX": [0],
+            "ID_GRUPO": [0],
+        }
+    )
+    with pytest.raises(ContratoSalidaError, match="no trae ID_GRUPO") as exc:
+        publicar_resultados_duckdb(
+            pd.DataFrame({"LABEL": ["ACME"]}),
+            correlativa,
+            source_order=["A"],
+            compactaciones={"A": compact},
+            output_directory=tmp_path / "results",
+            settings=_settings(tmp_path),
+        )
+    assert "Qué hacer" in str(exc.value)
+    assert not (tmp_path / "results" / "resultados.manifest.json").exists()
+
+
+def test_expansion_reconstruye_id_registro_y_ent_desde_las_filas_publicadas(
+    tmp_path: Path,
+) -> None:
+    """Dos copias exactas sin NIT: el motor vio UN representante (``A-F0``) y
+    le asignó ``ENT-sha16('A-F0')``. La publicación trae dos filas, ``A-F0`` y
+    ``A-F1``, y su ``ID_ENTIDAD`` debe ser el hash de ESOS ids (la regla de
+    ``salida.completar``: determinista por contenido publicado), en la
+    correlativa, en el golden y en el crosswalk por grupo."""
+    compact = _compact(tmp_path, "A", [("", "SIN NIT SAS", "a1"), ("", "SIN NIT SAS", "a1")])
+    assert compact.compact_rows == 1 < compact.input_rows == 2
+    del_motor = "ENT-" + hashlib.sha256(b"A-F0").hexdigest()[:16]
+    esperado = "ENT-" + hashlib.sha256(b"A-F0|A-F1").hexdigest()[:16]
+    correlativa = pd.DataFrame(
+        {
+            "ID_REGISTRO": ["A-F0"],
+            "NIT": [""],
+            "RAZON_SOCIAL": ["SIN NIT SAS"],
+            "SRC": ["A"],
+            "ORIGINAL_INDEX": [0],
+            "ID_GRUPO": [0],
+            "ID_ENTIDAD": [del_motor],
+        }
+    )
+    publicacion = publicar_resultados_duckdb(
+        pd.DataFrame({"ID_GRUPO": [0], "ID_ENTIDAD": [del_motor]}),
+        correlativa,
+        source_order=["A"],
+        compactaciones={"A": compact},
+        output_directory=tmp_path / "results",
+        settings=_settings(tmp_path),
+    )
+    publicada = pd.read_parquet(publicacion.correlativa.path)
+    assert sorted(publicada["ID_REGISTRO"]) == ["A-F0", "A-F1"]
+    assert set(publicada["ID_ENTIDAD"]) == {esperado}
+    golden = pd.read_parquet(publicacion.golden.path)
+    assert golden["ID_ENTIDAD"].tolist() == [esperado]
 
 
 def _publish_marked_result(

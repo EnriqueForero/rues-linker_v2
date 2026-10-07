@@ -13,6 +13,7 @@ generaciones, cada una con la forma del estándar.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -355,8 +356,20 @@ def test_cruce_con_excel_lo_escribe_el_escritor(fuentes_csv, tmp_path: Path) -> 
     assert resultado.rutas["golden_excel"] == carpeta / "excel" / "golden.xlsx"
 
 
-def test_dos_corridas_en_el_mismo_minuto_exigen_otro_nombre(fuentes_csv, tmp_path: Path) -> None:
-    """El escritor nunca sobrescribe una corrida publicada (resolución de minuto)."""
+def test_dos_corridas_en_el_mismo_minuto_exigen_otro_nombre(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """El escritor nunca sobrescribe una corrida publicada (resolución de minuto).
+
+    El reloj se fija: con ``datetime.now()`` real, una corrida en HH:MM:59 y la
+    siguiente en HH:MM+1:00 no chocan y la prueba fallaría al azar."""
+
+    class Reloj(datetime):
+        @classmethod
+        def now(cls, tz=None):  # firma de datetime.now
+            return cls(2026, 10, 6, 12, 0)
+
+    monkeypatch.setattr(escritor, "datetime", Reloj)
     ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
     with pytest.raises(EscrituraSalidaError, match="ya existe"):
         ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
@@ -988,6 +1001,14 @@ def _particion(correlativa: pd.DataFrame) -> set[frozenset[str]]:
     return {frozenset(g["ID_REGISTRO"]) for _, g in correlativa.groupby("ID_GRUPO")}
 
 
+def _entidad_por_grupo(correlativa: pd.DataFrame) -> dict[frozenset[str], str]:
+    """``{registros del grupo: ID_ENTIDAD}``: compara la identidad sin depender del ID_GRUPO."""
+    return {
+        frozenset(g["ID_REGISTRO"]): str(g["ID_ENTIDAD"].iloc[0])
+        for _, g in correlativa.groupby("ID_GRUPO")
+    }
+
+
 def test_los_dos_motores_entregan_la_misma_correlativa(fuentes_csv, tmp_path: Path) -> None:
     """ID_REGISTRO, la partición en grupos y METODO_UNION son los mismos por
     pandas y por DuckDB (en DuckDB el ``<SRC>-F<fila>`` se reconstruye en SQL
@@ -1012,11 +1033,11 @@ def test_los_dos_motores_entregan_la_misma_correlativa(fuentes_csv, tmp_path: Pa
     sin_nit = b[b["RAZON_SOCIAL"].str.startswith("SIN IDENTIFICADOR")]
     assert len(sin_nit) == 2 and set(sin_nit["METODO_UNION"]) == {"nombre"}
     assert sin_nit["ID_GRUPO"].nunique() == 1
-    # Misma partición (los ID_GRUPO pueden numerarse distinto; F2.3 los fija).
+    # Misma partición (los ID_GRUPO pueden numerarse distinto; F2.3 los fija)
+    # y el MISMO ID_ENTIDAD por grupo, también los ENT-: el hash es el de los
+    # ID_REGISTRO publicados, no el de los representantes que vio el motor.
     assert _particion(a) == _particion(b)
-    assert set(a.loc[a["ID_ENTIDAD"].str.startswith("NIT-"), "ID_ENTIDAD"]) == set(
-        b.loc[b["ID_ENTIDAD"].str.startswith("NIT-"), "ID_ENTIDAD"]
-    )
+    assert _entidad_por_grupo(a) == _entidad_por_grupo(b)
 
 
 # ── Flexibilidad: ajustes de perfil, tiempos y deduplicación (v0.14.0) ──
