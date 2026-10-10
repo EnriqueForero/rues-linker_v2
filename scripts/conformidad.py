@@ -62,10 +62,6 @@ import pandas as pd
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
-# Las barras de progreso del motor (tqdm) no son parte del veredicto; se apagan
-# antes de importar el paquete para que la salida sea el informe y nada más.
-os.environ.setdefault("TQDM_DISABLE", "1")
-
 from record_linkage import __version__
 from record_linkage.evaluation.banco import silenciar_pipeline
 from record_linkage.evaluation.conformidad import (
@@ -352,10 +348,25 @@ def _particion_flujo_cruce(
 
 @contextmanager
 def _en_silencio() -> Iterator[None]:
-    """Sin logging del motor ni avisos de compatibilidad: la salida es el informe."""
-    with silenciar_pipeline(), warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        yield
+    """Sin logging del motor, barras de progreso ni avisos: la salida es el informe.
+
+    Las barras (tqdm) se apagan con ``TQDM_DISABLE`` solo mientras dura la
+    corrida y el valor previo se restaura al salir: las pruebas cargan este
+    script como módulo y fijarlo al importar apagaría tqdm para toda la sesión
+    sin que ninguna otra prueba lo supiera. tqdm lee la variable al construir
+    cada barra, no al importar, así que basta con fijarla aquí.
+    """
+    previo = os.environ.get("TQDM_DISABLE")
+    os.environ["TQDM_DISABLE"] = "1"
+    try:
+        with silenciar_pipeline(), warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            yield
+    finally:
+        if previo is None:
+            os.environ.pop("TQDM_DISABLE", None)
+        else:
+            os.environ["TQDM_DISABLE"] = previo
 
 
 def _particion(
@@ -372,8 +383,18 @@ def _particion(
         return _particion_dedupe_esquema(datos, con_geo, corroborar), {}
     if corroborar:
         raise ValueError(
-            f"--corroborar no existe en el camino {camino!r}: la corroboración por "
-            f"contacto (F3) vive solo en el motor multicampo ({CAMINO_POR_DEFECTO})."
+            mensaje_accionable(
+                que_paso=f"se pidió corroborar=True con camino={camino!r}",
+                por_que_importa=(
+                    "la corroboración por contacto (F3) vive solo en el motor multicampo "
+                    f"({CAMINO_POR_DEFECTO}) y una evidencia con corroborar=true sobre "
+                    "otro camino mentiría"
+                ),
+                que_hacer=(
+                    "quite corroborar para este camino (C09 y C21 quedan en frontera) "
+                    f"o use camino={CAMINO_POR_DEFECTO!r}"
+                ),
+            )
         )
     if camino == "linkage":
         return _particion_linkage(datos, col_fuente, col_confianza)

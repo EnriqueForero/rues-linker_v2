@@ -532,10 +532,15 @@ def _veredictos_por_registro_dedup(
 def _cruces_esperados(
     lado: pd.DataFrame, col_id: str, otro: pd.DataFrame, col_otro: str
 ) -> dict[str, frozenset[str]]:
-    """{REG_ID: ids del otro lado con su misma entidad}; entidad ≤ 0 = ninguno."""
+    """{REG_ID: ids del otro lado con su misma entidad}; entidad ≤ 0 = ninguno.
+
+    La entidad se compara con ``strip`` en los dos lados: un ``' 3'`` que
+    trajera una reimportación del libro buscaría ``'3'`` en un diccionario
+    con llave ``' 3'`` y el caso reprobaría por una razón falsa.
+    """
     por_entidad = (
         otro.assign(_id=otro[col_otro].astype(str))
-        .groupby(otro["ENTIDAD_ID_ESPERADO"].astype(str))["_id"]
+        .groupby(otro["ENTIDAD_ID_ESPERADO"].astype(str).str.strip())["_id"]
         .agg(frozenset)
         .to_dict()
     )

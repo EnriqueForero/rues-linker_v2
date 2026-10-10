@@ -234,12 +234,21 @@ def _firmes_reprobados(datos: dict) -> set[str]:
     return {c["codigo"] for c in datos["casos"] if not c["pasa"] and not c["frontera"]}
 
 
+def _veredictos(datos: dict) -> set[tuple[str, bool, bool]]:
+    """(código, pasa, frontera) de cada caso: lo que la línea base compromete."""
+    return {(c["codigo"], c["pasa"], c["frontera"]) for c in datos["casos"]}
+
+
 @pytest.mark.parametrize("camino", ["linkage", "flujo.cruce"])
 def test_el_script_corre_los_43_por_el_camino_de_produccion(tmp_path: Path, camino: str) -> None:
     """Veredicto explícito para los 43 por el camino pedido; el JSON lo registra.
 
     El veredicto se registra tal cual (nota del coordinador): esta prueba exige
     que los 43 tengan fila y que el camino quede escrito, no que todos pasen.
+    Lo que sí exige es que la corrida viva diga lo mismo que la evidencia
+    versionada (trinquete): cuando F2.1/F2.3 muevan la partición de
+    ``linkage()``, los fallos declarados cambian y la evidencia y
+    ``docs/CONFORMIDAD.md`` §4 tienen que cambiar con ellos, no quedarse atrás.
     """
     _, informes = _correr(tmp_path, "--camino", camino, "--etiqueta", "prueba")
     sufijo = camino.replace(".", "_")
@@ -249,12 +258,33 @@ def test_el_script_corre_los_43_por_el_camino_de_produccion(tmp_path: Path, cami
     }
     assert set(informes) == nombres, sorted(informes)
     codigos: set[str] = set()
-    for datos in informes.values():
+    for escenario in ("dedup", "linkage"):
+        datos = informes[f"conformidad_{escenario}_{sufijo}_prueba.json"]
         assert datos["camino"] == camino
         assert datos["corroborar"] is False
         assert datos["extra"]["fuentes"], "la evidencia dice con qué fuentes se corrió"
         codigos |= {c["codigo"] for c in datos["casos"]}
+        linea_base = EVIDENCIA / f"conformidad_{escenario}_{sufijo}_base.json"
+        comprometido = _veredictos(json.loads(linea_base.read_text(encoding="utf-8")))
+        assert _veredictos(datos) == comprometido, (
+            f"la línea base del camino cambió ({linea_base.name}): regenere la evidencia "
+            f"con scripts/conformidad.py --camino {camino} y explique el cambio en "
+            "docs/CONFORMIDAD.md §4"
+        )
     assert len(codigos) == 43
+
+
+def test_corroborar_por_api_fuera_del_multicampo_dice_que_hacer(
+    conjunto: ConjuntoConformidad,
+) -> None:
+    """``correr_dedup``/``correr_linkage`` son públicas: su ValueError lleva los tres tramos."""
+    with pytest.raises(ValueError, match="Qué hacer") as error:
+        script_conformidad.correr_dedup(conjunto, "t", False, "", True, "linkage")
+    mensaje = str(error.value)
+    assert "Qué pasó" in mensaje and "Por qué importa" in mensaje
+    assert "linkage" in mensaje and CAMINO_POR_DEFECTO in mensaje
+    with pytest.raises(ValueError, match="Qué hacer"):
+        script_conformidad.correr_linkage(conjunto, "t", False, "", True, "flujo.cruce")
 
 
 def test_corroborar_no_existe_fuera_del_motor_multicampo(tmp_path: Path, capsys) -> None:
@@ -391,6 +421,54 @@ def test_arrastre_omitido_en_flujo_cruce_levanta_la_excepcion_especifica(
     with pytest.raises(ColumnasArrastreError, match="SECTOR") as error:
         script_conformidad._particion_flujo_cruce(datos, "SRC", None)
     assert "Qué hacer" in str(error.value)
+
+
+def test_importar_el_script_no_toca_el_entorno_del_proceso(tmp_path: Path) -> None:
+    """``TQDM_DISABLE`` no se fija al importar: las pruebas cargan el script en
+    la recolección y apagarían tqdm para toda la sesión sin que nadie lo viera."""
+    import os
+    import subprocess
+    import sys
+
+    entorno = {k: v for k, v in os.environ.items() if k != "TQDM_DISABLE"}
+    entorno["PYTHONPATH"] = str(RAIZ_REPO / "src")
+    codigo = (
+        "import os, sys\n"
+        f"sys.path.insert(0, {str(RAIZ_REPO / 'scripts')!r})\n"
+        "import conformidad\n"
+        "print('TQDM_DISABLE' in os.environ)\n"
+    )
+    salida = subprocess.run(
+        [sys.executable, "-c", codigo], env=entorno, capture_output=True, text=True, check=True
+    )
+    assert salida.stdout.strip() == "False", salida.stdout
+
+
+@pytest.mark.parametrize("previo", [None, "0"])
+def test_en_silencio_apaga_tqdm_solo_mientras_dura(monkeypatch, previo: str | None) -> None:
+    import os
+
+    if previo is None:
+        monkeypatch.delenv("TQDM_DISABLE", raising=False)
+    else:
+        monkeypatch.setenv("TQDM_DISABLE", previo)
+    with script_conformidad._en_silencio():
+        assert os.environ.get("TQDM_DISABLE") == "1"
+    assert os.environ.get("TQDM_DISABLE") == previo
+
+
+def test_los_cruces_esperados_toleran_espacios_en_la_entidad() -> None:
+    """Un ' 3' importado del libro se resuelve igual que '3' en los dos lados."""
+    import pandas as pd
+
+    from record_linkage.evaluation.conformidad import _cruces_esperados
+
+    lado = pd.DataFrame({"REG_ID_A": ["1", "2"], "ENTIDAD_ID_ESPERADO": ["3", " -1"]})
+    otro = pd.DataFrame({"REG_ID_B": ["7", "8", "9"], "ENTIDAD_ID_ESPERADO": [" 3", "3 ", "4"]})
+    assert _cruces_esperados(lado, "REG_ID_A", otro, "REG_ID_B") == {
+        "1": frozenset({"7", "8"}),
+        "2": frozenset(),
+    }
 
 
 def test_el_libro_del_script_documenta_etiqueta_y_la_exclusion_de_todos(capsys) -> None:
