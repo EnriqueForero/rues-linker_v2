@@ -23,7 +23,8 @@ PLANTILLA = "06_ejemplo_rues_x_exportaciones.ipynb"
 ORQUESTADOR = "06_orquestador_configurable.ipynb"
 IMPORTADORES = "07_deduplicar_importadores_razon_social_pais.ipynb"
 PUBLICACION = "08_PUBLICAR_GITHUB.ipynb"
-NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION)
+OPTIMIZACION = "12_optimizar_parametros_con_optuna.ipynb"
+NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION, OPTIMIZACION)
 #: Notebooks que INSTALAN y consumen la librería. El 08 publica el paquete: su
 #: primera celda instala herramientas de build, no rues-linker, así que los
 #: contratos de la celda de entorno no le aplican.
@@ -38,6 +39,7 @@ TODOS = (
     ORQUESTADOR,
     IMPORTADORES,
     PUBLICACION,
+    OPTIMIZACION,
 )
 
 

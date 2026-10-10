@@ -1,4 +1,4 @@
-"""Contrato de los notebooks 01–06 con el estándar de salida (F1.15).
+"""Contrato de los notebooks 01–06 y 12 con el estándar de salida (F1.15, F2.15).
 
 Dos compuertas, con propósitos distintos:
 
@@ -13,7 +13,12 @@ Dos compuertas, con propósitos distintos:
   ``tests/data_sintetica/`` —la prueba materializa los archivos con la forma
   exacta que la Celda B de cada notebook declara (nombres, hojas, columnas,
   separadores)— con un tope de 10 minutos por notebook. Un notebook que nunca
-  se ejecutó no es un entregable.
+  se ejecutó no es un entregable. El 12 (F2.15) no recibe archivo: genera su
+  base de demostración con empresas inventadas y necesita ``optuna`` en el
+  venv (extra ``optimization``; sin él la prueba FALLA, no se salta).
+* **Delgadez del 12** (``test_el_notebook_12_no_reimplementa_el_optimizador``):
+  el notebook configura y llama a ``OrchestratorOptimizer``; no define
+  clases, ni una función objetivo, ni toca ``optuna`` directamente.
 
 Cómo se ejecuta un notebook aquí y no en Colab
 ----------------------------------------------
@@ -61,7 +66,8 @@ NB04 = "04_multicampo_y_evaluacion.ipynb"
 NB05 = "05_general_cruce_configurable.ipynb"
 NB06_PLANTILLA = "06_ejemplo_rues_x_exportaciones.ipynb"
 NB06_ORQUESTADOR = "06_orquestador_configurable.ipynb"
-CONTRATO = (NB01, NB02, NB03, NB04, NB05, NB06_PLANTILLA, NB06_ORQUESTADOR)
+NB12 = "12_optimizar_parametros_con_optuna.ipynb"
+CONTRATO = (NB01, NB02, NB03, NB04, NB05, NB06_PLANTILLA, NB06_ORQUESTADOR, NB12)
 
 #: Notebooks cuya primera celda es la de entorno (instalan desde Drive o, en
 #: 01 a 04, desde GitHub si la versión no coincide): en la prueba se sustituye
@@ -204,6 +210,69 @@ def test_el_notebook_declara_ruta_datos_o_variables_de_entorno(nombre: str) -> N
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Compuerta rápida (F2.15): el notebook 12 no reimplementa el optimizador
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Lo que el notebook 12 tiene que PEDIRLE a la librería (si deja de importarlo,
+#: es que lo está haciendo a mano).
+PIEZAS_DEL_OPTIMIZADOR = (
+    "OrchestratorOptimizer",
+    "GroundTruthGenerator",
+    "espacio_de_busqueda",
+    "graficar_convergencia",
+    "linkage",
+)
+#: Raíces de nombre que delatan una función objetivo, una métrica o un bucle
+#: de optimización escritos en el notebook. Son clases de enunciado, no nombres
+#: puntuales: un ``def objective`` renombrado ``def puntaje`` cae igual.
+RAICES_PROHIBIDAS = ("objective", "objetivo", "evaluar", "optimiz", "score", "puntaje", "trial")
+
+
+def _nombres_importados(celdas: list[str]) -> set[str]:
+    nombres: set[str] = set()
+    for fuente in celdas:
+        for nodo in ast.walk(ast.parse(_sin_magics(fuente))):
+            if isinstance(nodo, ast.ImportFrom) and (nodo.module or "").startswith(
+                "record_linkage"
+            ):
+                nombres.update(alias.asname or alias.name for alias in nodo.names)
+    return nombres
+
+
+def test_el_notebook_12_no_reimplementa_el_optimizador() -> None:
+    """Solo configuración: la muestra, la métrica y el bucle viven en la librería."""
+    celdas = _codigo(_cargar(NB12))
+    fallos: list[str] = []
+    for i, fuente in enumerate(celdas):
+        arbol = ast.parse(_sin_magics(fuente))
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.ClassDef):
+                fallos.append(f"celda {i}: define la clase {nodo.name}")
+            elif isinstance(nodo, ast.FunctionDef | ast.AsyncFunctionDef):
+                nombre = nodo.name.lower()
+                if any(r in nombre for r in RAICES_PROHIBIDAS):
+                    fallos.append(f"celda {i}: define {nodo.name}(), que huele a optimizador")
+                if any(a.arg == "trial" for a in nodo.args.args):
+                    fallos.append(f"celda {i}: {nodo.name}(trial) es una función objetivo")
+            elif isinstance(nodo, ast.Import | ast.ImportFrom):
+                modulos = (
+                    [a.name for a in nodo.names]
+                    if isinstance(nodo, ast.Import)
+                    else [nodo.module or ""]
+                )
+                if any(m == "optuna" or m.startswith("optuna.") for m in modulos):
+                    fallos.append(f"celda {i}: importa optuna (eso lo hace la librería)")
+            elif isinstance(nodo, ast.Attribute) and (
+                nodo.attr.startswith("suggest_") or nodo.attr == "create_study"
+            ):
+                fallos.append(f"celda {i}: usa .{nodo.attr} (el espacio lo arma la librería)")
+    faltan = set(PIEZAS_DEL_OPTIMIZADOR) - _nombres_importados(celdas)
+    if faltan:
+        fallos.append(f"no importa de record_linkage: {sorted(faltan)}")
+    assert not fallos, f"{NB12} no es delgado:\n" + "\n".join(f"  - {f}" for f in fallos)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Compuerta lenta: cada notebook corre entero sobre la sintética
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -321,6 +390,12 @@ def _preparar_06_plantilla(datos: Path) -> dict[str, str]:
     return {}
 
 
+def _preparar_12(datos: Path) -> dict[str, str]:
+    """Sin archivo: el notebook genera su base de demostración en RUTA_DATOS."""
+    datos.mkdir(parents=True, exist_ok=True)
+    return {}
+
+
 def _preparar_06_orquestador(datos: Path) -> dict[str, str]:
     base = _sintetica()
     _csv_en_zip(
@@ -357,6 +432,7 @@ PREPARADORES: dict[str, Callable[[Path], dict[str, str]]] = {
     NB05: _preparar_05,
     NB06_PLANTILLA: _preparar_06_plantilla,
     NB06_ORQUESTADOR: _preparar_06_orquestador,
+    NB12: _preparar_12,
 }
 
 #: Lo que cada notebook tiene que haber dejado en disco (glob relativo a tmp_path).
@@ -377,6 +453,16 @@ ARTEFACTOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     NB05: ("resultados/correlativa.parquet", "resultados/golden.parquet"),
     NB06_PLANTILLA: ("datos/RUES/_procesados/resultados_rues_linker/correlativa.parquet",),
     NB06_ORQUESTADOR: ("resultados/rues_x_exportaciones/resultados.manifest.json",),
+    NB12: (
+        "datos/empresas_demo.csv",
+        "resultados/pares_para_etiquetar.xlsx",
+        "resultados/pares_etiquetados.csv",
+        "resultados/convergencia.png",
+        "resultados/importancia.png",
+        "resultados/*_optimizado/manifest.json",
+        "resultados/*_optimizado/correlativa.parquet",
+        "resultados/estudio_optuna.json",
+    ),
 }
 
 
@@ -460,6 +546,15 @@ def test_el_notebook_corre_entero_sobre_la_sintetica(
         pytest.fail(
             f"falta {exc.name}: pip install nbclient ipykernel && "
             f"python -m ipykernel install --user --name {KERNEL_PROPIO}"
+        )
+
+    if nombre == NB12:
+        from record_linkage.evaluation import OPTUNA_AVAILABLE
+
+        assert OPTUNA_AVAILABLE, (
+            f"{NB12} necesita optuna y no está en el venv: "
+            "pip install -e '.[optimization]' (la prueba no se salta: sin optuna el "
+            "notebook no es un entregable)"
         )
 
     datos, resultados, trabajo = tmp_path / "datos", tmp_path / "resultados", tmp_path / "trabajo"

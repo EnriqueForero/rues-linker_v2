@@ -7,6 +7,7 @@
 | [`BENCHMARK.md`](BENCHMARK.md) | El conjunto de referencia institucional: cómo se armó, qué mide y qué no |
 | [`CONFORMIDAD.md`](CONFORMIDAD.md) | La suite de 43 casos: qué sabe hacer la librería, caso por caso |
 | [`BITACORA.md`](BITACORA.md) | Registro cronológico: qué se hizo, con qué evidencia, qué no funcionó |
+| [`OPTIMIZACION.md`](OPTIMIZACION.md) | Calibrar parámetros contra pares etiquetados con Optuna (notebook 12): cuándo, cómo construir la verdad, cómo aplicar `ajustes_perfil`, qué no hace |
 | [`ANALISIS_IMPORTADORES.md`](ANALISIS_IMPORTADORES.md) | Deduplicación sin identificador: resultados sobre la base de referencia, calidad medida, qué queda |
 | [`ENTREGA_0.22.4.md`](ENTREGA_0.22.4.md) | Última entrega: qué se encontró, qué se corrigió, cómo se verificó (anteriores: [`0.22.3`](ENTREGA_0.22.3.md), [`0.22.2`](ENTREGA_0.22.2.md), [`0.20.0`](ENTREGA_0.20.0.md)) |
 | [`PLAN.md`](PLAN.md) | Los 37 criterios de mejora y su estado |
