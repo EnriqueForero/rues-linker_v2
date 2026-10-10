@@ -44,21 +44,24 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    de la consolidación por NIT, que fusiona), con la misma clave que L4
    (`asignar_id_registro(correlativa, col_id efectivo)`) y antes de persistir,
    para que `_trabajo/L5_golden/*.parquet` y los reportes L6 (que leen ese
-   resultado) lleven los `ID_GRUPO` del entregable; **con
-   `collapse_exact_duplicates=True`, en `api.linkage`** justo después de
-   `_expand_exact_correlative` y ANTES de L6 (la expansión reasigna
-   `ORIGINAL_INDEX` y, al restaurar los duplicados, `col_id` deja de ser única
-   en la fuente: la clave pasa de `<SRC>-<id>` a `<SRC>-F<n>` y con ella el
-   id), con la misma clave (`nombre_efectivo` + `asignar_id_registro`), y el
-   resultado queda declarado en
-   `metricas["preprocessing"]["id_grupo_tras_expansion"]`; **y** en
+   resultado) lleven los `ID_GRUPO` del entregable; **tras el postprocesado
+   de `api.linkage`** (matcher y/o colapso exacto), UNA vez, sobre el
+   resultado ya postprocesado y ANTES de L6: el matcher
+   (`MatcherPostProcessor.apply`) asigna a los subgrupos que separa ids
+   nuevos `max+1`, y la expansión del colapso reasigna `ORIGINAL_INDEX` y, al
+   restaurar los duplicados, `col_id` deja de ser única en la fuente (la clave
+   pasa de `<SRC>-<id>` a `<SRC>-F<n>` y con ella el id); con la misma clave
+   (`nombre_efectivo` + `asignar_id_registro`), y el resultado queda declarado
+   en `metricas["preprocessing"]["id_grupo_tras_postprocesado"]`, en memoria
+   y en el `manifest.json` de la carpeta del estándar (`escritor` persiste el
+   bloque `preprocessing`); **y** en
    `completar_correlativa`, como red de seguridad, porque `dedupe` llega con
    etiquetas de texto (`C<n>`/`S<n>`). La recodificación de correlativa y
    golden con el mismo mapa vive en
    `identificadores_registro.recodificar_id_grupo`. Si el motor ya venía por
    contenido, `completar` no cambia nada y el reporte lo declara
    (`id_grupo.recodificado: False`, `valores_cambiados: 0`: es lo que ocurre
-   en `linkage()` con y sin colapso; medido en el banco y en
+   en `linkage()` con y sin postprocesado; medido en el banco y en
    `tests/test_id_grupo_determinista.py`). Sin claves
    (`claves_registro=None`, llamadores heredados del clusterer) el
    representante sigue siendo el nodo mínimo: la partición es la misma en
@@ -76,12 +79,26 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    y `completar` los cambiaba después (16 de 45 en el fixture de
    `test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable`). Por
    eso, con colapso, la regla se aplica en `api.linkage` tras la expansión y
-   antes de L6. La regla se evalúa así hasta cuatro veces por corrida (L4,
-   cierre de L5, expansión del colapso, `completar`); con las cifras de abajo
-   son ≈ 12 s a 2M filas. Anotado para F4 (escala): cuando no hay colapso ni
-   `dedupe`, `completar` puede saltarse la recodificación si el estado de L5
-   ya declara la regla aplicada, o reutilizar las claves de L5 en vez de
-   recomputarlas; medir con `scripts/escala.py`.
+   antes de L6.
+
+   *Revisión (ronda 3):* el otro postprocesado de `api.linkage`, el matcher
+   (`matching_profile=`), dejaba el mismo defecto por un tercer camino:
+   `MatcherPostProcessor.apply` da a los subgrupos que separa ids nuevos
+   `max+1`, L6 corría sobre ese resultado y `completar` los cambiaba después
+   (8 de 40 con `col_id=None` en el fixture de
+   `test_con_matcher_los_reportes_llevan_los_ids_del_entregable`, con el
+   MISMO conjunto de ids: el grupo N del reporte era OTRO grupo en la
+   correlativa; con `col_id='CODIGO'` daba 0 por coincidencia del fixture, no
+   por garantía; con el perfil `colombia` sin cambios el matcher no separa
+   nada en ese fixture y por eso no se vio antes). Por eso el bloque salió de
+   la rama del colapso y se aplica UNA vez tras todo el postprocesado
+   (`if needs_postprocessing:`), y la declaración se persiste en
+   `manifest.json`. La regla se evalúa así hasta cuatro veces por corrida
+   (L4, cierre de L5, tras el postprocesado, `completar`); con las cifras de
+   abajo son ≈ 12 s a 2M filas. Anotado para F4 (escala): `completar` puede
+   saltarse la recodificación cuando el estado de L5/postprocesado ya declara
+   la regla aplicada con `valores_cambiados == 0`, o reutilizar las claves ya
+   calculadas en vez de recomputarlas; medir con `scripts/escala.py`.
 
 4. **Orden lexicográfico, no numérico.** `ID_REGISTRO` es texto; el único
    orden total válido para cualquier fuente es el de cadenas (`RUES-F10` <
@@ -135,9 +152,13 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
   Como el cannot-link y la fusión por NIT cambian la partición entre L4 y L5,
   los ids de `clusters.parquet` NO son, en general, los del entregable: son
   trazables por `record_id` (posición de L1 = `ORIGINAL_INDEX`), no por valor.
-  Con `collapse_exact_duplicates` la expansión reasigna `ORIGINAL_INDEX` (y
-  `col_id` deja de ser única en la fuente): la regla se aplica en
-  `api.linkage` tras expandir y antes de L6, así que los reportes L6 llevan
-  los ids del entregable también con colapso y `completar` no cambia nada
-  (`tests/test_id_grupo_determinista.py::test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable`).
+  El postprocesado de `api.linkage` cambia esos ids (el matcher separa con
+  `max+1`; con `collapse_exact_duplicates` la expansión reasigna
+  `ORIGINAL_INDEX` y `col_id` deja de ser única en la fuente): la regla se
+  aplica una vez tras el postprocesado y antes de L6, así que los reportes L6
+  llevan los ids del entregable también con matcher y/o colapso, `completar`
+  no cambia nada y `manifest.json` lo declara en
+  `metricas.preprocessing.id_grupo_tras_postprocesado`
+  (`tests/test_id_grupo_determinista.py::test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable`
+  y `::test_con_matcher_los_reportes_llevan_los_ids_del_entregable`).
 - Pendiente (F2.4): la herencia entre corridas vive en `ID_ENTIDAD`, no aquí.

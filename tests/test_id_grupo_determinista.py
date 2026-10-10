@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -412,7 +413,8 @@ def test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable(
     ``<SRC>-F<n>``). Sin aplicar la regla tras la expansión, L6 corría con los ids
     de L5 y ``completar`` los cambiaba después (16 de 45 en este fixture): quien
     abría un reporte no encontraba el grupo en la correlativa. Ahora ``api.linkage``
-    aplica la regla tras expandir y antes de L6; ``completar`` no cambia nada."""
+    aplica la regla tras el postprocesado (matcher y/o colapso exacto) y antes de L6;
+    ``completar`` no cambia nada."""
     dir_trabajo = tmp_path / "colapso"
     with contextlib.redirect_stdout(io.StringIO()):
         res = rl.linkage(
@@ -426,6 +428,7 @@ def test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable(
     correl = res.correlativa
     assert len(correl) == 45  # 40 únicas + 5 restauradas
     assert res.metricas["preprocessing"]["exact_duplicate_collapse"]["CRM"]["collapsed_rows"] == 3
+    assert "recodificado" in res.metricas["preprocessing"]["id_grupo_tras_postprocesado"]
     # Con duplicados restaurados CODIGO ya no es única: la regla cae a la fila.
     reglas = res.manifiesto["completar"]["id_registro"]
     assert {f: r["regla"] for f, r in reglas.items()} == {"CRM": "fila", "ADUANAS": "fila"}
@@ -443,3 +446,67 @@ def test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable(
         for _, hoja in pd.read_excel(l6 / nombre, sheet_name=None).items():
             if "ID_GRUPO" in hoja.columns:
                 assert set(hoja["ID_GRUPO"].dropna().astype(int)) <= grupos_entregable
+
+
+# ── Matcher: separa subgrupos con ids nuevos (max+1); L6 debe llevar los ids finales ──
+
+
+def _perfil_que_separa() -> Any:
+    """Perfil que separa los 6 pares sin NIT unidos por nombre cuando la ciudad difiere."""
+    from record_linkage.matching import default_colombia_profile
+
+    perfil = default_colombia_profile()
+    perfil.require_city_match = True
+    perfil.min_concordances_without_nit = 3
+    return perfil
+
+
+@pytest.mark.parametrize("col_id", ["CODIGO", None])
+def test_con_matcher_los_reportes_llevan_los_ids_del_entregable(
+    tmp_path: Path, col_id: str | None
+) -> None:
+    """Revisión F2.3 (ronda 3, hallazgo 1): ``MatcherPostProcessor.apply`` asigna a los
+    subgrupos separados ids nuevos ``max+1`` y L6 corría sobre ese resultado; después
+    ``completar`` recodificaba (8 de 40 con ``col_id=None`` en este fixture, mismo
+    conjunto de ids: quien buscaba el grupo N de un reporte en la correlativa hallaba
+    OTRO grupo sin aviso). Con ``col_id='CODIGO'`` daba 0 por coincidencia del fixture,
+    no por garantía. Ahora ``api.linkage`` aplica la regla UNA vez tras el postprocesado
+    (matcher y/o colapso exacto), antes de L6, y lo declara en el manifest.json."""
+    fuentes = _fuentes()
+    fuentes["ADUANAS"]["CIUDAD"] = fuentes["ADUANAS"]["CIUDAD"].replace("CALI", "BOGOTA")
+    dir_trabajo = tmp_path / "matcher"
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = rl.linkage(
+            fuentes,
+            work_dir=str(dir_trabajo),
+            skip_reporting=False,
+            col_ciudad="CIUDAD",
+            col_id=col_id,
+            matching_profile=_perfil_que_separa(),
+            return_matcher_audit=True,
+            carpeta_salida=str(tmp_path / "salida"),
+            nombre="matcher",
+        )
+    correl = res.correlativa
+    assert res.metricas["matcher_stats"]["n_clusters_split"] > 0  # el matcher sí separó
+
+    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
+    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
+    assert set(correl["ID_GRUPO"]) == set(range(correl["ID_GRUPO"].nunique()))
+
+    l6 = dir_trabajo / "L6_reporting"
+    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
+        _ids_por_registro(correl)
+    )
+
+    # Declarado en memoria y en el manifest.json escrito (hallazgo 2 de la ronda 3).
+    declarado = res.metricas["preprocessing"]["id_grupo_tras_postprocesado"]
+    assert declarado["regla"].startswith("entero")
+    # Con col_id=None los ids max+1 del matcher sí se rehacen (8 cambios); con
+    # 'CODIGO' coinciden con el rango lexicográfico de las claves CRM-A9xx y la
+    # regla no cambia nada: por eso la versión anterior «pasaba» en ese caso.
+    assert declarado["recodificado"] is (col_id is None)
+    manifest = json.loads(
+        next((tmp_path / "salida").glob("*_matcher/manifest.json")).read_text(encoding="utf-8")
+    )
+    assert manifest["metricas"]["preprocessing"]["id_grupo_tras_postprocesado"] == declarado

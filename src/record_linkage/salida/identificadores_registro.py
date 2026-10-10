@@ -25,9 +25,10 @@ L4 (``engine/clusterer.py`` vía ``pipeline/orchestrator._run_L4``), el cierre
 de L5 (``pipeline/orchestrator._run_L5``: cannot-link y la consolidación por
 NIT renumeran, así que la regla se vuelve a aplicar antes de persistir para que
 ``_trabajo/L5_golden/*.parquet`` y los reportes L6 lleven los ids del
-entregable), ``api.linkage`` tras expandir el colapso exacto (que reasigna
-``ORIGINAL_INDEX`` y deja ``col_id`` repetida en la fuente), también antes de
-L6, y ``salida/completar.py`` (red de seguridad: ``dedupe`` llega con
+entregable), ``api.linkage`` tras su postprocesado (matcher y/o colapso
+exacto: el matcher separa subgrupos con ids ``max+1``; la expansión del colapso
+reasigna ``ORIGINAL_INDEX`` y deja ``col_id`` repetida en la fuente), también
+antes de L6, y ``salida/completar.py`` (red de seguridad: ``dedupe`` llega con
 etiquetas de texto). Antes de
 F2.3 ``ID_GRUPO`` era la posición mínima del grupo y cambiaba con cualquier
 fila nueva o reordenada; la huella del banco
@@ -245,9 +246,10 @@ def recodificar_id_grupo(
 
     La regla es UNA (:func:`id_grupo_por_clave_minima`); quien la aplica es
     el cierre de L5 (``pipeline/orchestrator._run_L5``, tras cannot-link y la
-    consolidación por NIT, que renumeran), ``api.linkage`` tras expandir el
-    colapso exacto (que reasigna ``ORIGINAL_INDEX``) y ``salida/completar``
-    (red de seguridad: ``dedupe`` trae texto ``C<n>``/``S<n>``). Si el motor
+    consolidación por NIT, que renumeran), ``api.linkage`` tras su
+    postprocesado (matcher y/o colapso exacto), antes de L6, y
+    ``salida/completar`` (red de seguridad: ``dedupe`` trae texto
+    ``C<n>``/``S<n>``). Si el motor
     ya venía por contenido no cambia nada y lo dice (``recodificado: False``).
 
     Muta ``correl["ID_GRUPO"]`` (el llamador pasa su propio frame o una copia

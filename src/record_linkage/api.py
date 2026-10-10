@@ -596,12 +596,25 @@ def linkage(
         result["correlative"] = _expand_exact_correlative(
             result["correlative"], source_order, collapse_plan
         )
-        # F2.3 (revisión, ronda 2): la expansión reasigna ORIGINAL_INDEX y, al
-        # restaurar los duplicados, col_id deja de ser única en la fuente, así
-        # que la clave de registro cambia (de <SRC>-<id> a <SRC>-F<n>) y con
-        # ella el ID_GRUPO por contenido. La MISMA regla y la MISMA clave que
-        # L4/L5 se aplican aquí, ANTES de L6, para que los reportes lleven los
-        # ids del entregable; completar_correlativa no tendrá nada que cambiar.
+        result["preprocessing"] = {"exact_duplicate_collapse": collapse_plan["stats"]}
+
+        # Diferenciar registros únicos procesados de filas de entrada
+        # restauradas, sin alterar la semántica histórica de RECORD_COUNT.
+        input_counts = result["correlative"].groupby("ID_GRUPO", sort=False).size()
+        result["golden"]["INPUT_ROW_COUNT"] = (
+            result["golden"]["ID_GRUPO"].map(input_counts).fillna(0).astype("int64")
+        )
+
+    if needs_postprocessing:
+        # F2.3 (revisión, rondas 2 y 3): el postprocesado de linkage() cambia
+        # los ID_GRUPO que L5 dejó por contenido. El matcher asigna a los
+        # subgrupos que separa ids nuevos max+1; la expansión del colapso
+        # reasigna ORIGINAL_INDEX y, al restaurar los duplicados, col_id deja
+        # de ser única en la fuente, así que la clave de registro cambia (de
+        # <SRC>-<id> a <SRC>-F<n>) y con ella el id. La MISMA regla y la MISMA
+        # clave que L4/L5 se aplican UNA vez, aquí, sobre el resultado ya
+        # postprocesado y ANTES de L6, para que los reportes lleven los ids del
+        # entregable; completar_correlativa no tendrá nada que cambiar.
         from .salida.identificadores_registro import (
             asignar_id_registro,
             nombre_efectivo,
@@ -615,17 +628,7 @@ def linkage(
         result["golden"], info_grupo = recodificar_id_grupo(
             result["correlative"], result["golden"], claves
         )
-        result["preprocessing"] = {
-            "exact_duplicate_collapse": collapse_plan["stats"],
-            "id_grupo_tras_expansion": info_grupo,
-        }
-
-        # Diferenciar registros únicos procesados de filas de entrada
-        # restauradas, sin alterar la semántica histórica de RECORD_COUNT.
-        input_counts = result["correlative"].groupby("ID_GRUPO", sort=False).size()
-        result["golden"]["INPUT_ROW_COUNT"] = (
-            result["golden"]["ID_GRUPO"].map(input_counts).fillna(0).astype("int64")
-        )
+        result.setdefault("preprocessing", {})["id_grupo_tras_postprocesado"] = info_grupo
 
     if needs_postprocessing and reporting_requested:
         # Los checkpoints L5 pertenecen al resultado compacto/anterior al

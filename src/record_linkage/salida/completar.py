@@ -14,13 +14,14 @@ las dos tablas con la forma del estándar (``contrato.py``):
 * ``ID_GRUPO`` entero determinista por contenido (F2.3, ADR-0013): posición
   lexicográfica del menor ``ID_REGISTRO`` del grupo. L4 etiqueta así, el
   cierre de L5 vuelve a aplicar la regla tras separar (cannot-link) y
-  fusionar por NIT, y ``api.linkage`` la aplica otra vez tras expandir el
-  colapso exacto (que reasigna ``ORIGINAL_INDEX``), siempre ANTES de L6: así
+  fusionar por NIT, y ``api.linkage`` la aplica una vez más tras su
+  postprocesado (matcher, que separa con ids ``max+1``, y/o colapso exacto,
+  cuya expansión reasigna ``ORIGINAL_INDEX``), siempre ANTES de L6: así
   ``_trabajo/`` y los reportes L6 ya llevan los ids del entregable. Aquí es
   la red de seguridad (``dedupe`` trae texto ``C<n>``/``S<n>``) con la misma
   función (``identificadores_registro.recodificar_id_grupo``), y el golden
   recibe el mismo mapa. ``reporte.id_grupo["recodificado"]`` dice si hubo
-  que cambiar algo (en ``linkage()``, con o sin colapso: False).
+  que cambiar algo (en ``linkage()``, con o sin postprocesado: False).
 * ``ID_ENTIDAD`` = ``NIT-<base sin DV>`` si el grupo adopta un identificador
   válido (``matching.identificadores.base_canonica`` con al menos
   ``LONGITUD_MINIMA_BASE`` dígitos); si no, ``ENT-<16 hex de SHA-256 de los
@@ -701,8 +702,9 @@ def completar_correlativa(
     correl["ID_REGISTRO"] = id_registro.astype(str)
 
     # ID_GRUPO determinista por contenido (F2.3): necesita ID_REGISTRO ya puesto.
-    # L5 ya dejó los ids así (orchestrator._run_L5) y api.linkage los rehízo tras
-    # expandir el colapso exacto; aquí es la red de seguridad (dedupe trae texto).
+    # L5 ya dejó los ids así (orchestrator._run_L5) y api.linkage los rehízo tras su
+    # postprocesado (matcher y/o colapso exacto), antes de L6; aquí es la red de
+    # seguridad (dedupe trae texto).
     golden, info_grupo = recodificar_id_grupo(correl, golden, correl["ID_REGISTRO"])
 
     if "SCORE_PAR" in correl.columns and score_par_previo is not None:
