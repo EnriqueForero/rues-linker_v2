@@ -303,8 +303,12 @@ class OrchestratorOptimizer:
             archivo de ``GroundTruthGenerator`` revisado; se mide solo sobre
             esos pares, ver ``evaluation.pairwise.evaluar_pares_etiquetados``).
             Los ids deben ser los de la columna de identificador de las
-            fuentes (``ID_REGISTRO`` o ``ID``), que el Orchestrator conserva
-            en la correlativa.
+            fuentes, que el Orchestrator conserva en la correlativa: por
+            defecto ``ID_REGISTRO`` o ``ID``; con otro nombre, pase ``col_id``.
+        col_id: nombre de la columna única por fila con la que las fuentes y
+            la correlativa identifican sus registros (la misma que
+            ``linkage(col_id=...)``). ``None`` (default) busca ``ID_REGISTRO``
+            e ``ID``. Si se pasa, toda fuente debe traerla (fail-fast).
         search_space: función `(trial) -> dict[str, Any]` que define el
             espacio de búsqueda. Default: `default_search_space`.
         silent: si True (default), silencia logs del Orchestrator durante
@@ -317,7 +321,8 @@ class OrchestratorOptimizer:
 
     Raises:
         ImportError: si Optuna no está instalado.
-        ValueError: si truth no tiene las columnas de ninguno de los dos formatos.
+        ValueError: si truth no tiene las columnas de ninguno de los dos
+            formatos, o si ``col_id`` nombra una columna que alguna fuente no trae.
     """
 
     def __init__(
@@ -328,6 +333,7 @@ class OrchestratorOptimizer:
         search_space: Callable | None = None,
         silent: bool = True,
         keep_workdir: bool = False,
+        col_id: str | None = None,
     ):
         if not OPTUNA_AVAILABLE:
             raise ImportError(
@@ -346,6 +352,8 @@ class OrchestratorOptimizer:
 
         self.base_config = base_config
         self.sources = sources
+        self.col_id = col_id
+        self._validar_col_id()
         if self.verdad_por_pares:
             columnas = list(COLUMNAS_PARES_ETIQUETADOS)
         else:
@@ -402,6 +410,23 @@ class OrchestratorOptimizer:
                 "espacio o use un perfil que las declare"
                 + (f" ({', '.join(con_la_clave)})" if con_la_clave else "")
                 + "."
+            )
+
+    def _validar_col_id(self) -> None:
+        """Fail-fast: si ``col_id`` se pasó, cada fuente la trae.
+
+        Sin esta guarda el estudio corría entero y cada trial moría al cruzar
+        la correlativa con la verdad (revisión F2.15, ronda 2).
+        """
+        if self.col_id is None:
+            return
+        sin_columna = sorted(n for n, f in self.sources.items() if self.col_id not in f.columns)
+        if sin_columna:
+            raise ValueError(
+                f"Qué pasó: col_id='{self.col_id}' no es columna de las fuentes {sin_columna}. "
+                "Por qué importa: con esa columna se cruza la correlativa con la verdad; sin "
+                "ella ningún trial se puede medir. Qué hacer: pase el nombre exacto de la "
+                "columna única por fila de cada fuente, o renómbrela a 'ID'."
             )
 
     @staticmethod
@@ -527,13 +552,24 @@ class OrchestratorOptimizer:
 
         return result.get("correlative"), time.perf_counter() - t0
 
-    @staticmethod
-    def _columna_id(marco: pd.DataFrame) -> str | None:
-        """Nombre de la columna de identificador de registro, si hay una conocida."""
-        for candidata in _COLUMNAS_ID:
+    def _columna_id(self, marco: pd.DataFrame) -> str | None:
+        """Columna de identificador de registro: ``col_id`` si se pasó, si no una conocida."""
+        candidatas = (self.col_id, *_COLUMNAS_ID) if self.col_id else _COLUMNAS_ID
+        for candidata in candidatas:
             if candidata in marco.columns:
                 return candidata
         return None
+
+    def _mensaje_sin_columna_id(self, que: str) -> str:
+        """Mensaje accionable cuando ``que`` (la correlativa, una fuente) no trae id."""
+        conocidas = ", ".join(_COLUMNAS_ID[:2])
+        esperada = f"'{self.col_id}' ni " if self.col_id else ""
+        return (
+            f"Qué pasó: {que} no trae {esperada}ninguna columna de identificador conocida "
+            f"({conocidas}). Por qué importa: sin ella no se cruza con la verdad y ningún "
+            "trial se puede medir. Qué hacer: pase col_id=<columna única por fila de sus "
+            "fuentes> al construir el optimizador, o renombre esa columna a 'ID'."
+        )
 
     def _evaluate(
         self,
@@ -565,7 +601,7 @@ class OrchestratorOptimizer:
 
         col_id = self._columna_id(correlative)
         if col_id is None:
-            return 0.0, {"error": "correlativa sin columna de ID conocida"}
+            return 0.0, {"error": self._mensaje_sin_columna_id("la correlativa")}
 
         if self._es_verdad_por_pares(verdad):
             return self._evaluar_por_pares(correlative, col_id, verdad, optimization_target)
@@ -745,7 +781,8 @@ class OrchestratorOptimizer:
         Returns:
             Dict con:
               - 'best_params': mejores hiperparámetros encontrados.
-              - 'best_score': mejor score (de optimization_target).
+              - 'best_score': mejor score (de optimization_target) entre los
+                trials completados (los fallidos no cuentan aunque Optuna los vea como 0,0).
               - 'best_config': config completo listo para Orchestrator.
               - 'best_metrics': métricas completas del mejor trial.
               - 'optimization_history': lista de dicts por trial.
@@ -802,9 +839,13 @@ class OrchestratorOptimizer:
                 }
             )
 
-            # Guardar métricas completas del mejor trial visto hasta ahora
+            # Guardar métricas completas del mejor trial COMPLETADO visto hasta
+            # ahora. Es la única fuente de best_params, best_score y mejor_trial:
+            # un trial failed devuelve 0,0 a Optuna y, si el mejor completado
+            # también puntúa 0,0, study.best_trial es el fallido (ronda 2).
             if not best_metrics_holder or score > best_metrics_holder.get("score", -1):
-                best_metrics_holder["score"] = score
+                best_metrics_holder["trial"] = trial.number
+                best_metrics_holder["score"] = float(score)
                 best_metrics_holder["metrics"] = metrics
                 best_metrics_holder["params"] = params
 
@@ -845,27 +886,29 @@ class OrchestratorOptimizer:
                 "total_trials_completed": 0,
             }
 
-        self.best_params = best_metrics_holder.get("params") or study.best_params
+        self.best_params = best_metrics_holder["params"]
         self.best_config = self._build_config_for_trial(self.best_params)
-        best_metrics = best_metrics_holder.get("metrics", {})
+        best_metrics = best_metrics_holder["metrics"]
+        mejor_trial: int = best_metrics_holder["trial"]
+        mejor_score: float = best_metrics_holder["score"]
         self._resumen_estudio = {
             "objetivo": optimization_target,
             "n_trials": n_trials,
             "trials_completados": len(completed_trials),
-            "mejor_trial": study.best_trial.number,
-            "mejor_score": float(study.best_value),
+            "mejor_trial": mejor_trial,
+            "mejor_score": mejor_score,
             "mejores_metricas": best_metrics,
         }
 
         self.logger.info(
             f"✅ Optimización completa. Mejor {optimization_target}: "
-            f"{study.best_value:.4f} (trial #{study.best_trial.number}). "
+            f"{mejor_score:.4f} (trial #{mejor_trial}). "
             f"Trials completados: {len(completed_trials)}/{n_trials}"
         )
 
         return {
             "best_params": self.best_params,
-            "best_score": study.best_value,
+            "best_score": mejor_score,
             "best_config": self.best_config,
             "best_metrics": best_metrics,
             "optimization_history": self.optimization_history,
@@ -949,8 +992,8 @@ class OrchestratorOptimizer:
         for nombre, fuente in self.sources.items():
             if self._columna_id(fuente) is None:
                 raise ValueError(
-                    f"La fuente '{nombre}' no tiene columna de identificador "
-                    f"({', '.join(_COLUMNAS_ID)}): sin ella no se puede recortar al pliegue."
+                    self._mensaje_sin_columna_id(f"la fuente '{nombre}'")
+                    + " Sin esa columna tampoco se puede recortar la fuente al pliegue."
                 )
 
         puntajes: list[float] = []
@@ -990,9 +1033,10 @@ class OrchestratorOptimizer:
         Es la misma regla con la que ``optimize`` puntúa cada trial, expuesta
         para comprobar que los ajustes aplicados en producción reproducen el
         score del estudio. La correlativa debe traer ``ID_GRUPO`` y la columna
-        de identificador que usa la verdad (``ID_REGISTRO`` o ``ID``): la del
-        estándar de salida trae todas las columnas de la fuente, así que
-        ``res.correlativa[["ID", "ID_GRUPO"]]`` basta.
+        de identificador que usa la verdad (``col_id`` o, por defecto,
+        ``ID_REGISTRO``/``ID``): la del estándar de salida trae todas las
+        columnas de la fuente, así que ``res.correlativa[[col_id, "ID_GRUPO"]]``
+        basta.
 
         Returns:
             ``(score, métricas)`` como ``_evaluate``; si la correlativa no se

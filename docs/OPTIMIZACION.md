@@ -33,7 +33,9 @@ costo está invertido.
    ausente), ambiguos (nombre parecido a medias) y negativos (no se parecen).
    Una muestra al azar está llena de pares triviales y no mide nada donde el
    motor puede equivocarse. Los ids de cada par (`ID_1`, `ID_2`) son el índice
-   del DataFrame: póngale la columna única por fila (`COL_ID`) antes.
+   del DataFrame: póngale la columna única por fila (`COL_ID`) antes. Esa misma
+   columna se pasa como `col_id=` al optimizador (y a `linkage()`): si no se
+   llama `ID` ni `ID_REGISTRO`, sin `col_id` ningún trial se puede medir.
 2. **Etiquetar**: una persona abre `pares_para_etiquetar.xlsx` y llena
    `IS_MATCH` con `1` (misma empresa) o `0` (distinta). Lo que no sabe lo deja
    vacío y no cuenta (vacío es `NaN` o `""`: el archivo releído con

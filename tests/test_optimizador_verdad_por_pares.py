@@ -19,6 +19,7 @@ Empresas inventadas; ningún nombre real entra al repositorio.
 
 from __future__ import annotations
 
+import inspect
 import json
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -41,7 +42,12 @@ if not OPTUNA_AVAILABLE:
 import optuna
 
 from record_linkage.config.profiles import crear_config_orchestrator
-from record_linkage.evaluation import OrchestratorOptimizer, espacio_de_busqueda
+from record_linkage.evaluation import (
+    OrchestratorOptimizer,
+    default_search_space,
+    espacio_de_busqueda,
+    orchestrator_hyperparameters,
+)
 
 RAIZ = Path(__file__).resolve().parents[1]
 SINTETICA = RAIZ / "tests" / "data_sintetica" / "dataset_sintetico_p2_extra_features.csv"
@@ -223,14 +229,117 @@ def test_un_trial_sin_pares_evaluables_no_cuenta_como_completado(
         opt.guardar_estudio(tmp_path / "estudio.json")
 
 
-def test_f_beta_se_escribe_una_vez() -> None:
-    """Revisión F2.15 (hallazgo 2): la fórmula de F-beta vivía dos veces."""
-    from record_linkage.evaluation.orchestrator_hyperparameters import _f_beta
+def test_f_beta_pesa_el_recall_cuatro_veces() -> None:
+    """Revisión F2.15 (hallazgo 2): la fórmula de F-beta vivía dos veces.
+
+    Ronda 2 (hallazgo 3): el nombre anterior prometía «se escribe una vez» sin
+    mirar el módulo; ahora se cuenta la fórmula en la fuente, de modo que
+    volver a escribirla inline en ``_evaluate`` o ``_evaluar_por_pares`` falla.
+    """
+    _f_beta = orchestrator_hyperparameters._f_beta
 
     assert _f_beta(0.5, 0.5) == pytest.approx(0.5)
     assert _f_beta(1.0, 0.5) == pytest.approx(5 * 0.5 / (4 + 0.5))  # beta=2 favorece recall
     assert _f_beta(1.0, 0.5, beta=1.0) == pytest.approx(2 / 3)
     assert _f_beta(0.0, 0.0) == 0.0
+    fuente = inspect.getsource(orchestrator_hyperparameters)
+    assert fuente.count("* precision * recall /") == 1, "la fórmula de F-beta vive solo en _f_beta"
+    assert "beta2" not in fuente, "la copia inline (beta2 = ...) volvió a aparecer"
+
+
+class _TrialFalso:
+    """Recorre un espacio sin Optuna: ``suggest_*`` devuelve el mínimo o la primera opción."""
+
+    @staticmethod
+    def suggest_float(nombre: str, minimo: float, maximo: float, **_: object) -> float:
+        return minimo
+
+    @staticmethod
+    def suggest_int(nombre: str, minimo: int, maximo: int, **_: object) -> int:
+        return minimo
+
+    @staticmethod
+    def suggest_categorical(nombre: str, opciones: list) -> object:
+        return opciones[0]
+
+
+def test_las_claves_del_espacio_por_defecto_son_las_que_el_cuerpo_sugiere() -> None:
+    """Ronda 2 (hallazgo 2): ``default_search_space.claves`` se escribía a mano,
+    separado de los ``trial.suggest_*`` del cuerpo; si se añade un parámetro y
+    se olvida el atributo, ``_validar_espacio`` queda ciega para esa clave."""
+    params = default_search_space(_TrialFalso())
+    assert set(params) == default_search_space.claves
+    assert params["weight_name"] + params["weight_nit"] == pytest.approx(1.0)
+    # espacio_de_busqueda declara las claves del dict que recibe; weight_nit derivado
+    # no cuenta porque _validar_espacio excluye los pesos de todos modos.
+    espacio = espacio_de_busqueda({"score_threshold": (0.4, 0.8, 0.1), "weight_name": (0.3, 0.7)})
+    assert set(espacio(_TrialFalso())) - {"weight_nit"} == espacio.claves
+
+
+def test_el_mejor_trial_del_estudio_es_uno_completado(
+    base_cfg: dict, sintetica: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ronda 2 (hallazgo 4): un trial ``failed`` devuelve 0,0 a Optuna; si el mejor
+    completado también puntúa 0,0, ``study.best_trial`` es el fallido (Optuna
+    conserva el primero en el empate) y el JSON apuntaba a un trial cuyos params
+    no eran ``mejores_parametros``. Ahora mejor_trial/mejor_score salen de la
+    misma entrada del historial que ``best_params``."""
+    optuna.logging.set_verbosity(optuna.logging.ERROR)
+    pares = _pares_desde_entidad(sintetica)
+    opt = OrchestratorOptimizer(
+        base_cfg, {}, pares, search_space=espacio_de_busqueda({"score_threshold": 0.6})
+    )
+    separada = sintetica[["ID"]].assign(ID_GRUPO=range(len(sintetica)))
+    llamadas: list[dict] = []
+
+    def orquestador_falso(cfg: dict) -> tuple[pd.DataFrame | None, float]:
+        llamadas.append(cfg)
+        return (None, 0.01) if len(llamadas) == 1 else (separada.copy(), 0.01)
+
+    monkeypatch.setattr(opt, "_run_orchestrator", orquestador_falso)
+    resultado = opt.optimize(n_trials=2, optimization_target="precision", show_progress_bar=False)
+    assert [h["status"] for h in resultado["optimization_history"]] == ["failed", "completed"]
+    assert resultado["total_trials_completed"] == 1 and resultado["best_score"] == 0.0
+    assert (
+        resultado["study"].best_trial.number == 0
+    )  # el empate lo gana el fallido: por eso no se usa
+    estudio = json.loads(opt.guardar_estudio(tmp_path / "estudio.json").read_text(encoding="utf-8"))
+    assert estudio["mejor_trial"] == 1
+    assert estudio["mejor_score"] == 0.0
+    mejor = next(h for h in estudio["historial"] if h["trial"] == estudio["mejor_trial"])
+    assert mejor["status"] == "completed" and mejor["params"] == estudio["mejores_parametros"]
+
+
+def test_col_id_propio_cruza_la_correlativa_con_la_verdad(
+    base_cfg: dict, sintetica: pd.DataFrame
+) -> None:
+    """Ronda 2 (hallazgo 1): la fuente identifica sus registros con ``CODIGO`` (no
+    ``ID``/``ID_REGISTRO``); sin ``col_id`` el error dice qué columnas se aceptan y
+    qué hacer; con ``col_id="CODIGO"`` la correlativa se cruza con la verdad."""
+    optuna.logging.set_verbosity(optuna.logging.ERROR)
+    base = sintetica.rename(columns={"ID": "CODIGO"})
+    pares = _pares_desde_entidad(sintetica)  # los mismos ids R000…, ahora en CODIGO
+    fuentes = {"DEMO": base[["CODIGO", "NIT", "RAZON_SOCIAL", "CIUDAD"]].copy()}
+    sin_col_id = OrchestratorOptimizer(base_cfg, fuentes, pares, search_space=ESPACIO, silent=True)
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        medida = sin_col_id.evaluar_config({}, "f1")
+    assert medida["score"] == 0.0 and "precision" not in medida
+    assert "ID_REGISTRO" in medida["error"] and "col_id" in medida["error"]
+
+    con_col_id = OrchestratorOptimizer(
+        base_cfg, fuentes, pares, search_space=ESPACIO, silent=True, col_id="CODIGO"
+    )
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        medida = con_col_id.evaluar_config({}, "f1")
+    assert "error" not in medida and {"precision", "recall", "f1"} <= set(medida)
+    assert medida["n_pares_evaluados"] == len(pares)
+    perfecta = base[["CODIGO", "ID_GROUP"]].rename(columns={"ID_GROUP": "ID_GRUPO"})
+    assert con_col_id.evaluar_correlativa(perfecta, "f1")[0] == 1.0
+    # Una columna que ninguna fuente trae falla al construir, no en el trial 1.
+    with pytest.raises(ValueError, match="CODIGO_EMPRESA"):
+        OrchestratorOptimizer(
+            base_cfg, fuentes, pares, search_space=ESPACIO, col_id="CODIGO_EMPRESA"
+        )
 
 
 def test_evaluar_correlativa_mide_sobre_los_pares_etiquetados(
