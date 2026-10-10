@@ -1,10 +1,10 @@
 """Apoyo de las pruebas de comparación, decisiones y deduplicación del motor de vinculación (F3.1-B).
 
-Las pruebas de ``comparar.py`` y ``deduplicar.py`` no necesitan el ``Normalizador`` completo (vive en
-``normalizar.py``, otro paquete de la extracción): les basta un doble que responda lo mismo que él en lo
-que usan estos módulos —``utiles``, ``marcas``, ``compacto``, ``legales`` y ``genericos``— sobre un
-vocabulario fijo. Los valores esperados de las pruebas salen de correr el motor ORIGINAL con ese mismo
-vocabulario, así que el doble y el ``Normalizador`` real dan lo mismo en estos casos.
+Las pruebas de ``comparar.py`` y ``deduplicar.py`` no necesitan la configuración completa del ``Normalizador``
+(locale global y catálogo de países): les basta uno que responda lo mismo en lo que usan estos módulos
+—``utiles``, ``marcas``, ``compacto``, ``legales`` y ``genericos``— sobre un vocabulario fijo. ``NormalizadorDoble``
+es el ``Normalizador`` real con ese vocabulario, así que no copia ninguna regla. Los valores esperados de las
+pruebas salen de correr el motor ORIGINAL con el mismo vocabulario.
 
 Todas las empresas son inventadas (las mismas marcas de ``apoyo_vinculacion``).
 """
@@ -18,8 +18,8 @@ import pandas as pd
 
 from record_linkage.flujo.vinculacion.comparar import Comparador
 from record_linkage.flujo.vinculacion.config import ConfigVinculacion, Fuente
-from record_linkage.flujo.vinculacion.constantes import CONECTORES
 from record_linkage.flujo.vinculacion.decisiones import COLUMNAS_DECISION
+from record_linkage.flujo.vinculacion.normalizar import Normalizador
 
 #: Formas legales (palabras sueltas) que el doble retira de los nombres.
 LEGALES = frozenset(
@@ -56,33 +56,19 @@ ISO3 = {
 }
 
 
-class NormalizadorDoble:
-    """Lo que ``comparar`` y ``deduplicar`` usan del ``Normalizador``, sobre un vocabulario fijo."""
+class NormalizadorDoble(Normalizador):
+    """El ``Normalizador`` real, sin su configuración pesada, sobre un vocabulario fijo.
+
+    Hereda ``utiles``, ``marcas`` y ``compacto`` del real (la regla se escribe una sola vez) y solo fija
+    ``legales`` y ``genericos``. No llama a ``super().__init__``: éste registra un locale global en la
+    librería y arma el catálogo de países, que estas pruebas no necesitan.
+    """
 
     def __init__(
         self, legales: frozenset[str] = LEGALES, genericos: frozenset[str] = GENERICOS
     ) -> None:
         self.legales = legales
         self.genericos = genericos
-
-    def utiles(self, nombre: str) -> list[str]:
-        """Palabras que cuentan: sin formas legales, conectores, letras sueltas ni números."""
-        return [
-            t
-            for t in nombre.split()
-            if len(t) > 1 and t not in self.legales and t not in CONECTORES and not t.isdigit()
-        ]
-
-    def marcas(self, nombre: str, truncado: bool = False) -> tuple[str, ...]:
-        """Iniciales sueltas y números: 'J MARTINEZ' ≠ 'A MARTINEZ'; 'KRAMENTO 2' ≠ 'KRAMENTO 3'."""
-        t = [x for x in nombre.split() if x not in self.legales and x not in CONECTORES]
-        if truncado and t and len(t[-1]) == 1:
-            t = t[:-1]
-        return tuple(sorted(x for x in t if (len(x) == 1 and x.isalpha()) or x.isdigit()))
-
-    def compacto(self, nombre: str) -> str:
-        """Las palabras útiles pegadas: 'KL FOODS' y 'KLFOODS' dan lo mismo."""
-        return "".join(self.utiles(nombre))
 
 
 def config_prueba(clave_ancla: str = "EXPORTADORES", **cambios: Any) -> ConfigVinculacion:
