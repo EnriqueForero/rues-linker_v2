@@ -115,10 +115,11 @@ from ..matching.genericos import (
     GENERICOS_SECTOR,
     SUFIJOS_INTERNACIONALES,
 )
+from ..matching.locales import registrar_locale_compuesto
 from ..matching.motor_bloqueo import BloqueoComponible, LSHTexto
 from ..matching.motor_multicampo import clusters_desde_decisiones, evaluar_esquema
 from ..matching.nombre_idf import SimilitudNombre, comparador_desde_corpus
-from ..matching.normalizadores import LOCALES, normalizar_nombre
+from ..matching.normalizadores import normalizar_nombre
 from ..paises import (
     CATALOGO_PAISES,
     PATRONES_NO_PAIS,
@@ -691,23 +692,16 @@ def registrar_locale(cfg: ConfigImportadores) -> str:
 
     ``matching.normalizadores.LOCALES`` está declarado como extensible; esta
     función es el punto único donde el flujo lo extiende, para que el notebook
-    no tenga que tocar un registro global por su cuenta. Es idempotente.
+    no tenga que tocar un registro global por su cuenta. Es idempotente. La
+    composición misma vive en ``matching.locales.registrar_locale_compuesto``
+    (la comparte con ``flujo.vinculacion``).
     """
-    sufijos: set[str] = set()
-    for base in cfg.locales_base:
-        if base not in LOCALES:
-            raise KeyError(
-                f"Qué pasó: el locale base '{base}' no está declarado. "
-                f"Disponibles: {sorted(LOCALES)}. Qué hacer: corrija "
-                f"ConfigImportadores.locales_base."
-            )
-        sufijos |= set(LOCALES[base]["sufijos"])
-    sufijos |= {str(s).strip().upper() for s in cfg.sufijos_extra}
-    LOCALES[cfg.locale] = {
-        "sufijos": frozenset(sufijos),
-        "genericos": cfg.genericos_todos,
-    }
-    return cfg.locale
+    return registrar_locale_compuesto(
+        cfg.locale,
+        bases=cfg.locales_base,
+        sufijos_extra=cfg.sufijos_extra,
+        genericos=cfg.genericos_todos,
+    )
 
 
 def grafias_aisladas(cfg: ConfigImportadores) -> frozenset[str]:
