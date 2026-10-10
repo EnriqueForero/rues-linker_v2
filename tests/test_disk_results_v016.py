@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -17,13 +18,20 @@ from record_linkage.flujo import (
     ejecutar_cruce,
     resultados_disco as resultados_module,
 )
-from record_linkage.flujo.resultados_disco import publicar_resultados_duckdb
+from record_linkage.flujo.resultados_disco import (
+    DIVERGENCIA_METODO_UNION,
+    ExpansionDisco,
+    expandir_en_disco,
+    publicar_resultados_duckdb,
+)
 from record_linkage.ingestion import (
     ColumnType,
     DuckDBIngestionSettings,
     SourceSpec,
     compact_source_to_parquet,
 )
+from record_linkage.pipeline.errores import ContratoSalidaError
+from record_linkage.salida.completar import completar_correlativa
 
 
 def _settings(tmp_path: Path) -> DuckDBIngestionSettings:
@@ -197,8 +205,8 @@ def test_flujo_productivo_propaga_config_y_preserva_payload(tmp_path: Path) -> N
         "exportador",
     }
     assert result.reportes_carga["A"]["payload_columns"] == ["segmento"]
-    metadata = json.loads(result.rutas["metadatos"].read_text(encoding="utf-8"))
-    parameters = metadata["parametros"]
+    metadata = json.loads(result.rutas["manifest"].read_text(encoding="utf-8"))
+    parameters = metadata["corrida"]["cruce"]["parametros"]
     assert parameters["modo_resultado"] == "disco"
     assert parameters["preservar_payload"] is True
     assert parameters["limite_filas"] == {"B": 1}
@@ -236,7 +244,7 @@ def test_publicacion_invalida_no_deja_archivos_parciales(tmp_path: Path) -> None
     )
     output = tmp_path / "results"
 
-    with pytest.raises(RuntimeError, match="difieren"):
+    with pytest.raises(ContratoSalidaError, match="difieren") as exc:
         publicar_resultados_duckdb(
             pd.DataFrame({"ID_GRUPO": [99]}),
             correlativa,
@@ -245,6 +253,7 @@ def test_publicacion_invalida_no_deja_archivos_parciales(tmp_path: Path) -> None
             output_directory=output,
             settings=_settings(tmp_path),
         )
+    assert "Qué hacer" in str(exc.value)
 
     assert not (output / "golden.parquet").exists()
     assert not (output / "correlativa.parquet").exists()
@@ -330,7 +339,7 @@ def test_publicacion_rechaza_golden_con_entidad_duplicada(tmp_path: Path) -> Non
     )
     golden = pd.DataFrame({"ID_GRUPO": [0, 0], "LABEL": ["ACME", "DUPLICADA"]})
 
-    with pytest.raises(RuntimeError, match="exactamente una fila no nula por entidad"):
+    with pytest.raises(ContratoSalidaError, match="exactamente una fila no nula por entidad"):
         publicar_resultados_duckdb(
             golden,
             correlativa,
@@ -341,6 +350,164 @@ def test_publicacion_rechaza_golden_con_entidad_duplicada(tmp_path: Path) -> Non
         )
 
     assert not (tmp_path / "results" / "resultados.manifest.json").exists()
+
+
+def test_publicacion_rechaza_golden_sin_id_grupo(tmp_path: Path) -> None:
+    """Fallo de invariante del contrato: excepción específica y mensaje accionable."""
+    compact = _compact(tmp_path, "A", [("111111", "ACME", "a1")])
+    correlativa = pd.DataFrame(
+        {
+            "NIT": ["111111"],
+            "RAZON_SOCIAL": ["ACME"],
+            "SRC": ["A"],
+            "ORIGINAL_INDEX": [0],
+            "ID_GRUPO": [0],
+        }
+    )
+    with pytest.raises(ContratoSalidaError, match="no trae ID_GRUPO") as exc:
+        publicar_resultados_duckdb(
+            pd.DataFrame({"LABEL": ["ACME"]}),
+            correlativa,
+            source_order=["A"],
+            compactaciones={"A": compact},
+            output_directory=tmp_path / "results",
+            settings=_settings(tmp_path),
+        )
+    assert "Qué hacer" in str(exc.value)
+    assert not (tmp_path / "results" / "resultados.manifest.json").exists()
+
+
+def test_expansion_reconstruye_id_registro_y_ent_desde_las_filas_publicadas(
+    tmp_path: Path,
+) -> None:
+    """Dos copias exactas sin NIT: el motor vio UN representante (``A-F0``) y
+    le asignó ``ENT-sha16('A-F0')``. La publicación trae dos filas, ``A-F0`` y
+    ``A-F1``, y su ``ID_ENTIDAD`` debe ser el hash de ESOS ids (la regla de
+    ``salida.completar``: determinista por contenido publicado), en la
+    correlativa, en el golden y en el crosswalk por grupo."""
+    compact = _compact(tmp_path, "A", [("", "SIN NIT SAS", "a1"), ("", "SIN NIT SAS", "a1")])
+    assert compact.compact_rows == 1 < compact.input_rows == 2
+    del_motor = "ENT-" + hashlib.sha256(b"A-F0").hexdigest()[:16]
+    esperado = "ENT-" + hashlib.sha256(b"A-F0|A-F1").hexdigest()[:16]
+    correlativa = pd.DataFrame(
+        {
+            "ID_REGISTRO": ["A-F0"],
+            "NIT": [""],
+            "RAZON_SOCIAL": ["SIN NIT SAS"],
+            "SRC": ["A"],
+            "ORIGINAL_INDEX": [0],
+            "ID_GRUPO": [0],
+            "ID_ENTIDAD": [del_motor],
+        }
+    )
+    publicacion = publicar_resultados_duckdb(
+        pd.DataFrame({"ID_GRUPO": [0], "ID_ENTIDAD": [del_motor]}),
+        correlativa,
+        source_order=["A"],
+        compactaciones={"A": compact},
+        output_directory=tmp_path / "results",
+        settings=_settings(tmp_path),
+    )
+    publicada = pd.read_parquet(publicacion.correlativa.path)
+    assert sorted(publicada["ID_REGISTRO"]) == ["A-F0", "A-F1"]
+    assert set(publicada["ID_ENTIDAD"]) == {esperado}
+    golden = pd.read_parquet(publicacion.golden.path)
+    assert golden["ID_ENTIDAD"].tolist() == [esperado]
+
+
+def _expansion_representante_unico_con_la_base(tmp_path: Path) -> ExpansionDisco:
+    """El caso de ``DIVERGENCIA_METODO_UNION``, construido a mano.
+
+    Grupo 0, unido por nombre: X (NIT 900111222, dos copias exactas que
+    DuckDB colapsó en UN representante) y Y (NIT 800333444); ``NIT_FINAL`` es
+    la base de X. Sobre los representantes ``completar`` dio ``nombre`` a los
+    dos: X no tiene otra fila con su base. Grupo 1: Z ``sin_pareja`` con dos
+    copias exactas (el caso que la expansión SÍ reconcilia).
+    """
+    compact = _compact(
+        tmp_path,
+        "A",
+        [
+            ("900111222", "ACME SAS", "a1"),
+            ("900111222", "ACME SAS", "a1"),
+            ("800333444", "ACME SAS", "a2"),
+            ("700555666", "GLOBEX", "a3"),
+            ("700555666", "GLOBEX", "a3"),
+        ],
+    )
+    assert compact.compact_rows == 3 and compact.input_rows == 5
+    correlativa = pd.DataFrame(
+        {
+            "ID_REGISTRO": ["A-F0", "A-F1", "A-F2"],
+            "NIT": ["900111222", "800333444", "700555666"],
+            "RAZON_SOCIAL": ["ACME SAS", "ACME SAS", "GLOBEX"],
+            "SRC": ["A", "A", "A"],
+            "ORIGINAL_INDEX": [0, 1, 2],
+            "ID_GRUPO": [0, 0, 1],
+            "NIT_FINAL": ["900111222", "900111222", "700555666"],
+            "RAZON_SOCIAL_FINAL": ["ACME SAS", "ACME SAS", "GLOBEX"],
+            "NAME_SIMILARITY_SCORE": [1.0, 1.0, 1.0],
+            "NIT_DISTANCE": [0, 0, 0],
+            "METODO_UNION": ["nombre", "nombre", "sin_pareja"],
+            "ID_ENTIDAD": ["NIT-900111222", "NIT-900111222", "NIT-700555666"],
+        }
+    )
+    golden = pd.DataFrame(
+        {
+            "ID_GRUPO": [0, 1],
+            "NIT_FINAL": ["900111222", "700555666"],
+            "ID_ENTIDAD": ["NIT-900111222", "NIT-700555666"],
+        }
+    )
+    carpeta = tmp_path / "expansion"
+    carpeta.mkdir()
+    return expandir_en_disco(
+        golden,
+        correlativa,
+        source_order=["A"],
+        compactaciones={"A": compact},
+        carpeta=carpeta,
+        settings=_settings(tmp_path),
+    )
+
+
+def test_metodo_union_en_disco_fija_la_divergencia_declarada(tmp_path: Path) -> None:
+    """El valor ACTUAL del caso residual (8/30.486 en el banco), para que un
+    cambio de la regla en SQL no pase inadvertido: las copias de X siguen
+    ``nombre`` (pandas: ``identificador``); Z, ``sin_pareja`` con copias,
+    sí pasa a ``identificador`` (las 338/346 del banco)."""
+    expansion = _expansion_representante_unico_con_la_base(tmp_path)
+    assert expansion.n_grupos == 2 and dict(expansion.filas_por_fuente) == {"A": 5}
+    publicada = pd.read_parquet(expansion.correlativa.path)
+    metodo = publicada.set_index("ID_REGISTRO")["METODO_UNION"].to_dict()
+    assert metodo == {
+        "A-F0": "nombre",  # X: divergencia declarada (pandas: identificador)
+        "A-F1": "nombre",  # copia exacta de X: ídem
+        "A-F2": "nombre",  # Y: otra base, nombre en los dos motores
+        "A-F3": "identificador",  # Z: sin_pareja reconciliado
+        "A-F4": "identificador",
+    }
+    assert "METODO_UNION" in DIVERGENCIA_METODO_UNION and "8/30486" in DIVERGENCIA_METODO_UNION
+
+
+@pytest.mark.xfail(strict=True, reason=DIVERGENCIA_METODO_UNION)
+def test_paridad_metodo_union_entre_motores_pendiente(tmp_path: Path) -> None:
+    """La regla de pandas (``completar_correlativa`` sobre las filas expandidas)
+    y la de SQL deben coincidir fila a fila. Hoy NO: ``xfail(strict=True)``
+    delata el día que se unifique (ponderar ``completar`` por copias) para
+    retirar ``DIVERGENCIA_METODO_UNION`` del manifiesto y de este módulo."""
+    expansion = _expansion_representante_unico_con_la_base(tmp_path)
+    publicada = pd.read_parquet(expansion.correlativa.path)
+    por_pandas, _, _ = completar_correlativa(
+        publicada.drop(columns=["ID_REGISTRO", "ID_ENTIDAD", "METODO_UNION"]),
+        None,
+        None,
+        None,
+        {"A": ["NIT", "RAZON_SOCIAL", "TELEFONO"]},
+        col_nit="NIT",
+    )
+    assert list(por_pandas["ID_REGISTRO"]) == list(publicada["ID_REGISTRO"])
+    assert list(por_pandas["METODO_UNION"]) == list(publicada["METODO_UNION"])
 
 
 def _publish_marked_result(

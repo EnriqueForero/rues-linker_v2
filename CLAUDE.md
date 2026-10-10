@@ -243,7 +243,9 @@ Los pliegues se reparten **por grupo**, nunca por fila.
   `NIT_FINAL` y `RAZON_SOCIAL_FINAL` se producían desde hacía versiones y
   `flujo/cruce.py` no las mencionaba ni una vez: tres `try/except` podían
   perderlas escribiendo solo una advertencia. Si algo es entregable, va en
-  `_verificar_invariantes` (v0.21.0, ADR-0008).
+  `ResultadoLinkage.validar()` (o en `flujo.cruce._validar_cruce` si solo el
+  flujo lo sabe) — hasta F2.5 era `flujo.cruce._verificar_invariantes`
+  (v0.21.0, ADR-0008).
 - **Inferir los genéricos del corpus por frecuencia cuando no hay NIT.** El
   IDF aprendido no distingue una marca de un genérico, y no por azar: la
   frecuencia documental de una marca crece con el número de variantes de la

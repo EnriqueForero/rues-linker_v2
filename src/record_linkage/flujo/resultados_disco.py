@@ -5,6 +5,36 @@ un payload por fila original. Este módulo es el *sink* de resultados: une esos
 artefactos con la correlativa compacta, valida invariantes mediante SQL y
 publica Parquet atómicos. La capa de matching no conoce detalles de exporte y
 el notebook no necesita materializar millones de filas para hacer QA.
+
+F2.5 — la generación tiene la forma del estándar
+------------------------------------------------
+``expandir_en_disco`` deja ``correlativa.parquet`` (expandida por DuckDB, con
+``ID_REGISTRO`` reconstruido por fila) y ``golden.parquet`` (escrito por el
+escritor del estándar, con ``INPUT_ROW_COUNT``) en una carpeta, verificados en
+SQL. ``publicar_resultados_duckdb`` lo envuelve en el protocolo generacional
+(pendiente → ``resultados.generations/<token>/`` → ``resultados.manifest.json``
+→ retención) y acepta un ``completar`` que añade el resto de artefactos ANTES
+del ``rename``. ``escribir_estandar_de_expansion`` es ese ``completar`` para
+``flujo.cruce``: ``entidades_ids.parquet``, ``revision.csv``,
+``diccionario.csv`` y ``manifest.json`` con las primitivas de
+``exporters.escritor``, sin materializar la correlativa.
+
+Por qué no ``escribir_resultado`` aquí: ese escritor parte de un
+``ResultadoLinkage`` en memoria (valida, cuenta y deriva el crosswalk desde la
+correlativa en pandas). En modo disco la correlativa expandida nunca entra a
+pandas —ese es el contrato del modo—, así que lo que el escritor calcula
+desde la tabla (conteos, crosswalk por grupo, columnas del diccionario) se
+calcula aquí en SQL y se entrega a las MISMAS funciones del escritor que
+arman el entregable: ``_entidades_ids_de_grupos`` (crosswalk) y
+``_manifiesto_de`` (manifiesto: corrida, parámetros, tiempos y RSS por fase,
+huellas, métricas del motor). Una regla, un sitio: lo que F2.4/F2.7 cambien
+en ``exporters.escritor`` llega al modo disco sin copiar nada.
+``leer_resultado`` lee una generación como cualquier carpeta del estándar. Lo
+que ``validar()`` comprueba sobre la correlativa en pandas se comprueba sobre
+el resultado COMPACTO (el que produjo el motor) y la expansión se verifica en
+SQL: conteos por fuente, ``ORIGINAL_INDEX`` denso, ``ID_REGISTRO`` único, un
+``ID_ENTIDAD`` por ``ID_GRUPO`` (los ``ENT-`` recalculados desde los
+``ID_REGISTRO`` publicados), golden ↔ correlativa.
 """
 
 from __future__ import annotations
@@ -13,8 +43,9 @@ import contextlib
 import json
 import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
@@ -22,7 +53,18 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
+from .. import contrato
+from ..exporters.escritor import (
+    NOMBRE_MANIFEST,
+    Manifiesto,
+    _entidades_ids_de_grupos,
+    _manifiesto_de,
+    _registrar,
+    escribir_csv,
+    escribir_parquet,
+)
 from ..ingestion import DuckDBCompactionResult, DuckDBIngestionSettings
 from ..ingestion.duckdb import (
     _cleanup_directory,
@@ -37,8 +79,48 @@ from ..ingestion.duckdb import (
     _validate_dense_ids,
     _write_manifest_atomic,
 )
+from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
+from ..resultado import ResultadoLinkage
 
 _MANIFEST_SCHEMA_VERSION = 1
+
+#: ``ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados>``: la regla
+#: de ``salida.completar._id_entidad`` (``_sha16``) escrita en SQL para la
+#: expansión, donde los ``ID_REGISTRO`` publicados ya no son los que vio el
+#: motor. El ``ORDER BY`` de DuckDB es binario, como ``sorted()`` de Python
+#: sobre estos ids ASCII; ``sha256`` devuelve hex en minúsculas.
+_ID_ENTIDAD_ENT_SQL = (
+    """'ENT-' || left(sha256(string_agg("ID_REGISTRO", '|' ORDER BY "ID_REGISTRO")), 16)"""
+)
+
+#: Divergencia entre motores que el modo disco declara en ``manifest.json``
+#: (``invariantes.divergencia_declarada``): ``expandir_en_disco`` aplica en SQL
+#: la regla de ``METODO_UNION`` de ``salida.completar`` solo al caso
+#: ``sin_pareja`` que la expansión cambia; un representante que es el ÚNICO
+#: con la base del grupo (sus copias exactas colapsaron antes de ``completar``)
+#: queda ``nombre`` aquí y ``identificador`` por pandas, que expande antes.
+#: Medido en el banco de 30.486 filas: 346 filas diferían entre motores, 338
+#: eran ``sin_pareja`` reconciliado y estas son las 8 residuales.
+#: ``tests/test_disk_results_v016.py`` fija el caso; unificarlo exige ponderar
+#: ``completar`` por copias, fuera de este módulo.
+DIVERGENCIA_METODO_UNION = (
+    "METODO_UNION: representante único con la base del grupo cuyas copias exactas "
+    "colapsaron queda 'nombre' (pandas: 'identificador'); 8/30486 filas en el banco"
+)
+
+#: Qué hacer cuando una invariante de la expansión falla: nunca es del usuario.
+_QUE_HACER_EXPANSION = (
+    "no use esta generación (no se publica); reporte el caso con el manifiesto de "
+    "_trabajo/ (correlativa compacta del motor y mapas de expansión de DuckDB)."
+)
+
+#: Lo que ``completar`` recibe, EN ESTE ORDEN posicional: (1) la carpeta
+#: pendiente (donde escribir: existe y aún no se publicó), (2) la carpeta
+#: definitiva (el nombre que tendrá tras el ``rename``: no existe todavía, solo
+#: sirve para nombrarla en el manifiesto) y (3) la expansión verificada.
+#: Devuelve ``{clave: nombre de archivo}`` para listar en el manifiesto
+#: generacional. ``flujo.cruce._publicar_en_disco`` es el único llamador.
+Completar = Callable[[Path, Path, "ExpansionDisco"], Mapping[str, str]]
 
 
 def _quote_identifier(value: str) -> str:
@@ -391,6 +473,496 @@ def _validate_final_correlation(
         )
 
 
+def _esquema_vacio(ruta: Path) -> pd.DataFrame:
+    """DataFrame de 0 filas con los tipos del parquet (Arrow), sin leer datos.
+
+    Sirve para el diccionario: ``contrato.diccionario`` nombra el tipo lógico
+    de cada columna desde la Serie, y una Serie vacía de ``object`` diría
+    ``null``; con ``ArrowDtype`` conserva el tipo del archivo.
+    """
+    return pq.read_schema(ruta).empty_table().to_pandas(types_mapper=pd.ArrowDtype)
+
+
+def _validar_identidad_expandida(connection: Any, path: Path, columnas: Sequence[str]) -> None:
+    """Lo que ``ResultadoLinkage.validar()`` exige de la identidad, en SQL.
+
+    Solo las columnas presentes: el sink también publica tablas que no vienen
+    del contrato (pruebas, herramientas).
+    """
+    if "ID_REGISTRO" in columnas:
+        total, distintos, nulos = connection.execute(
+            """
+            SELECT count(*)::BIGINT, count(DISTINCT ID_REGISTRO)::BIGINT,
+                   count(*) FILTER (WHERE ID_REGISTRO IS NULL)::BIGINT
+            FROM read_parquet(?)
+            """,
+            [str(path)],
+        ).fetchone()
+        if int(nulos) or int(total) != int(distintos):
+            raise ContratoSalidaError(
+                [
+                    mensaje_accionable(
+                        "la correlativa expandida incumple ID_REGISTRO único y no nulo "
+                        f"(filas={int(total)}, distintos={int(distintos)}, nulos={int(nulos)}).",
+                        "sin un ID_REGISTRO por fila no hay trazabilidad al registro de "
+                        "origen ni crosswalk estable.",
+                        _QUE_HACER_EXPANSION,
+                    )
+                ]
+            )
+    if "ID_ENTIDAD" in columnas and "ID_GRUPO" in columnas:
+        grupos_mixtos, entidades_partidas = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM (SELECT ID_GRUPO FROM read_parquet(?)
+                 GROUP BY ID_GRUPO HAVING count(DISTINCT ID_ENTIDAD) <> 1
+                    OR count(*) FILTER (WHERE ID_ENTIDAD IS NULL) > 0))::BIGINT,
+              (SELECT count(*) FROM (SELECT ID_ENTIDAD FROM read_parquet(?)
+                 GROUP BY ID_ENTIDAD HAVING count(DISTINCT ID_GRUPO) <> 1))::BIGINT
+            """,
+            [str(path), str(path)],
+        ).fetchone()
+        if int(grupos_mixtos) or int(entidades_partidas):
+            raise ContratoSalidaError(
+                [
+                    mensaje_accionable(
+                        "la correlativa expandida incumple un ID_GRUPO ↔ un ID_ENTIDAD "
+                        f"(grupos con más de una entidad o nula={int(grupos_mixtos)}, "
+                        f"entidades en más de un grupo={int(entidades_partidas)}).",
+                        "ID_ENTIDAD es la identidad que se entrega aguas abajo; partida o "
+                        "mezclada deja de ser comparable entre corridas.",
+                        _QUE_HACER_EXPANSION,
+                    )
+                ]
+            )
+
+
+@dataclass(frozen=True)
+class ExpansionDisco:
+    """Lo que DuckDB dejó en ``carpeta`` al expandir, ya verificado en SQL.
+
+    Attributes:
+        carpeta: donde están ``correlativa.parquet`` y ``golden.parquet``.
+        golden: referencia al golden (una fila por entidad, con ``INPUT_ROW_COUNT``).
+        correlativa: referencia a la correlativa expandida (una fila por registro).
+        n_grupos: ``ID_GRUPO`` distintos de la correlativa (``len(grupos)``).
+        filas_por_fuente: filas publicadas por fuente (``SRC``).
+        grupos: una fila por ``ID_GRUPO`` con ``N_REGISTROS`` y, si la
+            correlativa lo trae, ``ID_ENTIDAD``: es el crosswalk de la corrida
+            sin pasar la tabla por pandas.
+
+    Es una clase nueva (F2.5) y va en español; ``PublicacionResultadosDisco``
+    (``entities``, ``source_rows``) es anterior y conserva sus nombres porque
+    la leen notebooks y pruebas de 0.16.0.
+    """
+
+    carpeta: Path
+    golden: TablaParquet
+    correlativa: TablaParquet
+    n_grupos: int
+    filas_por_fuente: Mapping[str, int]
+    grupos: pd.DataFrame
+
+    @property
+    def esquema_correlativa(self) -> pd.DataFrame:
+        """0 filas con los tipos publicados (para el diccionario)."""
+        return _esquema_vacio(self.correlativa.path)
+
+    @property
+    def esquema_golden(self) -> pd.DataFrame:
+        return _esquema_vacio(self.golden.path)
+
+
+def expandir_en_disco(
+    golden: pd.DataFrame,
+    correlativa_compacta: pd.DataFrame,
+    *,
+    source_order: Sequence[str],
+    compactaciones: Mapping[str, DuckDBCompactionResult],
+    carpeta: Path,
+    settings: DuckDBIngestionSettings | None = None,
+) -> ExpansionDisco:
+    """Expande los representantes a una fila por registro y publica las dos tablas en ``carpeta``.
+
+    * ``correlativa.parquet``: la escribe DuckDB (``COPY``) uniendo el mapa de
+      expansión y el payload de cada fuente; ``ORIGINAL_INDEX`` pasa a ser la
+      posición en la concatenación de las fuentes originales y, si la tabla
+      trae ``ID_REGISTRO``, se reconstruye por fila como ``<SRC>-F<ORIGINAL_INDEX>``
+      —la misma regla de ``salida.completar`` cuando no hay ``col_id``, que es
+      el único caso de ``flujo.cruce``—; sin esto el ``ID_REGISTRO`` del
+      representante se repetiría en cada fila que colapsó. ``METODO_UNION``
+      deja de ser ``sin_pareja`` en los grupos de un representante que al
+      expandir tienen más de una fila (``identificador`` si el grupo adoptó
+      identificador, ``nombre`` si no: la regla de ``salida.completar``; medido
+      en el banco de 30.486 filas, 338 de las 346 filas que diferían entre
+      motores eran esto). Las 8 residuales son ``DIVERGENCIA_METODO_UNION``:
+      ``escribir_estandar_de_expansion`` la declara en el manifiesto.
+      ``ID_ENTIDAD``: los ``NIT-`` se conservan tal como los asignó el motor
+      (valor por grupo); los ``ENT-`` se RECALCULAN en SQL con la regla de
+      ``salida.completar`` (``ENT-<sha16 de los ID_REGISTRO del grupo
+      ordenados>``) sobre los ``ID_REGISTRO`` publicados: el motor los hashó
+      sobre los representantes, ids que tras expandir no existen o son de otra
+      fila, y la misma entrada daría ids distintos por motor. El golden recibe
+      el mismo valor por ``ID_GRUPO``.
+    * ``golden.parquet``: lo escribe ``exporters.escritor.escribir_parquet``
+      con el esquema del contrato y ``INPUT_ROW_COUNT`` = filas expandidas por
+      grupo (``RECORD_COUNT`` sigue contando representantes).
+    * Invariantes, todas en SQL: contratos de compactación, conteos por
+      fuente, ``ORIGINAL_INDEX`` denso y no nulo, ``ID_GRUPO`` no nulo,
+      ``ID_REGISTRO`` único, un ``ID_ENTIDAD`` por ``ID_GRUPO``, golden con
+      exactamente una fila por grupo de la correlativa.
+
+    Si algo falla, lo escrito en ``carpeta`` se borra y la excepción sale.
+
+    Raises:
+        ContratoSalidaError: una invariante del contrato sobre la tabla
+            publicada o el golden (``ID_REGISTRO``/``ID_ENTIDAD``, golden ↔
+            correlativa); ``RuntimeError`` para los artefactos de compactación.
+    """
+    import duckdb
+
+    effective_settings = settings or DuckDBIngestionSettings()
+    carpeta = Path(carpeta)
+    if not carpeta.is_dir():
+        raise FileNotFoundError(f"La carpeta de expansión no existe: {carpeta}")
+    correlativa_path = carpeta / "correlativa.parquet"
+    golden_path = carpeta / "golden.parquet"
+    compact_path = carpeta / ".correlativa_compacta.parquet"
+
+    connection: Any | None = None
+    listo = False
+    try:
+        connection = duckdb.connect(":memory:")
+        _configure_connection(connection, effective_settings)
+        expected_source_rows = _validate_compaction_contracts(
+            connection, source_order, compactaciones
+        )
+        expected_rows = sum(expected_source_rows.values())
+
+        correlativa_trabajo = correlativa_compacta.copy(deep=False)
+        _assign_compact_ids(correlativa_trabajo, source_order, compactaciones)
+        correlativa_trabajo.to_parquet(compact_path, index=False)
+        expansion_sql = _union_expansion_sql(source_order, compactaciones)
+        payload_sql, payload_columns = _union_payload_sql(source_order, compactaciones)
+
+        original_index_sql = "CAST(e.source_offset + e.source_row_id AS BIGINT)"
+        correlative_projection: list[str] = []
+        for column in correlativa_trabajo.columns:
+            if column == "__compact_record_id":
+                continue
+            if column == "ORIGINAL_INDEX":
+                correlative_projection.append(f'{original_index_sql} AS "ORIGINAL_INDEX"')
+            elif column == "ID_REGISTRO":
+                # Regla de salida.completar sin col_id: <SRC>-F<ORIGINAL_INDEX>.
+                correlative_projection.append(
+                    f"c.SRC || '-F' || CAST({original_index_sql} AS VARCHAR) AS \"ID_REGISTRO\""
+                )
+            elif column == "METODO_UNION" and {"ID_GRUPO", "NIT_FINAL"} <= set(
+                correlativa_trabajo.columns
+            ):
+                # Un representante solo en su grupo dijo ``sin_pareja``; si al
+                # expandir el grupo tiene más de una fila (copias exactas de ese
+                # registro), ya no lo es: es la misma regla de salida.completar
+                # —``identificador`` si el grupo adoptó un identificador válido,
+                # que en un grupo de un representante es el de ese registro;
+                # ``nombre`` si no—, aplicada al único caso que la expansión cambia.
+                correlative_projection.append(
+                    "CASE WHEN c.\"METODO_UNION\" = 'sin_pareja' "
+                    'AND count(*) OVER (PARTITION BY c."ID_GRUPO") > 1 '
+                    'THEN CASE WHEN c."NIT_FINAL" IS NOT NULL AND c."NIT_FINAL" <> \'\' '
+                    "THEN 'identificador' ELSE 'nombre' END "
+                    'ELSE c."METODO_UNION" END AS "METODO_UNION"'
+                )
+            else:
+                correlative_projection.append(f"c.{_quote_identifier(column)}")
+        for column in payload_columns:
+            if column not in correlativa_trabajo.columns:
+                correlative_projection.append(f"p.{_quote_identifier(column)}")
+
+        payload_join = (
+            "LEFT JOIN payload p ON p.source_name = e.source_name "
+            "AND p.source_row_id = e.source_row_id"
+            if payload_sql
+            else ""
+        )
+        ctes = [f"expansion AS ({expansion_sql})"]
+        if payload_sql:
+            ctes.append(f"payload AS ({payload_sql})")
+        ctes.append(
+            "filas AS (SELECT "
+            + ", ".join(correlative_projection)
+            + f" FROM expansion e JOIN read_parquet({_quote_literal(compact_path)}) c "
+            "ON c.SRC = e.source_name AND c.__compact_record_id = e.compact_record_id "
+            + payload_join
+            + ")"
+        )
+        if {"ID_REGISTRO", "ID_GRUPO", "ID_ENTIDAD"} <= set(correlativa_trabajo.columns):
+            # Los ENT- se recalculan sobre los ID_REGISTRO publicados (ver docstring).
+            ctes.append(
+                f'entidades AS (SELECT "ID_GRUPO", {_ID_ENTIDAD_ENT_SQL} AS "ID_ENTIDAD_PUBLICADA" '
+                'FROM filas WHERE "ID_ENTIDAD" LIKE \'ENT-%\' GROUP BY "ID_GRUPO")'
+            )
+            seleccion = (
+                'SELECT filas.* REPLACE (coalesce(entidades."ID_ENTIDAD_PUBLICADA", '
+                'filas."ID_ENTIDAD") AS "ID_ENTIDAD") '
+                'FROM filas LEFT JOIN entidades USING ("ID_GRUPO")'
+            )
+        else:
+            seleccion = "SELECT * FROM filas"
+        correlation_query = "WITH " + ", ".join(ctes) + " " + seleccion
+        compression = effective_settings.parquet_compression.upper()
+        connection.execute(
+            "COPY ("
+            + correlation_query
+            + ") TO "
+            + _quote_literal(correlativa_path)
+            + f" (FORMAT PARQUET, COMPRESSION {compression})"
+        )
+        _validate_final_correlation(
+            connection,
+            correlativa_path,
+            expected_rows=expected_rows,
+            expected_source_rows=expected_source_rows,
+        )
+        correlativa_schema = tuple(
+            str(row[0])
+            for row in connection.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)", [str(correlativa_path)]
+            ).fetchall()
+        )
+        _validar_identidad_expandida(connection, correlativa_path, correlativa_schema)
+
+        entidad_sql = (
+            "any_value(ID_ENTIDAD) AS ID_ENTIDAD, " if "ID_ENTIDAD" in correlativa_schema else ""
+        )
+        grupos = connection.execute(
+            f"SELECT ID_GRUPO, {entidad_sql}count(*)::BIGINT AS N_REGISTROS "
+            "FROM read_parquet(?) GROUP BY ID_GRUPO ORDER BY ID_GRUPO",
+            [str(correlativa_path)],
+        ).fetch_df()
+        source_rows = {
+            str(source): int(rows)
+            for source, rows in connection.execute(
+                "SELECT SRC, count(*)::BIGINT FROM read_parquet(?) GROUP BY SRC ORDER BY SRC",
+                [str(correlativa_path)],
+            ).fetchall()
+        }
+        n_grupos = len(grupos)
+
+        if "ID_GRUPO" not in golden.columns:
+            raise ContratoSalidaError(
+                [
+                    mensaje_accionable(
+                        "el golden no trae ID_GRUPO.",
+                        "sin ella no hay forma de casar cada entidad con sus filas de la "
+                        "correlativa ni de contar INPUT_ROW_COUNT.",
+                        _QUE_HACER_EXPANSION,
+                    )
+                ]
+            )
+        golden_ids = golden["ID_GRUPO"]
+        golden_nulls = int(golden_ids.isna().sum())
+        golden_distinct = int(golden_ids.nunique(dropna=True))
+        # Primero «difieren» si los conjuntos no coinciden; después la
+        # unicidad por entidad (una fila no nula por grupo de la correlativa).
+        mismatch = len(set(golden_ids.dropna().tolist()) ^ set(grupos["ID_GRUPO"].tolist()))
+        if mismatch:
+            raise ContratoSalidaError(
+                [
+                    mensaje_accionable(
+                        f"golden y correlativa difieren en {mismatch} grupos.",
+                        "una entidad sin filas, o filas sin entidad, rompen golden ↔ "
+                        "correlativa, que es lo que el crosswalk y los reportes L6 suponen.",
+                        _QUE_HACER_EXPANSION,
+                    )
+                ]
+            )
+        if golden_nulls or len(golden) != golden_distinct or golden_distinct != n_grupos:
+            raise ContratoSalidaError(
+                [
+                    mensaje_accionable(
+                        "el golden debe contener exactamente una fila no nula por entidad; "
+                        f"filas={len(golden)}, IDs_distintos={golden_distinct}, "
+                        f"grupos={n_grupos}, IDs_nulos={golden_nulls}.",
+                        "un golden con entidades repetidas o nulas duplica o pierde "
+                        "registros consolidados en el entregable.",
+                        _QUE_HACER_EXPANSION,
+                    )
+                ]
+            )
+        conteos = grupos.set_index("ID_GRUPO")["N_REGISTROS"]
+        golden_salida = golden.sort_values("ID_GRUPO", kind="stable").reset_index(drop=True)
+        golden_salida["INPUT_ROW_COUNT"] = (
+            golden_salida["ID_GRUPO"].map(conteos).fillna(0).astype("int64")
+        )
+        if "ID_ENTIDAD" in grupos.columns and "ID_ENTIDAD" in golden_salida.columns:
+            # El motor asignó el ID_ENTIDAD del golden sobre representantes; la
+            # correlativa publicada lo recalculó para los ENT-: un valor por grupo.
+            entidad = grupos.set_index("ID_GRUPO")["ID_ENTIDAD"]
+            golden_salida["ID_ENTIDAD"] = golden_salida["ID_GRUPO"].map(entidad).astype(str)
+        escribir_parquet(golden_salida, golden_path, contrato.GOLDEN)
+        golden_schema = tuple(str(c) for c in golden_salida.columns)
+        listo = True
+    finally:
+        if connection is not None:
+            connection.close()
+        compact_path.unlink(missing_ok=True)
+        if not listo:
+            correlativa_path.unlink(missing_ok=True)
+            golden_path.unlink(missing_ok=True)
+
+    return ExpansionDisco(
+        carpeta=carpeta,
+        golden=TablaParquet(golden_path, len(golden_salida), golden_schema),
+        correlativa=TablaParquet(correlativa_path, expected_rows, correlativa_schema),
+        n_grupos=n_grupos,
+        filas_por_fuente=MappingProxyType(source_rows),
+        grupos=grupos,
+    )
+
+
+def _conteos_expansion(res: ResultadoLinkage, expansion: ExpansionDisco) -> dict[str, Any]:
+    """``conteos`` del manifiesto con las mismas claves que el escritor, desde SQL."""
+    entidades = expansion.grupos["ID_ENTIDAD"].drop_duplicates()
+    con_nit = int(entidades.astype(str).str.startswith("NIT-").sum())
+    return {
+        "filas": expansion.correlativa.rows,
+        "grupos": expansion.n_grupos,
+        "entidades": len(entidades),
+        "entidades_con_nit": con_nit,
+        "entidades_sin_nit": len(entidades) - con_nit,
+        "fuentes": len(expansion.filas_por_fuente),
+        "filas_por_fuente": dict(expansion.filas_por_fuente),
+        "golden": expansion.golden.rows,
+        "enlaces": len(res.enlaces) if res.enlaces is not None else None,
+        "revision": len(res.revision),
+    }
+
+
+def escribir_estandar_de_expansion(
+    res: ResultadoLinkage,
+    expansion: ExpansionDisco,
+    *,
+    nombre: str,
+    definitiva: Path,
+    insumos: Mapping[str, Any] | None = None,
+    columnas_fuente: Sequence[str] = (),
+    marca_tiempo: datetime | None = None,
+) -> Manifiesto:
+    """Completa ``expansion.carpeta`` hasta la forma del estándar y devuelve su manifiesto.
+
+    ``res`` es el resultado COMPACTO que devolvió ``linkage()`` (el que el
+    motor produjo y validó); de él salen la trazabilidad (``manifiesto``), las
+    métricas del motor, ``revision`` y el diccionario base. Lo que depende de
+    la tabla publicada (conteos, crosswalk, columnas del diccionario) sale de
+    ``expansion``. ``insumos`` reemplaza ``res.manifiesto['entradas']`` en el
+    manifiesto cuando las filas reales no son las que vio el motor (DuckDB
+    colapsó duplicados exactos antes); ``columnas_fuente`` añade al diccionario
+    las columnas de payload que el motor no vio.
+
+    Lo que se omite se declara: ``excel/`` nunca se escribe en modo disco.
+
+    Raises:
+        ContratoSalidaError: si la correlativa expandida no trae ``ID_ENTIDAD``.
+    """
+    carpeta = expansion.carpeta
+    if "ID_ENTIDAD" not in expansion.grupos.columns:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    "la correlativa expandida no trae ID_ENTIDAD.",
+                    "sin ella no hay crosswalk (entidades_ids.parquet) ni carpeta del estándar.",
+                    "publique con la correlativa que devuelve linkage() (contrato 1.0).",
+                )
+            ]
+        )
+    artefactos: list[dict[str, Any]] = []
+    omitidos: list[dict[str, str]] = []
+    _registrar(artefactos, carpeta, expansion.correlativa.path)
+    _registrar(artefactos, carpeta, expansion.golden.path)
+
+    # NOTA PARA LA INTEGRACIÓN DE F2.4 (identidad estable, ADR-0012): F2.4
+    # reescribe ``escritor._entidades_ids`` para que el crosswalk salga de
+    # ``identidad.estable.crosswalk_de_corrida`` (columna ``REGISTROS`` =
+    # ``ID_REGISTRO`` del grupo, y retiros), y ``cargar_corrida_anterior``
+    # EXIGE ``REGISTROS``. Este crosswalk se arma en SQL desde ``grupos`` y
+    # no pasa por esa regla: al integrar F2.4 hay que (a) hacer que
+    # ``expandir_en_disco`` agregue ``string_agg("ID_REGISTRO", … ORDER BY
+    # "ID_REGISTRO")`` por grupo y que ``_entidades_ids_de_grupos`` emita
+    # ``REGISTROS`` (o pasar por ``crosswalk_de_corrida`` sobre esa tabla), y
+    # (b) añadir una prueba que lea una generación de disco como
+    # ``corrida_anterior``. Hasta entonces una generación de disco NO sirve
+    # como corrida anterior de F2.4.
+    entidades_ids = _entidades_ids_de_grupos(expansion.grupos)
+    ruta = carpeta / "entidades_ids.parquet"
+    escribir_parquet(entidades_ids, ruta, contrato.ENTIDADES_IDS)
+    _registrar(artefactos, carpeta, ruta)
+
+    ruta = carpeta / "revision.csv"
+    escribir_csv(res.revision, ruta)
+    _registrar(artefactos, carpeta, ruta)
+
+    completar = res.manifiesto.get("completar") or {}
+    diccionario = contrato.diccionario(
+        {
+            "correlativa": expansion.esquema_correlativa,
+            "golden": expansion.esquema_golden,
+            "enlaces": None,
+            "revision": res.revision,
+            "entidades_ids": entidades_ids,
+        },
+        columnas_fuente=[*completar.get("columnas_fuente", ()), *columnas_fuente],
+        renombres=completar.get("renombres"),
+        renombres_canonicos=completar.get("renombres_canonicos"),
+    )
+    ruta = carpeta / "diccionario.csv"
+    escribir_csv(diccionario, ruta)
+    _registrar(artefactos, carpeta, ruta)
+
+    for tabla in ("correlativa", "golden"):
+        omitidos.append(
+            {
+                "artefacto": f"excel/{tabla}.xlsx",
+                "motivo": "modo_resultado='disco' no materializa la salida; lea el parquet "
+                "con leer_resultado(), pandas o DuckDB.",
+            }
+        )
+    filas = expansion.correlativa.rows
+    manifiesto = _manifiesto_de(
+        res,
+        nombre=nombre,
+        marca_tiempo=marca_tiempo if marca_tiempo is not None else datetime.now(),
+        definitiva=definitiva,
+        artefactos=artefactos,
+        omitidos=omitidos,
+        insumos=insumos,
+        conteos=_conteos_expansion(res, expansion),
+        # El motor midió sobre representantes; la tabla publicada tiene las filas reales.
+        metricas_extra={
+            "n_registros": filas,
+            "n_grupos": expansion.n_grupos,
+            "tasa_reduccion": 1 - expansion.n_grupos / filas if filas else None,
+        },
+        invariantes_extra={
+            "validado_sobre": "resultado compacto del motor (modo disco)",
+            "verificado_en_sql": [
+                "conteos por fuente",
+                "ORIGINAL_INDEX denso y no nulo",
+                "ID_GRUPO no nulo",
+                "ID_REGISTRO único",
+                "un ID_ENTIDAD por ID_GRUPO",
+                "ID_ENTIDAD ENT- recalculado desde los ID_REGISTRO publicados",
+                "golden: una fila por grupo de la correlativa",
+            ],
+            # Lo que el modo disco calcula distinto del modo dataframe, dicho en
+            # el manifiesto y no solo en un docstring (ver expandir_en_disco).
+            "divergencia_declarada": DIVERGENCIA_METODO_UNION,
+        },
+    )
+    manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
+    return manifiesto
+
+
 def publicar_resultados_duckdb(
     golden: pd.DataFrame,
     correlativa_compacta: pd.DataFrame,
@@ -400,10 +972,16 @@ def publicar_resultados_duckdb(
     output_directory: str | Path,
     settings: DuckDBIngestionSettings | None = None,
     overwrite: bool = True,
+    completar: Completar | None = None,
 ) -> PublicacionResultadosDisco:
-    """Expande y publica una generación completa con un manifiesto atómico."""
+    """Expande y publica una generación completa con un manifiesto atómico.
 
-    import duckdb
+    ``completar(pendiente, definitiva, expansion)`` corre dentro de la
+    generación pendiente, después de verificar las dos tablas y antes del
+    ``rename``: lo que escriba se publica con ellas o no se publica (un fallo
+    limpia la pendiente y conserva la generación anterior). Devuelve
+    ``{clave: archivo}`` para listarlo en ``resultados.manifest.json``.
+    """
 
     if not isinstance(overwrite, bool):
         raise TypeError("overwrite debe ser bool.")
@@ -433,204 +1011,50 @@ def publicar_resultados_duckdb(
         pending_dir = output_dir / f".resultados.{token}.generation.pending"
         pending_dir.mkdir()
         generation_dir = generations_dir / token
-        golden_pending = pending_dir / "golden.parquet"
-        correlativa_pending = pending_dir / "correlativa.parquet"
-        compact_path = pending_dir / ".correlativa_compacta.parquet"
-        golden_base_path = pending_dir / ".golden_base.parquet"
-        golden_path = generation_dir / golden_pending.name
-        correlativa_path = generation_dir / correlativa_pending.name
     except Exception:
         manifest_lock.release()
         raise
 
-    connection: Any | None = None
-    validated = False
     try:
-        connection = duckdb.connect(":memory:")
-        _configure_connection(connection, effective_settings)
-        expected_source_rows = _validate_compaction_contracts(
-            connection, source_order, compactaciones
+        expansion = expandir_en_disco(
+            golden,
+            correlativa_compacta,
+            source_order=source_order,
+            compactaciones=compactaciones,
+            carpeta=pending_dir,
+            settings=effective_settings,
         )
-        expected_rows = sum(expected_source_rows.values())
-
-        correlativa_trabajo = correlativa_compacta.copy(deep=False)
-        _assign_compact_ids(correlativa_trabajo, source_order, compactaciones)
-        correlativa_trabajo.to_parquet(compact_path, index=False)
-        golden.to_parquet(golden_base_path, index=False)
-        expansion_sql = _union_expansion_sql(source_order, compactaciones)
-        payload_sql, payload_columns = _union_payload_sql(source_order, compactaciones)
-
-        correlative_projection: list[str] = []
-        for column in correlativa_trabajo.columns:
-            if column == "__compact_record_id":
-                continue
-            if column == "ORIGINAL_INDEX":
-                correlative_projection.append(
-                    'CAST(e.source_offset + e.source_row_id AS BIGINT) AS "ORIGINAL_INDEX"'
-                )
-            else:
-                correlative_projection.append(f"c.{_quote_identifier(column)}")
-        for column in payload_columns:
-            if column not in correlativa_trabajo.columns:
-                correlative_projection.append(f"p.{_quote_identifier(column)}")
-
-        payload_cte = f", payload AS ({payload_sql})" if payload_sql else ""
-        payload_join = (
-            "LEFT JOIN payload p ON p.source_name = e.source_name "
-            "AND p.source_row_id = e.source_row_id"
-            if payload_sql
-            else ""
-        )
-        correlation_query = (
-            f"WITH expansion AS ({expansion_sql}){payload_cte} "
-            "SELECT "
-            + ", ".join(correlative_projection)
-            + f" FROM expansion e JOIN read_parquet({_quote_literal(compact_path)}) c "
-            "ON c.SRC = e.source_name AND c.__compact_record_id = e.compact_record_id "
-            + payload_join
-        )
-
-        compression = effective_settings.parquet_compression.upper()
-        connection.execute(
-            "COPY ("
-            + correlation_query
-            + ") TO "
-            + _quote_literal(correlativa_pending)
-            + f" (FORMAT PARQUET, COMPRESSION {compression})"
-        )
-        _validate_final_correlation(
-            connection,
-            correlativa_pending,
-            expected_rows=expected_rows,
-            expected_source_rows=expected_source_rows,
-        )
-
-        golden_columns = [str(column) for column in golden.columns]
-        golden_projection: list[str] = []
-        for column in golden_columns:
-            if column == "INPUT_ROW_COUNT":
-                golden_projection.append(
-                    'coalesce(cnt.INPUT_ROW_COUNT, 0)::BIGINT AS "INPUT_ROW_COUNT"'
-                )
-            else:
-                golden_projection.append(f"g.{_quote_identifier(column)}")
-        if "INPUT_ROW_COUNT" not in golden_columns:
-            golden_projection.append(
-                'coalesce(cnt.INPUT_ROW_COUNT, 0)::BIGINT AS "INPUT_ROW_COUNT"'
-            )
-        golden_query = (
-            "WITH cnt AS (SELECT ID_GRUPO, count(*)::BIGINT AS INPUT_ROW_COUNT "
-            f"FROM read_parquet({_quote_literal(correlativa_pending)}) GROUP BY ID_GRUPO) "
-            "SELECT "
-            + ", ".join(golden_projection)
-            + f" FROM read_parquet({_quote_literal(golden_base_path)}) g "
-            "LEFT JOIN cnt USING (ID_GRUPO) ORDER BY g.ID_GRUPO"
-        )
-        connection.execute(
-            "COPY ("
-            + golden_query
-            + ") TO "
-            + _quote_literal(golden_pending)
-            + f" (FORMAT PARQUET, COMPRESSION {compression})"
-        )
-        mismatch = int(
-            connection.execute(
-                """
-                SELECT count(*) FROM (
-                    (SELECT DISTINCT ID_GRUPO FROM read_parquet(?)
-                     EXCEPT SELECT DISTINCT ID_GRUPO FROM read_parquet(?))
-                    UNION ALL
-                    (SELECT DISTINCT ID_GRUPO FROM read_parquet(?)
-                     EXCEPT SELECT DISTINCT ID_GRUPO FROM read_parquet(?))
-                )
-                """,
-                [
-                    str(correlativa_pending),
-                    str(golden_pending),
-                    str(golden_pending),
-                    str(correlativa_pending),
-                ],
-            ).fetchone()[0]
-        )
-        if mismatch:
-            raise RuntimeError(f"Golden y correlativa difieren en {mismatch} grupos.")
-        entities = int(
-            connection.execute(
-                "SELECT count(DISTINCT ID_GRUPO) FROM read_parquet(?)",
-                [str(correlativa_pending)],
-            ).fetchone()[0]
-        )
-        golden_stats = connection.execute(
-            """
-            SELECT count(*)::BIGINT,
-                   count(DISTINCT ID_GRUPO)::BIGINT,
-                   count(*) FILTER (WHERE ID_GRUPO IS NULL)::BIGINT
-            FROM read_parquet(?)
-            """,
-            [str(golden_pending)],
-        ).fetchone()
-        golden_rows = int(golden_stats[0])
-        golden_distinct = int(golden_stats[1])
-        golden_nulls = int(golden_stats[2])
-        if golden_nulls or golden_rows != golden_distinct or golden_distinct != entities:
-            raise RuntimeError(
-                "Golden inválido: debe contener exactamente una fila no nula por entidad; "
-                f"filas={golden_rows}, IDs_distintos={golden_distinct}, "
-                f"entidades={entities}, IDs_nulos={golden_nulls}."
-            )
-        source_rows = {
-            str(source): int(rows)
-            for source, rows in connection.execute(
-                "SELECT SRC, count(*)::BIGINT FROM read_parquet(?) GROUP BY SRC ORDER BY SRC",
-                [str(correlativa_pending)],
-            ).fetchall()
-        }
-        golden_schema = tuple(
-            str(row[0])
-            for row in connection.execute(
-                "DESCRIBE SELECT * FROM read_parquet(?)", [str(golden_pending)]
-            ).fetchall()
-        )
-        correlativa_schema = tuple(
-            str(row[0])
-            for row in connection.execute(
-                "DESCRIBE SELECT * FROM read_parquet(?)", [str(correlativa_pending)]
-            ).fetchall()
-        )
-        validated = True
-    finally:
-        if connection is not None:
-            connection.close()
-        compact_path.unlink(missing_ok=True)
-        golden_base_path.unlink(missing_ok=True)
-        if not validated:
-            if pending_dir is not None:
-                _cleanup_directory(pending_dir, purpose="generación pendiente de resultados")
-            manifest_lock.release()
-
-    try:
-        _fsync_file(golden_pending)
-        _fsync_file(correlativa_pending)
+        extra = dict(completar(pending_dir, generation_dir, expansion)) if completar else {}
+        for archivo in sorted(pending_dir.iterdir()):
+            if archivo.is_file():
+                _fsync_file(archivo)
         _fsync_directory(pending_dir)
         os.replace(pending_dir, generation_dir)
         _fsync_directory(generations_dir)
+        golden_path = generation_dir / expansion.golden.path.name
+        correlativa_path = generation_dir / expansion.correlativa.path.name
+        artifacts = {
+            "golden": _relative_manifest_path(golden_path, output_dir),
+            "correlativa": _relative_manifest_path(correlativa_path, output_dir),
+        }
+        for clave, nombre_archivo in extra.items():
+            artifacts[str(clave)] = _relative_manifest_path(
+                generation_dir / nombre_archivo, output_dir
+            )
         manifest = {
             "schema_version": _MANIFEST_SCHEMA_VERSION,
             "kind": "duckdb_results",
             "generation": token,
-            "artifacts": {
-                "golden": _relative_manifest_path(golden_path, output_dir),
-                "correlativa": _relative_manifest_path(correlativa_path, output_dir),
-            },
+            "artifacts": artifacts,
             "metrics": {
-                "golden_rows": golden_rows,
-                "correlativa_rows": expected_rows,
-                "entities": entities,
-                "source_rows": source_rows,
+                "golden_rows": expansion.golden.rows,
+                "correlativa_rows": expansion.correlativa.rows,
+                "entities": expansion.n_grupos,
+                "source_rows": dict(expansion.filas_por_fuente),
             },
             "schemas": {
-                "golden": list(golden_schema),
-                "correlativa": list(correlativa_schema),
+                "golden": list(expansion.golden.columns),
+                "correlativa": list(expansion.correlativa.columns),
             },
             "retention": {
                 "previous_generations_to_keep": (effective_settings.previous_generations_to_keep)
@@ -649,10 +1073,12 @@ def publicar_resultados_duckdb(
             previous_to_keep=effective_settings.previous_generations_to_keep,
         )
         return PublicacionResultadosDisco(
-            golden=TablaParquet(golden_path, golden_rows, golden_schema),
-            correlativa=TablaParquet(correlativa_path, expected_rows, correlativa_schema),
-            entities=entities,
-            source_rows=MappingProxyType(source_rows),
+            golden=TablaParquet(golden_path, expansion.golden.rows, expansion.golden.columns),
+            correlativa=TablaParquet(
+                correlativa_path, expansion.correlativa.rows, expansion.correlativa.columns
+            ),
+            entities=expansion.n_grupos,
+            source_rows=expansion.filas_por_fuente,
             manifest_path=manifest_path,
             generation_dir=generation_dir,
             generation=token,
@@ -664,7 +1090,11 @@ def publicar_resultados_duckdb(
 
 
 __all__ = [
+    "DIVERGENCIA_METODO_UNION",
+    "ExpansionDisco",
     "PublicacionResultadosDisco",
     "TablaParquet",
+    "escribir_estandar_de_expansion",
+    "expandir_en_disco",
     "publicar_resultados_duckdb",
 ]

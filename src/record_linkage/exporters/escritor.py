@@ -848,6 +848,31 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
     return conteos
 
 
+def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde una tabla por grupo (``RETIRADO_EN`` vacío).
+
+    Es la forma de ``_entidades_ids`` cuando la correlativa no pasa por
+    pandas: ``grupos`` trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD`` y
+    ``N_REGISTROS`` calculada en SQL (modo disco de ``flujo.cruce``,
+    ``resultados_disco.escribir_estandar_de_expansion``). Mismas columnas,
+    tipos y orden por ``ID_GRUPO`` que ``_entidades_ids`` sobre la misma
+    partición (``tests/test_escritor.py`` lo fija). Función añadida en F2.5
+    sin tocar ``_entidades_ids``, que F2.4 reescribe (``REGISTROS`` y
+    retiros vía ``identidad.estable.crosswalk_de_corrida``): al integrar
+    F2.4, esta función debe producir el mismo esquema (ver la nota en
+    ``resultados_disco.escribir_estandar_de_expansion``).
+    """
+    grupos = grupos.sort_values("ID_GRUPO", kind="stable").reset_index(drop=True)
+    return pd.DataFrame(
+        {
+            "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
+            "ID_GRUPO": grupos["ID_GRUPO"].astype("int64"),
+            "N_REGISTROS": grupos["N_REGISTROS"].astype("int64"),
+            "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
+        }
+    )
+
+
 def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[str, Any]:
     """``parametros`` del manifiesto: la llamada más los efectivos del motor.
 
@@ -1138,6 +1163,49 @@ def _escribir_en(
             shutil.copy2(origen, destino)
             _registrar(artefactos, carpeta, destino)
 
+    manifiesto = _manifiesto_de(
+        res,
+        nombre=nombre,
+        marca_tiempo=marca_tiempo,
+        definitiva=definitiva,
+        artefactos=artefactos,
+        omitidos=omitidos,
+        # _trabajo/ vive en la pendiente: ninguna ruta absoluta a ella entra
+        # al JSON (dir_trabajo → "_trabajo", quedan_en, origen de SCORE_PAR…).
+        relativizar_a=carpeta if dir_trabajo_relativo else None,
+    )
+    manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
+    return manifiesto
+
+
+def _manifiesto_de(
+    res: ResultadoLinkage,
+    *,
+    nombre: str,
+    marca_tiempo: datetime,
+    definitiva: Path,
+    artefactos: list[dict[str, Any]],
+    omitidos: list[dict[str, str]],
+    relativizar_a: Path | None = None,
+    insumos: Mapping[str, Any] | None = None,
+    conteos: Mapping[str, Any] | None = None,
+    metricas_extra: Mapping[str, Any] | None = None,
+    invariantes_extra: Mapping[str, Any] | None = None,
+) -> Manifiesto:
+    """El ``Manifiesto`` de una carpeta del estándar a partir de ``res`` y de lo ya escrito.
+
+    Es la cola de ``_escribir_en`` y la comparte el modo disco de
+    ``flujo.cruce`` (``resultados_disco.escribir_estandar_de_expansion``), que
+    no materializa la correlativa: lo que depende de la tabla publicada entra
+    por parámetro cuando se calculó en SQL —``insumos`` (por defecto
+    ``res.manifiesto['entradas']``), ``conteos`` (por defecto ``_conteos``),
+    ``metricas_extra`` (pisan las del motor: ``n_registros``…) e
+    ``invariantes_extra`` (se añaden a ``ok``/``fallos`` de ``validar()``)— y
+    lo que no (``corrida``, ``parametros``, tiempos y RSS por fase, los
+    ``omitidos`` que ``res`` ya traía) sale de ``res`` aquí, una vez.
+    ``omitidos`` se extiende en el lugar. Con ``relativizar_a`` ninguna ruta
+    absoluta bajo esa carpeta entra al bloque ``corrida``.
+    """
     for omitido in res.manifiesto.get("omitidos") or ():
         if isinstance(omitido, dict):
             omitidos.append({str(k): str(v) for k, v in omitido.items()})
@@ -1149,10 +1217,8 @@ def _escribir_en(
         if k not in ("entradas", "parametros", "configuracion", "omitidos")
     }
     corrida["dir_trabajo"] = str(res.dir_trabajo) if res.dir_trabajo is not None else None
-    if dir_trabajo_relativo:
-        # _trabajo/ vive en la pendiente: ninguna ruta absoluta a ella entra
-        # al JSON (dir_trabajo → "_trabajo", quedan_en, origen de SCORE_PAR…).
-        corrida = _relativizar_rutas(corrida, carpeta)
+    if relativizar_a is not None:
+        corrida = _relativizar_rutas(corrida, relativizar_a)
     tiempos, rss, motivo = _tiempos_y_rss(res.dir_trabajo)
     if motivo is not None:
         logger.warning("tiempos_por_fase y rss_por_fase quedan vacíos: %s", motivo)
@@ -1161,22 +1227,27 @@ def _escribir_en(
     reporte = res.validar()
     parametros = _parametros(res, omitidos)
     metricas = _metricas(res, tiempos, rss)
-    if dir_trabajo_relativo:
+    if relativizar_a is not None:
         # F2.7: dedupe() deja ``metricas['output_dir']`` (una cadena escalar que
         # _metricas copia) apuntando a _trabajo/ de la pendiente; en el JSON va
         # relativa, como las rutas de ``corrida``.
-        metricas = _relativizar_rutas(metricas, carpeta)
-    manifiesto = Manifiesto(
+        metricas = _relativizar_rutas(metricas, relativizar_a)
+    if metricas_extra:
+        metricas.update(metricas_extra)
+    invariantes: dict[str, Any] = {"ok": reporte.ok, "fallos": list(reporte.fallos)}
+    if invariantes_extra:
+        invariantes.update(invariantes_extra)
+    return Manifiesto(
         contrato=contrato.VERSION_CONTRATO,
         version=_version_paquete(),
         nombre=nombre,
         marca_tiempo=marca_tiempo.isoformat(timespec="seconds"),
         carpeta=definitiva,
-        insumos=dict(res.manifiesto.get("entradas") or {}),
+        insumos=dict(insumos if insumos is not None else res.manifiesto.get("entradas") or {}),
         artefactos=artefactos,
         parametros=parametros,
-        conteos=_conteos(res),
-        invariantes={"ok": reporte.ok, "fallos": list(reporte.fallos)},
+        conteos=dict(conteos) if conteos is not None else _conteos(res),
+        invariantes=invariantes,
         metricas=metricas,
         tiempos_por_fase=tiempos,
         rss_por_fase=rss,
@@ -1184,8 +1255,6 @@ def _escribir_en(
         renombres=dict(completar.get("renombres") or {}),
         corrida=corrida,
     )
-    manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
-    return manifiesto
 
 
 def _limpiar_pendiente(pendiente: Path, *, conservar_trabajo: bool) -> None:

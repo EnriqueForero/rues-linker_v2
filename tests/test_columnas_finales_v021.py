@@ -217,15 +217,17 @@ def test_el_reporte_vacio_no_declara_anomalia() -> None:
 def test_el_flujo_rechaza_una_correlativa_sin_el_contrato(
     correlativa: pd.DataFrame, golden: pd.DataFrame
 ) -> None:
-    from record_linkage.flujo.cruce import _verificar_invariantes
+    """F2.5: la invariante del flujo es ``ResultadoLinkage.validar()`` (las
+    columnas finales son columnas fijas del contrato) más el cruce de filas."""
+    from record_linkage.flujo.cruce import _validar_cruce
+    from record_linkage.pipeline.errores import ContratoSalidaError
+    from record_linkage.resultado import ResultadoLinkage
 
     completa, _ = garantizar_columnas_finales(correlativa, golden)
-    golden_lleno = golden.assign(NAME_SIMILARITY_SCORE=1.0, NIT_DISTANCE=0)
-    _verificar_invariantes(completa, golden_lleno, len(completa))
-
     incompleta = completa.drop(columns=["NIT_FINAL"])
-    with pytest.raises(RuntimeError, match="NIT_FINAL"):
-        _verificar_invariantes(incompleta, golden_lleno, len(incompleta))
+    res = ResultadoLinkage(correlativa=incompleta, golden=golden)
+    with pytest.raises(ContratoSalidaError, match="NIT_FINAL"):
+        _validar_cruce(res, filas_entrada=len(incompleta))
 
 
 def test_el_protocolo_de_calidad_exige_identidad_adoptada() -> None:

@@ -406,6 +406,71 @@ def test_hoja_diccionario_selecciona_por_tabla_o_por_columnas() -> None:
         escritor.hoja_diccionario(pd.DataFrame({"tabla": ["a"], "columna": ["b"]}), "a")
 
 
+def test_entidades_ids_de_grupos_es_la_misma_regla(res: ResultadoLinkage) -> None:
+    """La regla del crosswalk se escribe una vez: ``_entidades_ids`` (desde la
+    correlativa en pandas) y ``_entidades_ids_de_grupos`` (desde una tabla
+    por grupo, como la que el modo disco calcula en SQL) dan lo mismo."""
+    c = res.correlativa
+    grupos = (
+        c.groupby("ID_GRUPO", sort=False)
+        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
+        .reset_index()
+        .sample(frac=1, random_state=7)  # el orden de entrada no importa
+    )
+    pd.testing.assert_frame_equal(
+        escritor._entidades_ids_de_grupos(grupos), escritor._entidades_ids(c)
+    )
+    assert list(escritor._entidades_ids_de_grupos(grupos).columns) == list(
+        contrato.COLUMNAS_ENTIDADES_IDS
+    )
+
+
+def test_manifiesto_de_admite_lo_que_el_modo_disco_calcula_en_sql(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """``_manifiesto_de`` es la cola de ``_escribir_en`` y la usa también el modo
+    disco: lo que ahí se calcula en SQL (insumos, conteos, métricas de la tabla
+    publicada, invariantes verificadas en SQL) entra por parámetro y lo demás
+    (corrida, parámetros, tiempos, omitidos del resultado) sale de ``res``."""
+    omitidos = [{"artefacto": "excel/golden.xlsx", "motivo": "modo disco"}]
+    man = escritor._manifiesto_de(
+        res,
+        nombre="prueba",
+        marca_tiempo=MARCA,
+        definitiva=tmp_path / CARPETA_ESPERADA,
+        artefactos=[],
+        omitidos=omitidos,
+        insumos={"CRM": {"filas": 99, "representantes": 90}},
+        conteos={"filas": 99, "grupos": 5},
+        metricas_extra={"n_registros": 99, "tasa_reduccion": 0.5},
+        invariantes_extra={"verificado_en_sql": ["ID_REGISTRO único"]},
+    )
+    assert isinstance(man, Manifiesto)
+    assert man.nombre == "prueba" and man.marca_tiempo == MARCA.isoformat(timespec="seconds")
+    assert man.insumos == {"CRM": {"filas": 99, "representantes": 90}}
+    assert man.conteos == {"filas": 99, "grupos": 5}
+    assert man.metricas["n_registros"] == 99 and man.metricas["tasa_reduccion"] == 0.5
+    assert man.invariantes["ok"] is True and man.invariantes["verificado_en_sql"] == [
+        "ID_REGISTRO único"
+    ]
+    assert man.omitidos[0] == omitidos[0]
+    assert man.parametros["llamada"] == res.manifiesto["parametros"]
+    assert man.corrida["funcion"] == res.manifiesto["funcion"]
+    assert "entradas" not in man.corrida and "configuracion" not in man.corrida
+    # Sin los extras, es exactamente lo que escribe escribir_resultado.
+    base = escritor._manifiesto_de(
+        res,
+        nombre="prueba",
+        marca_tiempo=MARCA,
+        definitiva=tmp_path / CARPETA_ESPERADA,
+        artefactos=[],
+        omitidos=[],
+    )
+    escrito = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert base.conteos == escrito.conteos and base.insumos == escrito.insumos
+    assert base.metricas == escrito.metricas and base.parametros == escrito.parametros
+
+
 def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     assert not (man.carpeta / "excel").exists()

@@ -150,7 +150,8 @@ class ResultadoLinkage:
         Exige: orden y tipos de las columnas fijas, ``ID_REGISTRO`` único, N
         filas de la correlativa = N de entrada (``manifiesto['entradas']``),
         golden sin NaN en métricas y una fila por ``ID_GRUPO`` de la
-        correlativa, ``ID_ENTIDAD`` no nulo y consistente (un ``ID_GRUPO`` ↔
+        correlativa, ``ID_GRUPO`` no nulo (F2.5: la invariante que
+        ``flujo.cruce`` comprobaba aparte), ``ID_ENTIDAD`` no nulo y consistente (un ``ID_GRUPO`` ↔
         un ``ID_ENTIDAD``), ``METODO_UNION`` dentro del vocabulario y
         ``CONFIANZA`` (cuando no es nula) dentro de ALTA · MEDIA · BAJA. Si
         trae ``entidades_ids`` (F2.4, ADR-0012): ``ID_ENTIDAD`` único y no
@@ -291,6 +292,13 @@ def _validar_correlativa(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[st
             fallos.append(
                 f"correlativa: ID_REGISTRO no es único ({repetidos} repetido(s)); la "
                 f"identidad del registro deja de ser estable."
+            )
+    if "ID_GRUPO" in c.columns:
+        nulos = int(c["ID_GRUPO"].isna().sum())
+        if nulos:
+            fallos.append(
+                f"correlativa: ID_GRUPO tiene {nulos} nulo(s); una fila sin grupo no pertenece "
+                f"a ninguna entidad y el resultado es inutilizable."
             )
     entradas = manifiesto.get("entradas")
     if isinstance(entradas, dict) and entradas:

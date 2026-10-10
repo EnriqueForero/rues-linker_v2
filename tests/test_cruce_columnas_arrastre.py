@@ -34,7 +34,9 @@ from record_linkage.pipeline.errores import ColumnasArrastreError
 
 
 def _manifiesto(resultado) -> dict:
-    return json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
+    """El bloque del cruce en ``manifest.json`` (F2.5: un solo manifiesto)."""
+    manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+    return manifest["corrida"]["cruce"]
 
 
 def _con_opcionales(spec: SourceSpec, **opcionales: str) -> SourceSpec:
@@ -260,7 +262,9 @@ def test_cache_anterior_a_f1_8_se_relee_en_vez_de_callar_las_omitidas(
     assert viejo.pop("missing_optional") == ["SUCURSAL"]
     json_padron.write_text(json.dumps(viejo), encoding="utf-8")
 
-    resultado = ejecutar_cruce(config_cruce(fuentes, tmp_path, dir_procesados=cache))
+    resultado = ejecutar_cruce(
+        config_cruce(fuentes, tmp_path, dir_procesados=cache, nombre="segunda")
+    )
     assert resultado.reportes_carga["PADRON"]["missing_optional"] == ["SUCURSAL"]
     arrastre = _manifiesto(resultado)["parametros"]["columnas_arrastre"]
     assert [o["columna"] for o in arrastre["omitidas"]] == ["SUCURSAL"]
@@ -293,8 +297,8 @@ def test_parquet_de_arrastre_con_una_fila_de_menos_tumba_la_corrida(
     assert "2" in texto and "3" in texto, "debe citar filas observadas y esperadas"
     assert info.value.fuente == "PADRON"
     assert (info.value.observadas, info.value.esperadas) == (2, 3)
-    # Y no hay manifiesto que diga que la unión ocurrió.
-    assert not (tmp_path / "salida" / "metadatos_corrida.json").exists()
+    # Y no hay carpeta publicada que diga que la unión ocurrió.
+    assert not list((tmp_path / "salida").iterdir())
 
 
 def test_total_de_extras_distinto_de_la_correlativa_falla(tmp_path: Path) -> None:

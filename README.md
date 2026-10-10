@@ -312,8 +312,9 @@ las vistas derivadas de un notebook.
 ### Un cruce completo, con preflight y evidencia (v0.17.3)
 
 `record_linkage.flujo` ejecuta el flujo entero —preflight, copia anti-Drive,
-carga proyectada, smoke test, corrida con checkpoints, invariantes, exportes y
-metadatos JSON— con la configuración en un solo `dataclass`:
+carga proyectada, smoke test, corrida con checkpoints, invariantes y la carpeta
+del estándar (`<workspace>/<AAAA-MM-DD_HHMM>_<nombre>/`, o una generación con
+esa misma forma en modo disco)— con la configuración en un solo `dataclass`:
 
 ```python
 from record_linkage import ColumnType, SourceSpec

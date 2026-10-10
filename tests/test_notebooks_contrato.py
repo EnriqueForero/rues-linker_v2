@@ -450,8 +450,9 @@ ARTEFACTOS_ESPERADOS: dict[str, tuple[str, ...]] = {
         "resultados/*_CONSOLIDADO_2026_07/excel/golden.xlsx",
     ),
     NB04: ("resultados/multicampo__CLUSTERS.xlsx", "resultados/multicampo__DECISIONES.xlsx"),
-    NB05: ("resultados/correlativa.parquet", "resultados/golden.parquet"),
-    NB06_PLANTILLA: ("datos/RUES/_procesados/resultados_rues_linker/correlativa.parquet",),
+    # F2.5: ejecutar_cruce deja la carpeta del estándar <marca>_<nombre>/.
+    NB05: ("resultados/*_cruce/correlativa.parquet", "resultados/*_cruce/golden.parquet"),
+    NB06_PLANTILLA: ("datos/RUES/_procesados/resultados_rues_linker/*_cruce/correlativa.parquet",),
     NB06_ORQUESTADOR: ("resultados/rues_x_exportaciones/resultados.manifest.json",),
     NB12: (
         "datos/empresas_demo.csv",
