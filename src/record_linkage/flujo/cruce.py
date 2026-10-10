@@ -2481,7 +2481,7 @@ def _publicar_en_disco(
 
     def completar(_pendiente: Path, definitiva: Path, expansion: ExpansionDisco) -> dict[str, str]:
         reporte_arrastre = arrastre_de(expansion)
-        metricas = metricas_de(expansion.correlativa.rows, expansion.entities)
+        metricas = metricas_de(expansion.correlativa.rows, expansion.n_grupos)
         salida.manifiesto["funcion"] = "ejecutar_cruce"
         salida.manifiesto["cruce"] = _bloque_cruce(
             config, reporte_arrastre, metricas, reportes_carga

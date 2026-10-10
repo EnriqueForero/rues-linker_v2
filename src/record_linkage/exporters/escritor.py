@@ -589,15 +589,13 @@ def _relativizar_rutas(valor: Any, base: Path) -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
-    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde una tabla por grupo (``RETIRADO_EN`` vacío).
-
-    ``grupos`` trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD`` y
-    ``N_REGISTROS``, venga de pandas (``_entidades_ids``) o de SQL (modo
-    disco de ``flujo.cruce``, ``resultados_disco``): la regla del crosswalk
-    —columnas, tipos, orden por ``ID_GRUPO``— se escribe una vez.
-    """
-    grupos = grupos.sort_values("ID_GRUPO", kind="stable").reset_index(drop=True)
+def _entidades_ids(correl: pd.DataFrame) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (``RETIRADO_EN`` vacío)."""
+    grupos = (
+        correl.groupby("ID_GRUPO", sort=True)
+        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
+        .reset_index()
+    )
     return pd.DataFrame(
         {
             "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
@@ -606,16 +604,6 @@ def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
             "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
         }
     )
-
-
-def _entidades_ids(correl: pd.DataFrame) -> pd.DataFrame:
-    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (``RETIRADO_EN`` vacío)."""
-    grupos = (
-        correl.groupby("ID_GRUPO", sort=True)
-        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
-        .reset_index()
-    )
-    return _entidades_ids_de_grupos(grupos)
 
 
 def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
@@ -639,6 +627,31 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
         "revision": len(res.revision),
     }
     return conteos
+
+
+def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde una tabla por grupo (``RETIRADO_EN`` vacío).
+
+    Es la forma de ``_entidades_ids`` cuando la correlativa no pasa por
+    pandas: ``grupos`` trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD`` y
+    ``N_REGISTROS`` calculada en SQL (modo disco de ``flujo.cruce``,
+    ``resultados_disco.escribir_estandar_de_expansion``). Mismas columnas,
+    tipos y orden por ``ID_GRUPO`` que ``_entidades_ids`` sobre la misma
+    partición (``tests/test_escritor.py`` lo fija). Función añadida en F2.5
+    sin tocar ``_entidades_ids``, que F2.4 reescribe (``REGISTROS`` y
+    retiros vía ``identidad.estable.crosswalk_de_corrida``): al integrar
+    F2.4, esta función debe producir el mismo esquema (ver la nota en
+    ``resultados_disco.escribir_estandar_de_expansion``).
+    """
+    grupos = grupos.sort_values("ID_GRUPO", kind="stable").reset_index(drop=True)
+    return pd.DataFrame(
+        {
+            "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
+            "ID_GRUPO": grupos["ID_GRUPO"].astype("int64"),
+            "N_REGISTROS": grupos["N_REGISTROS"].astype("int64"),
+            "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
+        }
+    )
 
 
 def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[str, Any]:

@@ -32,6 +32,7 @@ from record_linkage.flujo import (
     reportar_composicion,
 )
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
+from record_linkage.flujo.resultados_disco import DIVERGENCIA_METODO_UNION
 from record_linkage.ingestion import DuckDBIngestionSettings
 from record_linkage.pipeline.errores import ContratoSalidaError, EscrituraSalidaError
 from record_linkage.resultado import ResultadoLinkage
@@ -981,6 +982,8 @@ def test_modo_disco_conserva_generaciones_con_la_forma_del_estandar(
     manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
     assert manifest["contrato"] == contrato.VERSION_CONTRATO
     assert manifest["invariantes"]["ok"] is True
+    # Lo que el modo disco calcula distinto del dataframe se declara, no se calla.
+    assert manifest["invariantes"]["divergencia_declarada"] == DIVERGENCIA_METODO_UNION
     assert manifest["conteos"]["filas"] == 5 and manifest["conteos"]["grupos"] == 4
     assert manifest["insumos"]["PADRON"]["filas"] == 3
     assert manifest["corrida"]["cruce"]["parametros"]["modo_resultado"] == "disco"

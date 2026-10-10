@@ -93,16 +93,33 @@ _ID_ENTIDAD_ENT_SQL = (
     """'ENT-' || left(sha256(string_agg("ID_REGISTRO", '|' ORDER BY "ID_REGISTRO")), 16)"""
 )
 
+#: Divergencia entre motores que el modo disco declara en ``manifest.json``
+#: (``invariantes.divergencia_declarada``): ``expandir_en_disco`` aplica en SQL
+#: la regla de ``METODO_UNION`` de ``salida.completar`` solo al caso
+#: ``sin_pareja`` que la expansión cambia; un representante que es el ÚNICO
+#: con la base del grupo (sus copias exactas colapsaron antes de ``completar``)
+#: queda ``nombre`` aquí y ``identificador`` por pandas, que expande antes.
+#: Medido en el banco de 30.486 filas: 346 filas diferían entre motores, 338
+#: eran ``sin_pareja`` reconciliado y estas son las 8 residuales.
+#: ``tests/test_disk_results_v016.py`` fija el caso; unificarlo exige ponderar
+#: ``completar`` por copias, fuera de este módulo.
+DIVERGENCIA_METODO_UNION = (
+    "METODO_UNION: representante único con la base del grupo cuyas copias exactas "
+    "colapsaron queda 'nombre' (pandas: 'identificador'); 8/30486 filas en el banco"
+)
+
 #: Qué hacer cuando una invariante de la expansión falla: nunca es del usuario.
 _QUE_HACER_EXPANSION = (
     "no use esta generación (no se publica); reporte el caso con el manifiesto de "
     "_trabajo/ (correlativa compacta del motor y mapas de expansión de DuckDB)."
 )
 
-#: Lo que ``completar`` recibe: la carpeta pendiente (donde escribir), la
-#: carpeta definitiva (el nombre que tendrá tras el ``rename``) y la expansión
-#: verificada. Devuelve ``{clave: nombre de archivo}`` para listar en el
-#: manifiesto generacional.
+#: Lo que ``completar`` recibe, EN ESTE ORDEN posicional: (1) la carpeta
+#: pendiente (donde escribir: existe y aún no se publicó), (2) la carpeta
+#: definitiva (el nombre que tendrá tras el ``rename``: no existe todavía, solo
+#: sirve para nombrarla en el manifiesto) y (3) la expansión verificada.
+#: Devuelve ``{clave: nombre de archivo}`` para listar en el manifiesto
+#: generacional. ``flujo.cruce._publicar_en_disco`` es el único llamador.
 Completar = Callable[[Path, Path, "ExpansionDisco"], Mapping[str, str]]
 
 
@@ -528,18 +545,22 @@ class ExpansionDisco:
         carpeta: donde están ``correlativa.parquet`` y ``golden.parquet``.
         golden: referencia al golden (una fila por entidad, con ``INPUT_ROW_COUNT``).
         correlativa: referencia a la correlativa expandida (una fila por registro).
-        entities: grupos distintos de la correlativa.
-        source_rows: filas publicadas por fuente.
+        n_grupos: ``ID_GRUPO`` distintos de la correlativa (``len(grupos)``).
+        filas_por_fuente: filas publicadas por fuente (``SRC``).
         grupos: una fila por ``ID_GRUPO`` con ``N_REGISTROS`` y, si la
             correlativa lo trae, ``ID_ENTIDAD``: es el crosswalk de la corrida
             sin pasar la tabla por pandas.
+
+    Es una clase nueva (F2.5) y va en español; ``PublicacionResultadosDisco``
+    (``entities``, ``source_rows``) es anterior y conserva sus nombres porque
+    la leen notebooks y pruebas de 0.16.0.
     """
 
     carpeta: Path
     golden: TablaParquet
     correlativa: TablaParquet
-    entities: int
-    source_rows: Mapping[str, int]
+    n_grupos: int
+    filas_por_fuente: Mapping[str, int]
     grupos: pd.DataFrame
 
     @property
@@ -574,13 +595,8 @@ def expandir_en_disco(
       expandir tienen más de una fila (``identificador`` si el grupo adoptó
       identificador, ``nombre`` si no: la regla de ``salida.completar``; medido
       en el banco de 30.486 filas, 338 de las 346 filas que diferían entre
-      motores eran esto). Divergencia residual, declarada: ``completar`` exige
-      para ``identificador`` otra fila del grupo con la misma base válida; un
-      representante que es el ÚNICO con la base del grupo queda ``nombre``
-      aquí, mientras que por pandas (que expande ANTES de completar) sus
-      copias exactas cuentan como pareja y da ``identificador``. Son 8 de
-      30.486 filas en el banco; corregirlo exige ponderar ``completar`` por
-      copias, fuera de este módulo.
+      motores eran esto). Las 8 residuales son ``DIVERGENCIA_METODO_UNION``:
+      ``escribir_estandar_de_expansion`` la declara en el manifiesto.
       ``ID_ENTIDAD``: los ``NIT-`` se conservan tal como los asignó el motor
       (valor por grupo); los ``ENT-`` se RECALCULAN en SQL con la regla de
       ``salida.completar`` (``ENT-<sha16 de los ID_REGISTRO del grupo
@@ -731,7 +747,7 @@ def expandir_en_disco(
                 [str(correlativa_path)],
             ).fetchall()
         }
-        entities = len(grupos)
+        n_grupos = len(grupos)
 
         if "ID_GRUPO" not in golden.columns:
             raise ContratoSalidaError(
@@ -761,13 +777,13 @@ def expandir_en_disco(
                     )
                 ]
             )
-        if golden_nulls or len(golden) != golden_distinct or golden_distinct != entities:
+        if golden_nulls or len(golden) != golden_distinct or golden_distinct != n_grupos:
             raise ContratoSalidaError(
                 [
                     mensaje_accionable(
                         "el golden debe contener exactamente una fila no nula por entidad; "
                         f"filas={len(golden)}, IDs_distintos={golden_distinct}, "
-                        f"entidades={entities}, IDs_nulos={golden_nulls}.",
+                        f"grupos={n_grupos}, IDs_nulos={golden_nulls}.",
                         "un golden con entidades repetidas o nulas duplica o pierde "
                         "registros consolidados en el entregable.",
                         _QUE_HACER_EXPANSION,
@@ -799,8 +815,8 @@ def expandir_en_disco(
         carpeta=carpeta,
         golden=TablaParquet(golden_path, len(golden_salida), golden_schema),
         correlativa=TablaParquet(correlativa_path, expected_rows, correlativa_schema),
-        entities=entities,
-        source_rows=MappingProxyType(source_rows),
+        n_grupos=n_grupos,
+        filas_por_fuente=MappingProxyType(source_rows),
         grupos=grupos,
     )
 
@@ -811,12 +827,12 @@ def _conteos_expansion(res: ResultadoLinkage, expansion: ExpansionDisco) -> dict
     con_nit = int(entidades.astype(str).str.startswith("NIT-").sum())
     return {
         "filas": expansion.correlativa.rows,
-        "grupos": expansion.entities,
+        "grupos": expansion.n_grupos,
         "entidades": len(entidades),
         "entidades_con_nit": con_nit,
         "entidades_sin_nit": len(entidades) - con_nit,
-        "fuentes": len(expansion.source_rows),
-        "filas_por_fuente": dict(expansion.source_rows),
+        "fuentes": len(expansion.filas_por_fuente),
+        "filas_por_fuente": dict(expansion.filas_por_fuente),
         "golden": expansion.golden.rows,
         "enlaces": len(res.enlaces) if res.enlaces is not None else None,
         "revision": len(res.revision),
@@ -865,6 +881,18 @@ def escribir_estandar_de_expansion(
     _registrar(artefactos, carpeta, expansion.correlativa.path)
     _registrar(artefactos, carpeta, expansion.golden.path)
 
+    # NOTA PARA LA INTEGRACIÓN DE F2.4 (identidad estable, ADR-0012): F2.4
+    # reescribe ``escritor._entidades_ids`` para que el crosswalk salga de
+    # ``identidad.estable.crosswalk_de_corrida`` (columna ``REGISTROS`` =
+    # ``ID_REGISTRO`` del grupo, y retiros), y ``cargar_corrida_anterior``
+    # EXIGE ``REGISTROS``. Este crosswalk se arma en SQL desde ``grupos`` y
+    # no pasa por esa regla: al integrar F2.4 hay que (a) hacer que
+    # ``expandir_en_disco`` agregue ``string_agg("ID_REGISTRO", … ORDER BY
+    # "ID_REGISTRO")`` por grupo y que ``_entidades_ids_de_grupos`` emita
+    # ``REGISTROS`` (o pasar por ``crosswalk_de_corrida`` sobre esa tabla), y
+    # (b) añadir una prueba que lea una generación de disco como
+    # ``corrida_anterior``. Hasta entonces una generación de disco NO sirve
+    # como corrida anterior de F2.4.
     entidades_ids = _entidades_ids_de_grupos(expansion.grupos)
     ruta = carpeta / "entidades_ids.parquet"
     escribir_parquet(entidades_ids, ruta, contrato.ENTIDADES_IDS)
@@ -912,8 +940,8 @@ def escribir_estandar_de_expansion(
         # El motor midió sobre representantes; la tabla publicada tiene las filas reales.
         metricas_extra={
             "n_registros": filas,
-            "n_grupos": expansion.entities,
-            "tasa_reduccion": 1 - expansion.entities / filas if filas else None,
+            "n_grupos": expansion.n_grupos,
+            "tasa_reduccion": 1 - expansion.n_grupos / filas if filas else None,
         },
         invariantes_extra={
             "validado_sobre": "resultado compacto del motor (modo disco)",
@@ -926,6 +954,9 @@ def escribir_estandar_de_expansion(
                 "ID_ENTIDAD ENT- recalculado desde los ID_REGISTRO publicados",
                 "golden: una fila por grupo de la correlativa",
             ],
+            # Lo que el modo disco calcula distinto del modo dataframe, dicho en
+            # el manifiesto y no solo en un docstring (ver expandir_en_disco).
+            "divergencia_declarada": DIVERGENCIA_METODO_UNION,
         },
     )
     manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
@@ -1018,8 +1049,8 @@ def publicar_resultados_duckdb(
             "metrics": {
                 "golden_rows": expansion.golden.rows,
                 "correlativa_rows": expansion.correlativa.rows,
-                "entities": expansion.entities,
-                "source_rows": dict(expansion.source_rows),
+                "entities": expansion.n_grupos,
+                "source_rows": dict(expansion.filas_por_fuente),
             },
             "schemas": {
                 "golden": list(expansion.golden.columns),
@@ -1046,8 +1077,8 @@ def publicar_resultados_duckdb(
             correlativa=TablaParquet(
                 correlativa_path, expansion.correlativa.rows, expansion.correlativa.columns
             ),
-            entities=expansion.entities,
-            source_rows=expansion.source_rows,
+            entities=expansion.n_grupos,
+            source_rows=expansion.filas_por_fuente,
             manifest_path=manifest_path,
             generation_dir=generation_dir,
             generation=token,
@@ -1059,6 +1090,7 @@ def publicar_resultados_duckdb(
 
 
 __all__ = [
+    "DIVERGENCIA_METODO_UNION",
     "ExpansionDisco",
     "PublicacionResultadosDisco",
     "TablaParquet",
