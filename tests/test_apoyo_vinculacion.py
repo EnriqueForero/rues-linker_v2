@@ -6,11 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import apoyo_vinculacion as av
 import pandas as pd
 
-from tests import apoyo_vinculacion as av
-
-RAIZ = Path(__file__).resolve().parents[1]
+CARPETA_PRUEBAS = Path(__file__).resolve().parent
 
 
 def test_los_insumos_tienen_las_tres_bases_y_los_casos(tmp_path):
@@ -43,8 +42,8 @@ def _huella_de_proceso(semilla_hash: str, destino: Path) -> str:
     """Construye los insumos en un proceso aparte con otra semilla de hash y devuelve su huella."""
     codigo = (
         "import sys, tempfile, pathlib;"
-        f"sys.path.insert(0, {str(RAIZ)!r});"
-        "from tests import apoyo_vinculacion as av;"
+        f"sys.path.insert(0, {str(CARPETA_PRUEBAS)!r});"
+        "import apoyo_vinculacion as av;"
         f"ins = av.construir_insumos(pathlib.Path({str(destino)!r}));"
         "print(av.huella_tabla(ins.ancla), av.huella_tabla(ins.orbis), av.huella_tabla(ins.fdi))"
     )
