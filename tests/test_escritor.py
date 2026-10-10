@@ -222,9 +222,22 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
 def test_leer_resultado_devuelve_id_grupo_del_crosswalk_como_int64(
     res: ResultadoLinkage, tmp_path: Path
 ) -> None:
-    """Con una retirada sin grupo, ``pd.read_parquet`` daría ``float64``; el
-    lector normaliza a ``Int64`` (el tipo de ``cargar_corrida_anterior``)."""
+    """El lector devuelve ``ID_GRUPO`` como ``Int64`` (el tipo de
+    ``cargar_corrida_anterior``) sea cual sea el contenido: con un nulo,
+    ``pd.read_parquet`` daría ``float64``; sin nulos, ``int64``. Un crosswalk
+    con ``ID_GRUPO`` nulo viola el contrato (ADR-0012 §3) y ``validar()`` lo
+    rechaza antes de escribir, así que el caso con nulo se prueba sobre el
+    lector del archivo (``_leer_entidades_ids``), no publicándolo."""
+    from record_linkage.exporters.escritor import _leer_entidades_ids, escribir_parquet
+
     assert res.entidades_ids is not None
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert pd.read_parquet(man.carpeta / "entidades_ids.parquet")["ID_GRUPO"].dtype == "int64"
+    leido = leer_resultado(man.carpeta)
+    assert leido.entidades_ids is not None
+    assert leido.entidades_ids["ID_GRUPO"].dtype == "Int64"
+    assert len(leido.entidades_ids) == len(res.entidades_ids)
+
     retirada = pd.DataFrame(
         {
             "ID_ENTIDAD": pd.Series(["ENT-ffffffffffffffff"], dtype="string"),
@@ -237,15 +250,19 @@ def test_leer_resultado_devuelve_id_grupo_del_crosswalk_como_int64(
         }
     )
     con_nulo = pd.concat([res.entidades_ids, retirada], ignore_index=True)
-    man = escribir_resultado(
-        _con(res, entidades_ids=con_nulo), tmp_path, "prueba", marca_tiempo=MARCA, excel=False
-    )
-    assert pd.read_parquet(man.carpeta / "entidades_ids.parquet")["ID_GRUPO"].dtype == "float64"
-    leido = leer_resultado(man.carpeta)
-    assert leido.entidades_ids is not None
-    assert leido.entidades_ids["ID_GRUPO"].dtype == "Int64"
-    assert leido.entidades_ids["ID_GRUPO"].isna().sum() == 1
-    assert len(leido.entidades_ids) == len(con_nulo)
+    # Escrito como lo escribe el estándar (esquema del contrato, sin metadatos
+    # de pandas): con un nulo, pd.read_parquet lo devuelve como float64.
+    crudo = tmp_path / "crudo.parquet"
+    escribir_parquet(con_nulo, crudo, contrato.ENTIDADES_IDS)
+    assert pd.read_parquet(crudo)["ID_GRUPO"].dtype == "float64"
+    ids = _leer_entidades_ids(crudo)
+    assert ids["ID_GRUPO"].dtype == "Int64" and ids["ID_GRUPO"].isna().sum() == 1
+    # Publicarlo ya no es posible: validar() lo rechaza antes de escribir nada.
+    with pytest.raises(ContratoSalidaError, match="entidades_ids: ID_GRUPO tiene 1 nulo"):
+        escribir_resultado(
+            _con(res, entidades_ids=con_nulo), tmp_path, "nulo", marca_tiempo=MARCA, excel=False
+        )
+    assert not any(p.name.endswith("_nulo") for p in tmp_path.iterdir())
 
 
 def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_path: Path) -> None:

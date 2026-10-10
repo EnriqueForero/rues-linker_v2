@@ -369,8 +369,10 @@ def linkage(
             primaria). Si existe y es única y no vacía en una fuente,
             ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
             None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
-            Un nombre que no existe en ninguna fuente falla de inmediato; un
-            valor que contenga ``|`` falla con ``ContratoSalidaError`` (es el
+            Un nombre que no existe en ninguna fuente falla al completar el
+            contrato (tras el motor); un valor que contenga ``|`` —o un
+            nombre de fuente que lo contenga— falla ANTES de L1 con
+            ``IdRegistroInvalidoError`` y no deja ``work_dir`` (``|`` es el
             separador de ``REGISTROS`` en ``entidades_ids.parquet``).
         carpeta_salida: si se da, al terminar se escribe la carpeta del
             estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
@@ -446,7 +448,7 @@ def linkage(
     from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
     from .exporters.escritor import carpeta_pendiente, escribir_resultado
-    from .identidad.estable import cargar_corrida_anterior
+    from .identidad.estable import cargar_corrida_anterior, exigir_fuentes_sin_separador
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
@@ -467,6 +469,9 @@ def linkage(
         col_ciudad=col_ciudad,
         extra_features=extra_features,
     )
+    # Falla AHORA si un nombre de fuente o un valor de col_id lleva '|' (no
+    # cabría en REGISTROS del crosswalk), no al cierre tras L1…L5 (F2.4).
+    exigir_fuentes_sin_separador(sources, col_id)
 
     source_order = list(sources)
     # Un ``set`` no tiene orden estable entre procesos. Ordenar por el orden
@@ -920,6 +925,8 @@ def dedupe(
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué
             importa / qué hacer).
+        IdRegistroInvalidoError: un valor de ``col_id`` contiene ``|`` (ver
+            ``linkage``); se rechaza antes del motor y sin crear ``output_dir``.
 
     Ejemplo:
         >>> import pandas as pd, record_linkage as rl
@@ -931,8 +938,10 @@ def dedupe(
     import tempfile
 
     from .deduplication.auto import deduplicate_auto
+    from .identidad.estable import exigir_fuentes_sin_separador
 
     _preflight(df, [col_nit, col_name], "df")
+    exigir_fuentes_sin_separador({"df": df}, col_id)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="rues_linker_dedupe_")
 

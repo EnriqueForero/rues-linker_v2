@@ -33,23 +33,35 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
    columna `REGISTROS` (los `ID_REGISTRO` de la entidad, ordenados y separados
    por `|`). Con ella, la corrida siguiente mide el solapamiento leyendo un
    solo archivo: no hace falta la correlativa anterior ni reconstruir nada.
-   Un `ID_REGISTRO` que contenga `|` (el id nativo de `col_id` lo pone la
-   fuente) no cabe en esa columna: el módulo falla con `ContratoSalidaError`
-   (qué hacer: otro `col_id`, limpiar la columna o `col_id=None`) en vez de
-   escribir un crosswalk que la corrida siguiente partiría mal en silencio.
+   Un `ID_REGISTRO` que contenga `|` (`ID_REGISTRO = <SRC>-<id nativo>`: el
+   nombre de la fuente y el valor de `col_id` los pone el usuario) no cabe en
+   esa columna. Es un dato de entrada, no un defecto del motor, y por eso se
+   rechaza ANTES de L1 con `IdRegistroInvalidoError` —`linkage()` (y `link()`
+   a través de él) y `dedupe()` llaman a `exigir_fuentes_sin_separador` con
+   las fuentes ya materializadas; no queda `work_dir`— con un solo «qué
+   hacer» (otro `col_id`, limpiar la columna o `col_id=None`). El módulo
+   repite la guardia al construir el crosswalk con la misma excepción (no
+   `ContratoSalidaError`, cuyo pie diría «repórtelo como defecto del motor»)
+   en vez de escribir un crosswalk que la corrida siguiente partiría mal en
+   silencio.
    El parámetro `corrida_anterior=` (en `linkage()` y en `ConfigCruce`) acepta
    la carpeta del estándar o el archivo, se carga y valida ANTES de L1 —en
    `ConfigCruce.__post_init__` y en `linkage()`: existe, trae `REGISTROS`,
-   `ID_ENTIDAD` únicos— (`CorridaAnteriorError` con qué pasó · por qué
-   importa · qué hacer) y el
+   `ID_ENTIDAD` únicos, ningún `ID_REGISTRO` en dos entidades activas (un
+   crosswalk editado a mano contaría ese registro doble en el solapamiento y
+   podría cambiar qué id sobrevive)— (`CorridaAnteriorError` con qué pasó ·
+   por qué importa · qué hacer) y el
    manifiesto declara la ruta y la huella SHA-256 usadas
    (`completar.id_entidad.herencia`, `parametros.corrida_anterior`).
 
 3. **Regla de herencia** (vectorizada: `merge` + `groupby`, ningún bucle por
    fila ni por par):
    - *Destino* de cada `ENT-…` activo de la corrida anterior: el grupo actual
-     con más `ID_REGISTRO` compartidos (empate: el grupo mayor, luego el de
-     menor `ID_REGISTRO`).
+     con más `ID_REGISTRO` compartidos (empate: un grupo que puede heredar
+     —sin identificador— antes que un `NIT-…`, que nunca hereda y solo
+     retiraría el id; luego el grupo mayor, luego el de menor `ID_REGISTRO`).
+     Con más compartidos hacia el `NIT-…` el retiro hacia él es correcto; en
+     empate se conserva un id que podía sobrevivir.
    - *Herencia*: un grupo sin identificador toma, entre las entidades cuyo
      destino es él, la de más registros compartidos (empate: la anterior más
      grande, luego el id menor). Fusión → sobrevive la mayor; división →
@@ -78,13 +90,23 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
    propiedad y de añadir una dependencia; con el crosswalk, la estabilidad ya
    no depende de cómo se genere el id nuevo.
 
-5. **Un id retirado no resucita.** El hash por contenido se compara con todos
-   los ids del crosswalk anterior (activos y retirados) y con los de esta
-   corrida; si choca —el mismo conjunto de registros volvió a formar grupo
-   tras haberse fusionado—, se rehace con un sufijo determinista
-   (`<clave>#1`, `#2`…) y el reporte lo cuenta en `colisiones_resueltas`. Sin
-   esto, un id que el crosswalk redirige a otro volvería a aparecer activo y
-   el consumidor tendría dos verdades.
+5. **Un id retirado no resucita mientras siga en el crosswalk.** El hash por
+   contenido se compara con todos los ids del crosswalk anterior (activos y
+   retirados) y con los de esta corrida; si choca —el mismo conjunto de
+   registros volvió a formar grupo tras haberse fusionado—, se rehace con un
+   sufijo determinista (`<clave>#1`, `#2`…) y el reporte lo cuenta en
+   `colisiones_resueltas`. Sin esto, un id que el crosswalk redirige a otro
+   volvería a aparecer activo y el consumidor tendría dos verdades.
+   La garantía alcanza hasta donde llega la memoria del crosswalk: un id que
+   salió de él —`desaparecidas` o `arrastres_sin_sobreviviente` del punto 3—
+   ya no redirige a nada, y si en una corrida posterior vuelve exactamente su
+   contenido, vuelve su hash (congelado en
+   `test_un_id_que_salio_del_crosswalk_puede_reaparecer_con_su_contenido`).
+   Es la consecuencia explícita de no arrastrar retiros sin sobreviviente; la
+   alternativa —conservarlos como lápidas— arrastraría filas para siempre y
+   rompería el invariante del salto único. Si un consumidor necesita memoria
+   más larga que la del crosswalk, la conserva él con los crosswalks de cada
+   corrida.
 
 ## Opciones consideradas
 
@@ -115,6 +137,13 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
   `cargar_corrida_anterior`; `pd.read_parquet` daría `float64` si hubiera un
   nulo e `int64` si no). `ReporteCompletar.entidades_ids` lo transporta
   desde `completar_correlativa` sin pasar por el manifiesto (es una tabla).
+  `ResultadoLinkage.validar()` comprueba el crosswalk cuando lo trae (los
+  invariantes del punto 3 viven en código de producción, no solo en una
+  prueba): columnas del contrato, `ID_ENTIDAD` único y no nulo, `ID_GRUPO`
+  sin nulos, todo `RETIRADO_EN` apunta a un id activo del mismo crosswalk y
+  las entidades activas son exactamente los pares `ID_GRUPO ↔ ID_ENTIDAD` de
+  la correlativa. El escritor valida antes de escribir, así que un crosswalk
+  roto no se publica.
 - Un crosswalk escrito antes de F2.4 (sin `REGISTROS`) no sirve para heredar:
   `cargar_corrida_anterior` lo dice y dice qué hacer (correr sin
   `corrida_anterior=`; los ids serán nuevos y deterministas).
@@ -131,8 +160,11 @@ por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior.
 - Pruebas: `tests/test_identidad_estable.py` congela (a) determinismo con y
   sin corrida anterior, (b) fila nueva, (c) fusión con retiro y desempate,
   (d) división, `ENT → NIT`, arrastre con compresión de cadenas, no
-  resurrección, desaparecidas, retiros sin sobreviviente que dejan de
-  arrastrarse, `ID_REGISTRO` con `|` rechazado, `NIT-…` no heredable,
-  fail-fast de la carga (también desde `ConfigCruce`),
-  `linkage(corrida_anterior=…)` de punta a punta y `ID_GRUPO` `Int64` en
-  `leer_resultado`.
+  resurrección (y su salvedad tras un hueco), desaparecidas, retiros sin
+  sobreviviente que dejan de arrastrarse, empate de destino resuelto hacia
+  el grupo que puede heredar, `ID_REGISTRO` con `|` rechazado antes de L1
+  (`linkage`, `link`, `dedupe`; sin `work_dir`) y en el módulo, `NIT-…` no
+  heredable, fail-fast de la carga (ruta, `REGISTROS`, `ID_REGISTRO` en dos
+  entidades activas; también desde `ConfigCruce`), `validar()` sobre el
+  crosswalk, `linkage(corrida_anterior=…)` de punta a punta y `ID_GRUPO`
+  `Int64` en `leer_resultado`.

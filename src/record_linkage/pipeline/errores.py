@@ -487,8 +487,26 @@ class CorridaAnteriorError(ErrorPipeline):
     """La corrida anterior (``corrida_anterior=``) no sirve para heredar ``ID_ENTIDAD``.
 
     La levanta ``identidad.estable`` (F2.4) ANTES de L1 cuando la ruta no
-    existe, no contiene ``entidades_ids.parquet`` o ese crosswalk no trae la
+    existe, no contiene ``entidades_ids.parquet``, ese crosswalk no trae la
     columna ``REGISTROS`` (lo escribió una versión anterior a F2.4 y no dice
     qué ``ID_REGISTRO`` tenía cada entidad: sin eso no hay solapamiento que
-    medir). Fallar antes de correr evita descubrirlo tras L1…L5.
+    medir), trae ``ID_ENTIDAD`` repetidos o un mismo ``ID_REGISTRO`` en más de
+    una entidad activa (un crosswalk editado a mano: el solapamiento se
+    contaría doble y la herencia sería ambigua). Fallar antes de correr evita
+    descubrirlo tras L1…L5.
+    """
+
+
+class IdRegistroInvalidoError(ErrorPipeline):
+    """``ID_REGISTRO`` no cabe en el crosswalk: contiene el separador de ``REGISTROS``.
+
+    ``entidades_ids.parquet`` une los ``ID_REGISTRO`` de cada entidad con
+    ``|`` (``identidad.estable.SEPARADOR_REGISTROS``) y la corrida siguiente
+    los parte por ``|`` para heredar ``ID_ENTIDAD``: un id con el separador
+    quedaría partido en dos, nunca contaría como compartido y la entidad se
+    daría por desaparecida sin aviso. Como ``ID_REGISTRO = <SRC>-<id nativo>``,
+    lo levantan ``linkage()``/``dedupe()``/``link()`` ANTES de L1 cuando el
+    nombre de una fuente o un valor de ``col_id`` contiene ``|`` (es un dato
+    de entrada, no un defecto del motor), y ``identidad.estable`` lo repite
+    como guardia al construir el crosswalk.
     """

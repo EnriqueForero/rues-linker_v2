@@ -22,8 +22,10 @@ La regla de herencia, en el orden en que se aplica (todo vectorizado con
 ``merge``/``groupby``; ningún bucle por fila ni por par):
 
 1. **Destino** de cada entidad ``ENT-…`` activa de la corrida anterior: el
-   grupo de esta corrida con el que comparte más ``ID_REGISTRO`` (empate: el
-   grupo actual con más registros, luego el de menor ``ID_REGISTRO``).
+   grupo de esta corrida con el que comparte más ``ID_REGISTRO`` (empate: un
+   grupo que PUEDE heredar —sin identificador— antes que uno ``NIT-…``, que
+   nunca hereda y solo retiraría el id; luego el grupo actual con más
+   registros, luego el de menor ``ID_REGISTRO``).
 2. **Herencia**: un grupo sin identificador hereda, entre las entidades
    anteriores cuyo destino es él, la que más registros comparte (empate: la
    entidad anterior más grande, luego el id menor). Así una **fusión** deja
@@ -45,12 +47,23 @@ La regla de herencia, en el orden en que se aplica (todo vectorizado con
    ausente en esta corrida) se dejan de arrastrar y se cuentan en
    ``arrastres_sin_sobreviviente``, de modo que todo ``RETIRADO_EN`` del
    crosswalk publicado es un ``ID_ENTIDAD`` activo del mismo crosswalk.
-5. **Un id retirado no resucita.** El id por contenido de un grupo nuevo se
-   compara con todos los ids del crosswalk anterior (activos y retirados) y
-   con los de esta corrida; si choca (el mismo conjunto de registros volvió a
-   formar grupo después de haberse fusionado), se rehace con un sufijo
-   determinista (``<clave>#1``, ``#2``…) y el reporte lo cuenta. Sin esto, un
-   id que el crosswalk redirige a otro volvería a aparecer activo.
+5. **Un id retirado no resucita mientras siga en el crosswalk.** El id por
+   contenido de un grupo nuevo se compara con todos los ids del crosswalk
+   anterior (activos y retirados) y con los de esta corrida; si choca (el
+   mismo conjunto de registros volvió a formar grupo después de haberse
+   fusionado), se rehace con un sufijo determinista (``<clave>#1``, ``#2``…)
+   y el reporte lo cuenta. Sin esto, un id que el crosswalk redirige a otro
+   volvería a aparecer activo. La garantía alcanza hasta donde llega la
+   memoria del crosswalk: un id que salió de él (``desaparecidas`` o
+   ``arrastres_sin_sobreviviente`` del paso 4) ya no redirige a nada, y si en
+   una corrida posterior vuelve exactamente su contenido, vuelve su hash. Es
+   la consecuencia de no arrastrar retiros sin sobreviviente (paso 4); la
+   alternativa —conservarlos como lápidas— arrastraría filas para siempre.
+
+Antes de L1, :func:`exigir_fuentes_sin_separador` rechaza (desde
+``linkage()``/``dedupe()``/``link()``) un nombre de fuente o un valor de
+``col_id`` que contenga ``|``: ``ID_REGISTRO = <SRC>-<id nativo>`` no cabría
+en ``REGISTROS`` y la corrida entera se perdería al cierre.
 
 Lo que decide el plan y por qué no es ULID: el plan pedía ``ENT-<ulid>``; la
 nota del coordinador conserva el id por contenido para que una corrida sin
@@ -65,6 +78,7 @@ Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -76,7 +90,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from .. import contrato
-from ..pipeline.errores import ContratoSalidaError, CorridaAnteriorError, mensaje_accionable
+from ..pipeline.errores import CorridaAnteriorError, IdRegistroInvalidoError, mensaje_accionable
 
 __all__ = [
     "COLUMNA_REGISTROS",
@@ -89,6 +103,7 @@ __all__ = [
     "asignar_id_entidad",
     "cargar_corrida_anterior",
     "crosswalk_de_corrida",
+    "exigir_fuentes_sin_separador",
     "localizar_crosswalk",
 ]
 
@@ -97,9 +112,11 @@ NOMBRE_CROSSWALK = "entidades_ids.parquet"
 #: Columna del crosswalk con los ``ID_REGISTRO`` de la entidad (ordenados).
 COLUMNA_REGISTROS = "REGISTROS"
 #: Separador de ``REGISTROS``. ``ID_REGISTRO`` no puede contenerlo (el id
-#: nativo de ``col_id`` lo pone la fuente): :func:`_claves_por_grupo` lo exige
-#: y falla con ``ContratoSalidaError`` antes de escribir un crosswalk que la
-#: corrida siguiente partiría mal.
+#: nativo de ``col_id`` y el nombre de la fuente los pone el usuario):
+#: :func:`exigir_fuentes_sin_separador` lo rechaza ANTES de L1 y
+#: :func:`_claves_por_grupo` lo vuelve a exigir antes de escribir un crosswalk
+#: que la corrida siguiente partiría mal. Las dos veces con
+#: ``IdRegistroInvalidoError``: es un dato de entrada, no un defecto del motor.
 SEPARADOR_REGISTROS = "|"
 PREFIJO_NIT = "NIT-"
 PREFIJO_ENT = "ENT-"
@@ -107,6 +124,8 @@ PREFIJO_ENT = "ENT-"
 #: Hex del SHA-256 que entra al ``ENT-…`` (igual que en F1).
 _LARGO_HASH = 16
 _BYTES_POR_LECTURA = 1 << 20
+#: Cuántos valores cita un mensaje de error (el conteo va aparte).
+_EJEMPLOS_EN_ERROR = 3
 
 #: Columnas mínimas del crosswalk anterior para poder heredar.
 _COLUMNAS_NECESARIAS: tuple[str, ...] = (
@@ -212,12 +231,61 @@ def _sha256_archivo(ruta: Path) -> str:
     return h.hexdigest()
 
 
+def _miembros(entidades: pd.DataFrame) -> pd.DataFrame:
+    """Una fila por (``PREVIA``, ``ID_REGISTRO``): ``REGISTROS`` partido por ``|``.
+
+    Es la única lectura de ``REGISTROS``: la usan la validación de la carga
+    (ningún ``ID_REGISTRO`` en dos entidades activas) y la herencia.
+    """
+    miembros = (
+        entidades.set_index("ID_ENTIDAD")[COLUMNA_REGISTROS]
+        .dropna()
+        .str.split(SEPARADOR_REGISTROS, regex=False)
+        .explode()
+        .rename("ID_REGISTRO")
+        .reset_index()
+        .rename(columns={"ID_ENTIDAD": "PREVIA"})
+    )
+    miembros["ID_REGISTRO"] = miembros["ID_REGISTRO"].astype(str)
+    return miembros
+
+
+def _exigir_registros_en_una_sola_entidad(crosswalk: pd.DataFrame, archivo: Path) -> None:
+    """Falla si un ``ID_REGISTRO`` aparece en más de una entidad ACTIVA del crosswalk.
+
+    ``linkage()`` nunca lo escribe así (un registro está en un solo grupo);
+    pasa con un crosswalk editado a mano. Si se aceptara, ``_heredar``
+    contaría ese registro dos veces en el solapamiento y podría cambiar qué
+    entidad sobrevive, sin aviso.
+    """
+    registros = _miembros(crosswalk[crosswalk["RETIRADO_EN"].isna()])["ID_REGISTRO"]
+    repetidos = registros[registros.duplicated(keep=False)].unique()
+    if len(repetidos) == 0:
+        return
+    n = len(repetidos)
+    ejemplos = ", ".join(repr(v) for v in repetidos[:_EJEMPLOS_EN_ERROR])
+    raise CorridaAnteriorError(
+        mensaje_accionable(
+            f"{archivo}: {n} ID_REGISTRO aparecen en más de una entidad activa "
+            f"(p. ej. {ejemplos}).",
+            "la herencia mide cuántos ID_REGISTRO comparte cada grupo con cada entidad "
+            "anterior; un registro en dos entidades se contaría doble y podría cambiar "
+            "qué ID_ENTIDAD sobrevive.",
+            "use el entidades_ids.parquet tal como lo escribió linkage(carpeta_salida=…); "
+            "si lo editó, deje cada ID_REGISTRO en una sola entidad activa "
+            f"(columna {COLUMNA_REGISTROS}).",
+        )
+    )
+
+
 def cargar_corrida_anterior(ruta: Path | str) -> CorridaAnterior:
     """Lee y valida el crosswalk de la corrida anterior (carpeta o archivo).
 
-    Exige ``ID_ENTIDAD`` único y no nulo y la columna ``REGISTROS``: un
-    crosswalk escrito antes de F2.4 no la trae y no sirve para heredar; el
-    error lo dice y dice qué hacer.
+    Exige ``ID_ENTIDAD`` único y no nulo, la columna ``REGISTROS`` (un
+    crosswalk escrito antes de F2.4 no la trae y no sirve para heredar) y que
+    ningún ``ID_REGISTRO`` esté en dos entidades activas (crosswalk editado a
+    mano); el error lo dice y dice qué hacer. Es lo que ``ConfigCruce`` y
+    ``linkage()`` llaman ANTES de L1.
     """
     archivo = localizar_crosswalk(ruta)
     columnas = set(pq.read_schema(archivo).names)
@@ -258,6 +326,7 @@ def cargar_corrida_anterior(ruta: Path | str) -> CorridaAnterior:
                 "si lo editó a mano, deje una fila por ID_ENTIDAD.",
             )
         )
+    _exigir_registros_en_una_sola_entidad(crosswalk, archivo)
     return CorridaAnterior(
         ruta=archivo, huella_sha256=_sha256_archivo(archivo), crosswalk=crosswalk
     )
@@ -272,33 +341,77 @@ def _sha16(texto: str) -> str:
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:_LARGO_HASH]
 
 
-_EJEMPLOS_EN_ERROR = 3
+def _con_separador(valores: pd.Series) -> pd.Series:
+    """Máscara booleana: qué valores (como texto) contienen ``SEPARADOR_REGISTROS``."""
+    texto = valores.astype("string")
+    return texto.str.contains(SEPARADOR_REGISTROS, regex=False).fillna(False).astype(bool)
+
+
+def _error_separador(que_paso: str) -> IdRegistroInvalidoError:
+    """El único texto del rechazo de ``|``: antes de L1 y en la guardia del módulo."""
+    return IdRegistroInvalidoError(
+        mensaje_accionable(
+            que_paso,
+            f"ID_REGISTRO = <SRC>-<id nativo> y el crosswalk entidades_ids.parquet une los "
+            f"ID_REGISTRO de cada entidad con {SEPARADOR_REGISTROS!r} ({COLUMNA_REGISTROS}); "
+            "la herencia de la corrida siguiente los partiría y esos registros nunca "
+            "contarían como compartidos.",
+            f"pase en col_id= otra columna única por fila sin {SEPARADOR_REGISTROS!r}, "
+            "limpie esa columna en la fuente, o use col_id=None (ID_REGISTRO = "
+            f"<SRC>-F<ORIGINAL_INDEX>); un nombre de fuente tampoco puede llevar "
+            f"{SEPARADOR_REGISTROS!r}.",
+        )
+    )
+
+
+def _ejemplos(valores: pd.Series) -> str:
+    return ", ".join(repr(v) for v in valores.astype("string").head(_EJEMPLOS_EN_ERROR))
+
+
+def exigir_fuentes_sin_separador(fuentes: Mapping[str, pd.DataFrame], col_id: str | None) -> None:
+    """Falla ANTES de L1 si un nombre de fuente o un valor de ``col_id`` contiene ``|``.
+
+    Lo llaman ``linkage()`` (y ``link()`` a través de él) y ``dedupe()`` con
+    las fuentes ya materializadas, antes de construir el motor: es un dato de
+    entrada y la corrida entera no debe perderse al cierre por él. Solo se mira
+    ``col_id`` en las fuentes que traen esa columna (donde no está,
+    ``salida.completar`` usa ``<SRC>-F<fila>`` y lo dice en el manifiesto).
+    Vectorizado por fuente.
+    """
+    con_sep = [nombre for nombre in fuentes if SEPARADOR_REGISTROS in str(nombre)]
+    if con_sep:
+        lista = ", ".join(repr(n) for n in con_sep)
+        raise _error_separador(
+            f"el nombre de fuente {lista} contiene {SEPARADOR_REGISTROS!r} "
+            f"(sources= / nombre_a= / nombre_b=)."
+        )
+    if col_id is None:
+        return
+    for nombre, df in fuentes.items():
+        if col_id not in df.columns:
+            continue
+        mascara = _con_separador(df[col_id])
+        n = int(mascara.sum())
+        if n:
+            raise _error_separador(
+                f"col_id='{col_id}' en la fuente '{nombre}' tiene {n} valor(es) con "
+                f"{SEPARADOR_REGISTROS!r} (p. ej. {_ejemplos(df.loc[mascara, col_id])})."
+            )
 
 
 def _exigir_sin_separador(id_registro: pd.Series) -> None:
-    """Falla si algún ``ID_REGISTRO`` contiene ``|``: ``REGISTROS`` no podría representarlo.
+    """Guardia del módulo: ningún ``ID_REGISTRO`` contiene ``|``.
 
-    El crosswalk une los ``ID_REGISTRO`` con ``|`` y la corrida siguiente los
-    parte por ``|``: un id con el separador quedaría partido en dos, nunca
-    contaría como compartido y la entidad se daría por desaparecida sin aviso.
+    ``linkage()`` ya lo rechazó antes de L1 (:func:`exigir_fuentes_sin_separador`);
+    aquí se repite para quien llame al módulo con una correlativa propia.
     """
-    texto = id_registro.astype("string")
-    con_sep = texto.str.contains(SEPARADOR_REGISTROS, regex=False).fillna(False)
+    con_sep = _con_separador(id_registro)
     n = int(con_sep.sum())
-    if n == 0:
-        return
-    ejemplos = ", ".join(repr(v) for v in texto[con_sep].head(_EJEMPLOS_EN_ERROR))
-    raise ContratoSalidaError(
-        [
-            f"entidades_ids.{COLUMNA_REGISTROS}: {n} ID_REGISTRO contienen "
-            f"{SEPARADOR_REGISTROS!r} (p. ej. {ejemplos}); el crosswalk une los ID_REGISTRO "
-            f"de cada entidad con {SEPARADOR_REGISTROS!r} y la herencia de la corrida "
-            "siguiente los partiría, con lo que esos registros nunca contarían como "
-            "compartidos. Qué hacer: pase en col_id= otra columna única por fila sin "
-            f"{SEPARADOR_REGISTROS!r}, limpie esa columna en la fuente, o use col_id=None "
-            "(ID_REGISTRO = <SRC>-F<ORIGINAL_INDEX>)."
-        ]
-    )
+    if n:
+        raise _error_separador(
+            f"{n} ID_REGISTRO contienen {SEPARADOR_REGISTROS!r} "
+            f"(p. ej. {_ejemplos(id_registro[con_sep])})."
+        )
 
 
 def _claves_por_grupo(grupos: pd.DataFrame) -> pd.Series:
@@ -462,18 +575,9 @@ def _heredar(
     nit_prev = activas[~es_ent]
     retirados_prev = previo[previo["RETIRADO_EN"].notna()]
 
-    # 1. Solapamiento entidad anterior × grupo actual, por ID_REGISTRO.
-    miembros = (
-        ent_prev.set_index("ID_ENTIDAD")[COLUMNA_REGISTROS]
-        .dropna()
-        .str.split(SEPARADOR_REGISTROS, regex=False)
-        .explode()
-        .rename("ID_REGISTRO")
-        .reset_index()
-        .rename(columns={"ID_ENTIDAD": "PREVIA"})
-    )
-    miembros["ID_REGISTRO"] = miembros["ID_REGISTRO"].astype(str)
-    cruce = actual.merge(miembros, on="ID_REGISTRO", how="inner")
+    # 1. Solapamiento entidad anterior × grupo actual, por ID_REGISTRO
+    # (cargar_corrida_anterior ya garantizó un registro por entidad activa).
+    cruce = actual.merge(_miembros(ent_prev), on="ID_REGISTRO", how="inner")
     solape = cruce.groupby(["ID_GRUPO", "PREVIA"], sort=False).size().rename("n").reset_index()
     tam_prev = ent_prev.set_index("ID_ENTIDAD")["N_REGISTROS"]
     tam_actual = actual.groupby("ID_GRUPO", sort=False).size()
@@ -487,12 +591,14 @@ def _heredar(
     solape["n_prev"] = solape["PREVIA"].map(tam_prev).fillna(0).astype("int64")
     solape["n_actual"] = solape["ID_GRUPO"].map(tam_actual).astype("int64")
     solape["min_reg"] = solape["ID_GRUPO"].map(min_actual).astype(str)
+    solape["puede_heredar"] = solape["ID_GRUPO"].isin(contenido.index)
 
-    # Destino de cada entidad anterior: el grupo con más compartidos
-    # (empate: el grupo mayor, luego el de menor ID_REGISTRO).
+    # Destino de cada entidad anterior: el grupo con más compartidos (empate:
+    # un grupo que puede heredar antes que un NIT-…, que solo retiraría el id;
+    # luego el grupo mayor, luego el de menor ID_REGISTRO).
     destino = solape.sort_values(
-        ["PREVIA", "n", "n_actual", "min_reg"],
-        ascending=[True, False, False, True],
+        ["PREVIA", "n", "puede_heredar", "n_actual", "min_reg"],
+        ascending=[True, False, False, False, True],
         kind="stable",
     ).drop_duplicates("PREVIA")
 

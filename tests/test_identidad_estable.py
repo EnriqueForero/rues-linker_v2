@@ -16,22 +16,33 @@ crosswalk ``entidades_ids.parquet`` escrito con el contrato:
   ``ENT-…`` queda retirado hacia el ``NIT-…``;
 * los retiros de corridas anteriores se arrastran y las cadenas se comprimen
   (``X → Y`` y luego ``Y → Z`` deja ``X → Z``);
-* un id retirado no resucita: si el contenido vuelve a dar ese hash, el grupo
-  recibe otro id (determinista) y el reporte lo cuenta;
+* un id retirado no resucita mientras siga en el crosswalk: si el contenido
+  vuelve a dar ese hash, el grupo recibe otro id (determinista) y el reporte lo
+  cuenta; un id que salió del crosswalk (sin sobreviviente) sí puede reaparecer
+  con su contenido original (comportamiento documentado en ADR-0012 §5);
 * una entidad anterior sin ningún registro en esta corrida desaparece del
   crosswalk activo y el reporte la cuenta; los retiros que apuntaban a ella
   dejan de arrastrarse (todo ``RETIRADO_EN`` publicado es un id activo del
   mismo crosswalk) y el reporte los cuenta;
-* un ``ID_REGISTRO`` que contenga ``|`` (el separador de ``REGISTROS``) falla
-  rápido con ``ContratoSalidaError``: el crosswalk no podría representarlo;
+* en empate de registros compartidos, el destino de una entidad anterior es un
+  grupo que puede heredar (sin identificador) antes que uno ``NIT-…``;
+* un ``ID_REGISTRO`` que contenga ``|`` (el separador de ``REGISTROS``) se
+  rechaza con ``IdRegistroInvalidoError`` (dato de entrada, no «defecto del
+  motor»): ANTES de L1 en ``linkage()``/``link()``/``dedupe()`` (un valor de
+  ``col_id`` o un nombre de fuente; no queda ``work_dir``) y como guardia en el
+  módulo;
 * ``cargar_corrida_anterior`` falla rápido (ruta inexistente, crosswalk sin
-  ``REGISTROS``) con mensaje accionable;
+  ``REGISTROS``, un ``ID_REGISTRO`` en dos entidades activas) con mensaje
+  accionable;
 * ``linkage(corrida_anterior=…)`` hereda desde la carpeta del estándar de la
   corrida previa, el manifiesto declara la huella usada y el escritor publica
   el crosswalk con ``REGISTROS`` y ``RETIRADO_EN``;
 * ``ConfigCruce(corrida_anterior=…)`` carga y valida el crosswalk al
   construirse (ruta inexistente y crosswalk sin ``REGISTROS`` fallan ahí);
-* ``leer_resultado`` devuelve ``ID_GRUPO`` del crosswalk como ``Int64``.
+* ``leer_resultado`` devuelve ``ID_GRUPO`` del crosswalk como ``Int64``;
+* ``ResultadoLinkage.validar()`` comprueba el crosswalk: columnas del contrato,
+  ``ID_ENTIDAD`` único, ``ID_GRUPO`` sin nulos, todo ``RETIRADO_EN`` apunta a
+  un id activo y las activas coinciden con la correlativa.
 
 Las empresas son inventadas. Ningún dato licenciado entra aquí.
 """
@@ -57,9 +68,15 @@ from record_linkage.identidad.estable import (
     asignar_id_entidad,
     cargar_corrida_anterior,
     crosswalk_de_corrida,
+    exigir_fuentes_sin_separador,
     localizar_crosswalk,
 )
-from record_linkage.pipeline.errores import ContratoSalidaError, CorridaAnteriorError
+from record_linkage.pipeline.errores import (
+    ContratoSalidaError,
+    CorridaAnteriorError,
+    IdRegistroInvalidoError,
+)
+from record_linkage.resultado import ResultadoLinkage
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilidades
@@ -255,18 +272,84 @@ def test_un_retiro_sin_sobreviviente_deja_de_arrastrarse_y_se_cuenta(tmp_path: P
     assert r3b.reporte["arrastres_sin_sobreviviente"] == 0
 
 
-def test_un_id_registro_con_el_separador_falla_rapido(tmp_path: Path) -> None:
-    with pytest.raises(ContratoSalidaError, match=r"1 ID_REGISTRO contienen '\|'") as exc:
+def test_un_id_registro_con_el_separador_lo_rechaza_el_modulo(tmp_path: Path) -> None:
+    """Guardia del módulo: un ``ID_REGISTRO`` con ``|`` no entra al crosswalk,
+    y el error es el de dato de entrada (no «defecto del motor»)."""
+    with pytest.raises(IdRegistroInvalidoError, match=r"1 ID_REGISTRO contienen '\|'") as exc:
         _asignar({1: ["A-x|y", "A-z"]})
     assert "col_id" in str(exc.value) and "'A-x|y'" in str(exc.value)
+    assert "defecto del motor" not in str(exc.value)
+    assert not isinstance(exc.value, ContratoSalidaError)
     # También con corrida anterior, y la carga de la anterior no se ve afectada.
     previa = _guardar(_asignar({1: ["A-1"]}), tmp_path / "r1")
-    with pytest.raises(ContratoSalidaError, match="ID_REGISTRO contienen"):
+    with pytest.raises(IdRegistroInvalidoError, match="ID_REGISTRO contienen"):
         _asignar({1: ["A-1", "B-1|2"]}, anterior=previa)
     correl = _correl({1: ["A-1|2"]})
     correl["ID_ENTIDAD"] = "ENT-x"
-    with pytest.raises(ContratoSalidaError, match="ID_REGISTRO contienen"):
+    with pytest.raises(IdRegistroInvalidoError, match="ID_REGISTRO contienen"):
         crosswalk_de_corrida(correl)
+
+
+def test_exigir_fuentes_sin_separador_acepta_lo_valido_y_rechaza_lo_demas() -> None:
+    a = pd.DataFrame({"CODIGO": ["1", "2", None], "RAZON_SOCIAL": ["X|Y", "Z", "W"]})
+    # Un '|' en una columna que NO es col_id no importa; col_id ausente en
+    # una fuente tampoco (completar usa <SRC>-F<fila> y lo dice).
+    exigir_fuentes_sin_separador({"CRM": a, "ADU": a[["RAZON_SOCIAL"]]}, "CODIGO")
+    exigir_fuentes_sin_separador({"CRM": a}, None)
+    b = pd.DataFrame({"CODIGO": ["1", "X|1", "Y|2", "Z|3", "W|4"]})
+    with pytest.raises(IdRegistroInvalidoError, match=r"col_id='CODIGO'.*'ADU'.*4 valor") as exc:
+        exigir_fuentes_sin_separador({"CRM": a, "ADU": b}, "CODIGO")
+    texto = str(exc.value)
+    assert "'X|1'" in texto and "'W|4'" not in texto, "3 ejemplos, no todos"
+    assert "defecto del motor" not in texto and "col_id=None" in texto
+    with pytest.raises(IdRegistroInvalidoError, match=r"fuente.*'A\|B'"):
+        exigir_fuentes_sin_separador({"A|B": a}, None)
+
+
+def test_un_id_que_salio_del_crosswalk_puede_reaparecer_con_su_contenido(tmp_path: Path) -> None:
+    """La garantía «un id retirado no resucita» vale mientras el id siga en el
+    crosswalk anterior (ADR-0012 §5). Un retiro que se dejó de arrastrar por no
+    tener sobreviviente (corrida 3) sale del crosswalk, y si en la corrida 4
+    vuelve exactamente su contenido, vuelve su hash: no hay con qué chocar.
+    Esta prueba congela ese comportamiento documentado."""
+    r1 = _asignar({1: ["A-1", "A-2", "A-3"], 2: ["B-1", "B-2"]})
+    e1, e2 = _id_de(r1, 1), _id_de(r1, 2)
+    r2 = _asignar({1: ["A-1", "A-2", "A-3", "B-1", "B-2"]}, anterior=_guardar(r1, tmp_path / "r1"))
+    assert _retirados(r2).loc[e2, "RETIRADO_EN"] == e1
+    r3 = _asignar({9: ["Z-1"]}, anterior=_guardar(r2, tmp_path / "r2"))
+    assert r3.reporte["desaparecidas"] == 1 and r3.reporte["arrastres_sin_sobreviviente"] == 1
+    assert e2 not in set(r3.entidades_ids["ID_ENTIDAD"])
+    r4 = _asignar({9: ["Z-1"], 5: ["B-1", "B-2"]}, anterior=_guardar(r3, tmp_path / "r3"))
+    assert _id_de(r4, 5) == e2 == _ent_por_contenido(["B-1", "B-2"])
+    assert r4.reporte["colisiones_resueltas"] == 0 and _retirados(r4).empty
+    # Mientras el id SÍ sigue en el crosswalk (retirado y arrastrado), no resucita.
+    r3b = _asignar({9: ["A-1"]}, anterior=_guardar(r2, tmp_path / "r2b"))
+    r4b = _asignar({9: ["A-1"], 5: ["B-1", "B-2"]}, anterior=_guardar(r3b, tmp_path / "r3b"))
+    assert _id_de(r4b, 5) != e2 and r4b.reporte["colisiones_resueltas"] == 1
+
+
+def test_en_empate_de_destino_gana_el_grupo_que_puede_heredar(tmp_path: Path) -> None:
+    """Anterior E1 = {A-1, A-2}. Ahora el grupo 1 (con NIT) tiene A-1 y el grupo 2
+    (sin NIT) tiene A-2: un compartido cada uno. El NIT nunca hereda, así que
+    el empate se resuelve hacia el grupo 2, que conserva E1; nada se retira."""
+    r1 = _asignar({1: ["A-1", "A-2"]})
+    e1 = _id_de(r1, 1)
+    r2 = _asignar(
+        {1: ["A-1", "X-1", "X-2"], 2: ["A-2"]},
+        nit={1: "900000009"},
+        anterior=_guardar(r1, tmp_path / "r1"),
+    )
+    assert _id_de(r2, 1) == "NIT-900000009"
+    assert _id_de(r2, 2) == e1
+    assert _retirados(r2).empty
+    assert r2.reporte["heredadas"] == 1 and r2.reporte["ent_a_nit"] == 0
+    # Con más compartidos hacia el NIT, el retiro hacia el NIT sigue siendo correcto.
+    r2b = _asignar(
+        {1: ["A-1", "A-2", "X-1"], 2: ["A-3"]},
+        nit={1: "900000009"},
+        anterior=_guardar(_asignar({1: ["A-1", "A-2", "A-3"]}), tmp_path / "r1b"),
+    )
+    assert _retirados(r2b)["RETIRADO_EN"].tolist() == ["NIT-900000009"]
 
 
 def test_un_nit_anterior_no_se_hereda_a_un_grupo_sin_identificador(tmp_path: Path) -> None:
@@ -309,6 +392,55 @@ def test_cargar_corrida_anterior_rechaza_crosswalk_sin_registros(tmp_path: Path)
     viejo.to_parquet(tmp_path / NOMBRE_CROSSWALK)
     with pytest.raises(CorridaAnteriorError, match=COLUMNA_REGISTROS):
         cargar_corrida_anterior(tmp_path / NOMBRE_CROSSWALK)
+
+
+def _crosswalk_a_mano(filas: list[tuple[str, int | None, str | None, str | None]]) -> pd.DataFrame:
+    """Crosswalk con el contrato a partir de (ID_ENTIDAD, ID_GRUPO, RETIRADO_EN, REGISTROS)."""
+    return pd.DataFrame(
+        {
+            "ID_ENTIDAD": pd.Series([f[0] for f in filas], dtype="string"),
+            "ID_GRUPO": pd.Series([f[1] for f in filas], dtype="Int64"),
+            "N_REGISTROS": pd.Series(
+                [0 if f[3] is None else f[3].count("|") + 1 for f in filas], dtype="int64"
+            ),
+            "RETIRADO_EN": pd.Series([f[2] for f in filas], dtype="string"),
+            COLUMNA_REGISTROS: pd.Series([f[3] for f in filas], dtype="string"),
+        }
+    )
+
+
+def test_cargar_corrida_anterior_rechaza_un_id_registro_en_dos_entidades_activas(
+    tmp_path: Path,
+) -> None:
+    """Un crosswalk editado a mano con A-1 en dos entidades activas contaría el
+    solapamiento doble: se rechaza al cargar (antes de L1, también desde
+    ``ConfigCruce``), no se hereda con él."""
+    roto = _crosswalk_a_mano(
+        [
+            ("ENT-aaaaaaaaaaaaaaaa", 1, None, "A-1|A-2"),
+            ("ENT-bbbbbbbbbbbbbbbb", 2, None, "A-1|B-1"),
+            ("ENT-cccccccccccccccc", 1, "ENT-aaaaaaaaaaaaaaaa", None),
+        ]
+    )
+    (tmp_path / "roto").mkdir()
+    escribir_parquet(roto, tmp_path / "roto" / NOMBRE_CROSSWALK, contrato.ENTIDADES_IDS)
+    with pytest.raises(CorridaAnteriorError, match="A-1") as exc:
+        cargar_corrida_anterior(tmp_path / "roto")
+    assert "1 ID_REGISTRO" in str(exc.value) and "una sola entidad activa" in str(exc.value)
+    # El mismo registro en una activa y en una retirada (REGISTROS nulo) no es
+    # un conflicto: las retiradas no tienen registros.
+    sano = _crosswalk_a_mano(
+        [
+            ("ENT-aaaaaaaaaaaaaaaa", 1, None, "A-1|A-2"),
+            ("ENT-bbbbbbbbbbbbbbbb", 1, "ENT-aaaaaaaaaaaaaaaa", None),
+        ]
+    )
+    (tmp_path / "sano").mkdir()
+    escribir_parquet(sano, tmp_path / "sano" / NOMBRE_CROSSWALK, contrato.ENTIDADES_IDS)
+    previa = cargar_corrida_anterior(tmp_path / "sano")
+    assert _id_de(_asignar({9: ["A-1", "A-2", "A-3"]}, anterior=previa), 9) == (
+        "ENT-aaaaaaaaaaaaaaaa"
+    )
 
 
 def test_localizar_crosswalk_acepta_carpeta_o_archivo(tmp_path: Path) -> None:
@@ -390,6 +522,143 @@ def test_linkage_corrida_anterior_inexistente_falla_antes_de_correr(tmp_path: Pa
     with pytest.raises(CorridaAnteriorError):
         _correr_linkage(tmp_path / "t", corrida_anterior=tmp_path / "nada")
     assert not (tmp_path / "t").exists(), "falla antes de L1: no deja trabajo"
+
+
+def test_linkage_col_id_con_separador_falla_antes_de_correr(tmp_path: Path) -> None:
+    """Un ``col_id`` con ``|`` es un dato de entrada: se rechaza ANTES de L1
+    (sin work_dir) con un solo «qué hacer», no al cierre como defecto del motor."""
+    fuentes = conjunto_sintetico()
+    fuentes["CRM"].loc[0, "CODIGO"] = "X|1"
+    with pytest.raises(IdRegistroInvalidoError, match=r"'X\|1'") as exc, _silencio():
+        rl.linkage(
+            fuentes,
+            work_dir=str(tmp_path / "t"),
+            skip_reporting=True,
+            col_ciudad="CIUDAD",
+            col_id="CODIGO",
+        )
+    assert not (tmp_path / "t").exists(), "falla antes de L1: no deja trabajo"
+    texto = str(exc.value)
+    assert "defecto del motor" not in texto
+    assert texto.count("Qué hacer") == 1 and "col_id=None" in texto
+    assert "'CRM'" in texto and "col_id='CODIGO'" in texto
+
+
+def test_linkage_fuente_con_separador_en_el_nombre_falla_antes_de_correr(tmp_path: Path) -> None:
+    fuentes = conjunto_sintetico()
+    fuentes = {"A|B": fuentes["CRM"], "ADUANAS": fuentes["ADUANAS"]}
+    with pytest.raises(IdRegistroInvalidoError, match=r"'A\|B'") as exc, _silencio():
+        rl.linkage(fuentes, work_dir=str(tmp_path / "t"), skip_reporting=True, col_ciudad="CIUDAD")
+    assert not (tmp_path / "t").exists()
+    assert "defecto del motor" not in str(exc.value)
+    # link() pasa por linkage(): la etiqueta de fuente también se rechaza antes.
+    with pytest.raises(IdRegistroInvalidoError, match=r"'A\|B'"), _silencio():
+        rl.link(
+            fuentes["A|B"],
+            fuentes["ADUANAS"],
+            nombre_a="A|B",
+            nombre_b="ADUANAS",
+            work_dir=str(tmp_path / "t2"),
+            skip_reporting=True,
+        )
+    assert not (tmp_path / "t2").exists()
+
+
+def test_dedupe_col_id_con_separador_falla_antes_de_correr(tmp_path: Path) -> None:
+    df = conjunto_sintetico()["CRM"]
+    df.loc[0, "CODIGO"] = "X|1"
+    with pytest.raises(IdRegistroInvalidoError, match=r"'X\|1'") as exc, _silencio():
+        rl.dedupe(df, output_dir=str(tmp_path / "d"), col_id="CODIGO")
+    assert not (tmp_path / "d").exists(), "falla antes del motor: no deja salida"
+    assert "defecto del motor" not in str(exc.value)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# validar(): el crosswalk también cumple su contrato
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_DTYPE_POR_FAMILIA = {
+    "texto": "string",
+    "entero": "Int64",
+    "decimal": "float64",
+    "booleano": "bool",
+}
+
+
+def _resultado_con_crosswalk(
+    grupos: dict[int, list[str]],
+    identidad: ResultadoIdentidad,
+    entidades_ids: pd.DataFrame | None = None,
+) -> ResultadoLinkage:
+    """``ResultadoLinkage`` mínimo: correlativa con las columnas fijas tipadas
+    según el contrato y los ids de ``identidad``; crosswalk el de ``identidad``
+    o el que la prueba rompa. Sin manifiesto ni golden (no se validan)."""
+    correl = _correl(grupos).assign(ID_ENTIDAD=identidad.id_entidad.astype("string"))
+    correl["ID_GRUPO"] = correl["ID_GRUPO"].astype("int64")
+    correl["ID_REGISTRO"] = correl["ID_REGISTRO"].astype("string")
+    for col in contrato.CORRELATIVA:
+        if col.nombre not in correl.columns:
+            dtype = _DTYPE_POR_FAMILIA[contrato.familia_tipo(col.tipo)]
+            vacio = float("nan") if dtype == "float64" else pd.NA
+            correl[col.nombre] = pd.Series(vacio, index=correl.index, dtype=dtype)
+    correl = correl[list(contrato.COLUMNAS_CORRELATIVA)]
+    return ResultadoLinkage(
+        correlativa=correl,
+        entidades_ids=identidad.entidades_ids if entidades_ids is None else entidades_ids,
+    )
+
+
+def test_validar_acepta_el_crosswalk_que_escribe_el_modulo(tmp_path: Path) -> None:
+    r1 = _asignar({1: ["A-1", "A-2", "A-3"], 2: ["B-1", "B-2"]})
+    grupos = {4: ["A-1", "A-2", "A-3", "B-1", "B-2"]}
+    r2 = _asignar(grupos, anterior=_guardar(r1, tmp_path / "r1"))
+    assert not _retirados(r2).empty
+    reporte = _resultado_con_crosswalk(grupos, r2).validar()
+    assert reporte.ok, reporte.resumen()
+    grupos = {1: ["A-1"], 2: ["B-1"]}
+    reporte = _resultado_con_crosswalk(grupos, _asignar(grupos, nit={2: "900111222"})).validar()
+    assert reporte.ok, reporte.resumen()
+
+
+def test_validar_rechaza_un_retirado_en_hacia_un_id_inexistente_y_un_id_grupo_nulo() -> None:
+    grupos = {1: ["A-1", "A-2"]}
+    identidad = _asignar(grupos)
+    roto = pd.concat(
+        [
+            identidad.entidades_ids,
+            _crosswalk_a_mano([("ENT-ffffffffffffffff", None, "ENT-0000000000000000", None)]),
+        ],
+        ignore_index=True,
+    )
+    res = _resultado_con_crosswalk(grupos, identidad, roto)
+    reporte = res.validar()
+    assert not reporte.ok
+    assert any("entidades_ids" in f and "RETIRADO_EN" in f for f in reporte.fallos), reporte.fallos
+    assert any("entidades_ids" in f and "ID_GRUPO" in f and "nulo" in f for f in reporte.fallos)
+    with pytest.raises(ContratoSalidaError, match="entidades_ids"):
+        res.validar(estricto=True)
+
+
+def test_validar_rechaza_un_crosswalk_que_no_coincide_con_la_correlativa() -> None:
+    grupos = {1: ["A-1", "A-2"], 2: ["B-1"]}
+    identidad = _asignar(grupos)
+    base = identidad.entidades_ids
+    # Un ID_ENTIDAD repetido (y por tanto un par que sobra y otro que falta).
+    otro = base.copy()
+    otro.loc[1, "ID_ENTIDAD"] = otro.loc[0, "ID_ENTIDAD"]
+    fallos = _resultado_con_crosswalk(grupos, identidad, otro).validar().fallos
+    assert any("entidades_ids" in f and "ID_ENTIDAD" in f and "repetido" in f for f in fallos)
+    assert any("entidades_ids" in f and "correlativa" in f for f in fallos), fallos
+    # Una entidad activa cuyo grupo no existe en la correlativa.
+    fuera = base.copy()
+    fuera.loc[1, "ID_GRUPO"] = 99
+    fallos = _resultado_con_crosswalk(grupos, identidad, fuera).validar().fallos
+    assert any("entidades_ids" in f and "99" in f for f in fallos), fallos
+    # Columnas faltantes: lo mismo que en las otras tablas.
+    sin_registros = base.drop(columns=[COLUMNA_REGISTROS])
+    fallos = _resultado_con_crosswalk(grupos, identidad, sin_registros).validar().fallos
+    assert any("entidades_ids: faltan" in f for f in fallos), fallos
 
 
 def test_config_cruce_valida_corrida_anterior(tmp_path: Path) -> None:
