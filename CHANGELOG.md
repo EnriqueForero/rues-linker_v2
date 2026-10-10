@@ -1,5 +1,103 @@
 # Changelog
 
+## [Sin publicar] — F2 · Calidad y unificación del motor: estrellas en `linkage()`, identidad estable, un estándar en los cinco caminos
+
+**Cambio de comportamiento declarado (ADR-0011)**: `produccion_estandar` aplica
+la cobertura por estrellas a los grupos sin identificador válido
+(`cobertura_sin_identificador: {activa: True, umbral: 0.80, regla_lider: "cobertura"}`).
+En el banco institucional la huella pasa de `1e365ba8…` a `5bfed0d1…`:
+precisión 0,9385 → 0,9557, FP sobre negativos 287 → 246, macro-F1 0,8920 → 0,8803,
+recall 0,8249 → 0,7927 (sin identificador 0,6523 → 0,5836). En el sintético de
+139k la precisión sube de 0,34 a 0,99 y el grupo mayor sin identificador baja de
+630 filas a 13. `activa: False` reproduce la partición anterior. Umbral elegido
+con la regla «unir mal duele más que dejar sin unir» sobre el barrido
+0,70–0,88 (`docs/evidencia/cobertura_umbral.json`). Línea base vigente:
+`tests/lineas_base.py::BANCO_F2` (`docs/evidencia/corrida_base_f2.json`); la F0
+se conserva como historia.
+
+- **Motor** (`engine/cobertura.py`, `pipeline/orchestrator.py`,
+  `config/profiles.py`): `aplicar_cobertura_sin_identificador` en L5 tras el
+  cannot-link, con `cobertura_estrella` y `SimilitudNombre` tal cual (una regla,
+  compartida con `flujo.importadores`); perilla en los ocho perfiles; reporte en
+  `manifest.json → L5_golden.meta.cobertura_sin_identificador`.
+  `evaluation/cobertura_umbral.py` (`elegir_umbral`, `CompuertaF2`),
+  `scripts/cobertura_umbral.py`, `scripts/banco.py --ajuste clave.subclave=valor
+  --evidencia`, `scripts/escala.py --ajuste`, métrica
+  `grupo_mayor_sin_identificador`.
+- **`ID_GRUPO` determinista por contenido** (ADR-0013,
+  `salida/identificadores_registro.py`): el entero del grupo es la posición
+  lexicográfica del menor `ID_REGISTRO` del grupo, aplicado una vez al cierre de
+  L5, en `api` tras colapso exacto o matcher, y como red en `completar`;
+  reordenar la entrada no cambia la partición ni los ids. La regla de
+  `ID_REGISTRO` (`asignar_id_registro`) vive en un solo módulo.
+- **`ID_ENTIDAD` estable entre corridas** (ADR-0012, `identidad/estable.py`):
+  `NIT-<base>` para grupos con identificador válido; `ENT-<16 hex de SHA-256 de
+  los ID_REGISTRO ordenados>` para el resto, con herencia por mayor
+  solapamiento desde el `entidades_ids.parquet` de la corrida previa
+  (`linkage(corrida_anterior=)`, `ConfigCruce.corrida_anterior`); el crosswalk
+  trae `REGISTROS` y `RETIRADO_EN` (fusiones y divisiones quedan escritas) y
+  `ResultadoLinkage.validar()` lo verifica. Un `col_id` con `|` se rechaza antes
+  de L1 (`IdRegistroInvalidoError`); un crosswalk inválido, al cargarlo
+  (`CorridaAnteriorError`).
+- **Un estándar en los cinco caminos**: `flujo.cruce.ejecutar_cruce` devuelve
+  `ResultadoLinkage` y escribe con `escribir_resultado` (`ConfigCruce.nombre`;
+  invariantes en `validar()`; `metadatos_corrida.json` → `manifest.json →
+  corrida.cruce`; modo disco con generaciones de la forma del estándar y su
+  divergencia de `METODO_UNION` declarada en el manifiesto);
+  `flujo.importadores.deduplicar_importadores(carpeta_salida=)` entrega
+  `correlativa/golden/revision` con `ID_GRUPO` + `ID_ENTIDAD` (`ID_IMPORTADOR`,
+  `ID_EMPRESA_GLOBAL` como adicionales documentadas; `REVISION` de v1 y
+  `REVISION_PARES` del estándar; `CREATED_AT` inyectable, golden determinista;
+  huella de ADR-0009 intacta); `dedupe()` y `link()` aceptan `carpeta_salida=` /
+  `nombre=` con el tramo común de `linkage()` escrito una vez;
+  `deduplicate_unified` declara su contrato real `(correlativa, conexiones)` y
+  escribe `correlativa.parquet` + `conexiones.parquet` (`contrato.CONEXIONES`)
+  por el escritor; `validate_against_legacy=True` ya no se ignora.
+- **Una sola regla de `CONFIANZA`** (`golden/metricas.confianza_de_grupo`,
+  `contrato.NIVELES_CONFIANZA`): ALTA/MEDIA/BAJA igual en linkage, dedupe, link,
+  cruce e importadores (undécima invariante de importadores).
+- **Conformidad sobre el camino de producción** (`scripts/conformidad.py
+  --camino linkage|flujo_cruce`): los 43 casos con veredicto por camino en
+  `docs/CONFORMIDAD.md` §4 y evidencia versionada
+  (`conformidad_*_{linkage,flujo_cruce}_base.json`, anclada a prueba).
+- **Excel para humanos**: cada libro del estándar lleva la hoja `DICCIONARIO`
+  (columna · alias en español · significado · origen) armada desde el mismo
+  diccionario que `diccionario.csv`; los nombres de columna no cambian.
+  `exportar_vistas(…)` es la función libre que reemplaza a
+  `PipelineResult.to_excel/.to_csv` (alias con `DeprecationWarning`).
+- **Optimización y ground truth** (decisión de Enrique, 2026-10-07):
+  `evaluation.OrchestratorOptimizer` es el único optimizador Optuna y gana
+  `espacio_de_busqueda`, objetivo `macro_f1`, `validacion_cruzada` por grupos y
+  `ajustes_perfil`; `evaluation/graficas_optimizacion.py`;
+  `GroundTruthGenerator` restaurado en `evaluation/ground_truth.py`
+  (vectorizado, reproducible por semilla, sin depender de `optimization/`);
+  notebook `12_optimizar_parametros_con_optuna.ipynb` y `docs/OPTIMIZACION.md`.
+- **Retiros**: `deduplicate_dataframe` y `deduplicate_large_dataset_colab`
+  (cero usos medidos); `optimization/` (copia deprecada del notebook desde
+  v3.2.7) no vuelve: su reemplazo es `OrchestratorOptimizer`.
+  `RecordLinkagePipeline` queda deprecado (`DeprecationWarning`); el
+  `Orchestrator` y los scripts usan `pipeline/componentes.py`
+  (`fabricar_componentes`) y `deduplicate_unified(ajustes=AjustesDeduplicacion(…))`.
+- **Herramientas y docs**: `docs/CONSUMIDORES.md` con las decisiones del
+  2026-10-07 (Snowflake no lee los nombres de v1; equipos que abren los
+  archivos); ADR 0011, 0012, 0013; `docs/evidencia/README.md` con las líneas
+  base de F2.
+- **Reloj único de corrida** (`contrato.marca_de_corrida`): las carpetas del
+  estándar (`<AAAA-MM-DD_HHMM>_<nombre>`) y `manifest.marca_tiempo` van en UTC
+  con zona en los cinco caminos (antes hora local sin zona en `linkage()`);
+  `marca_tiempo=` sigue permitiendo fijarla. El reporte de cobertura cuenta
+  `filas_sin_nombre` (una fila sin `NOMBRE_LIMPIO` queda en estrella propia).
+- **Corrección con pandas 2** (`reporting/data_handler.py`): un NIT o una razón
+  social vacía ya no se convierte en el texto «<NA>» (con pandas 2, `astype(str)`
+  sobre una columna de texto nulable deja ese literal). El NIT vacío salía como
+  texto en la correlativa del camino `cruce`; con pandas 3 nunca ocurrió.
+- **Evidencia de F2** (`docs/evidencia/`): `corrida_base_f2.json` (línea base del
+  banco remedida sin carga), `escala_f2.json` (139k y 463k: todas las fases
+  dentro del 10 % salvo L5, el costo declarado de la cobertura),
+  `cobertura_umbral.json`, `conformidad_*_{linkage,flujo_cruce}_base.json`;
+  el techo de deuda baja (`print` 180 → 152, `os_path` 124 → 117, mypy 102 → 80,
+  `except` 103 → 101).
+
 ## [Sin publicar] — F1 · Contrato de salida: nada se degrada en silencio
 
 **Cambio de API declarado**: `linkage()`, `dedupe()` y `link()` devuelven

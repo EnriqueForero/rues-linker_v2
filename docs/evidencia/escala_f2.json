@@ -1,0 +1,199 @@
+{
+  "etiqueta": "f2",
+  "perfil": "produccion_estandar",
+  "semilla": 42,
+  "marca_tiempo": "2026-10-10T17:23:56",
+  "version": "0.22.4",
+  "entorno": {
+    "vcpu": 4,
+    "memoria_total_mib": 16093
+  },
+  "nota": "F2 sobre 723d23e: cobertura por estrellas activa (0,80), ID_GRUPO por contenido, ID_ENTIDAD estable",
+  "ajustes_perfil": null,
+  "tamanos": {
+    "139k": {
+      "parametros": {
+        "empresas_extra": 48000,
+        "importadores_extra": 9600,
+        "semilla": 42,
+        "filas_esperadas": 139028
+      },
+      "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+      "filas": 139028,
+      "grupos": 54136,
+      "version": "0.22.4",
+      "perfil": "produccion_estandar",
+      "marca_tiempo": "2026-10-10T17:31:48",
+      "entorno": {
+        "python": "3.11.15",
+        "pandas": "3.0.6",
+        "numpy": "2.3.5",
+        "plataforma": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+        "version": "0.22.4",
+        "vcpu": 4,
+        "memoria_total_mib": 16093
+      },
+      "recursos": {
+        "segundos_total": 466.46,
+        "segundos_por_fase": {
+          "L1_prep": 3.07,
+          "L2_lsh_candidates": 264.8,
+          "L3_scoring": 156.59,
+          "L4_clustering": 2.52,
+          "L5_golden": 31.05
+        },
+        "rss_por_fase": {
+          "L1_prep": 467.8,
+          "L2_lsh_candidates": 1154.3,
+          "L3_scoring": 724.1,
+          "L4_clustering": 709.9,
+          "L5_golden": 1019.6
+        },
+        "rss_pico_mib": 1153.8,
+        "rss_inicial_mib": 339.9,
+        "muestras_rss": 1805,
+        "bytes_disco": 204494426,
+        "candidatos": 12739949,
+        "pares_scoreados": 195368,
+        "candidatos_por_valido": 65.2
+      },
+      "calidad": {
+        "registros": 139028,
+        "grupos_verdad": 54136,
+        "grupos_predichos": 57092,
+        "pares_verdaderos": 199415,
+        "tp": 188955,
+        "fp": 2760,
+        "fn": 10460,
+        "precision": 0.9856,
+        "recall": 0.9475,
+        "f1": 0.9662,
+        "b3_precision": 0.9942,
+        "b3_recall": 0.9671,
+        "b3_f1": 0.9805,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.7145
+        },
+        "recall_por_caso": {
+          "positivo_con_nit": 0.9869,
+          "positivo_sin_nit": 0.7144,
+          "negativo_intermediario": 1.0,
+          "negativo_generico": null
+        },
+        "fp_que_tocan_negativo": 34,
+        "calidad_por_estrato": {},
+        "macro_f1": null,
+        "grupo_mayor_sin_identificador": {
+          "filas": 13,
+          "entidades": 3,
+          "grupos": 8161,
+          "grupos_grandes": 0
+        }
+      },
+      "huella": "d904ea161a33c8dbb97aca663e122762bce73eda7ad00c6430e78f55e821399f",
+      "especificacion": {
+        "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+        "perfil": "produccion_estandar",
+        "confiables": [],
+        "variables_extra": null,
+        "ajustes_perfil": null,
+        "perfil_multicampo": null,
+        "semilla": 42
+      },
+      "dir_trabajo": null
+    },
+    "463k": {
+      "parametros": {
+        "empresas_extra": 175000,
+        "importadores_extra": 35000,
+        "semilla": 42,
+        "filas_esperadas": 463473
+      },
+      "datos": "/tmp/escala_datos/gt_s42_e175000_i35000.csv",
+      "filas": 463473,
+      "grupos": 181136,
+      "version": "0.22.4",
+      "perfil": "produccion_estandar",
+      "marca_tiempo": "2026-10-10T18:05:07",
+      "entorno": {
+        "python": "3.11.15",
+        "pandas": "3.0.6",
+        "numpy": "2.3.5",
+        "plataforma": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+        "version": "0.22.4",
+        "vcpu": 4,
+        "memoria_total_mib": 16093
+      },
+      "recursos": {
+        "segundos_total": 1977.16,
+        "segundos_por_fase": {
+          "L1_prep": 8.57,
+          "L2_lsh_candidates": 899.22,
+          "L3_scoring": 952.77,
+          "L4_clustering": 8.03,
+          "L5_golden": 77.54
+        },
+        "rss_por_fase": {
+          "L1_prep": 1018.3,
+          "L2_lsh_candidates": 2394.6,
+          "L3_scoring": 1922.0,
+          "L4_clustering": 1959.6,
+          "L5_golden": 2528.7
+        },
+        "rss_pico_mib": 2484.8,
+        "rss_inicial_mib": 920.0,
+        "muestras_rss": 7612,
+        "bytes_disco": 660763349,
+        "candidatos": 38646798,
+        "pares_scoreados": 650992,
+        "candidatos_por_valido": 59.4
+      },
+      "calidad": {
+        "registros": 463473,
+        "grupos_verdad": 181136,
+        "grupos_predichos": 186476,
+        "pares_verdaderos": 664575,
+        "tp": 647466,
+        "fp": 3698,
+        "fn": 17109,
+        "precision": 0.9943,
+        "recall": 0.9743,
+        "f1": 0.9842,
+        "b3_precision": 0.9978,
+        "b3_recall": 0.983,
+        "b3_f1": 0.9904,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9861,
+          "SIN_NIT": 0.7093
+        },
+        "recall_por_caso": {
+          "positivo_con_nit": 0.9861,
+          "positivo_sin_nit": 0.7092,
+          "negativo_intermediario": 0.9231,
+          "negativo_generico": null
+        },
+        "fp_que_tocan_negativo": 28,
+        "calidad_por_estrato": {},
+        "macro_f1": null,
+        "grupo_mayor_sin_identificador": {
+          "filas": 14,
+          "entidades": 5,
+          "grupos": 8099,
+          "grupos_grandes": 0
+        }
+      },
+      "huella": "9b903d58c3b24868cb05d380708c9f7898b7b10f7037359405e0dc38d7ebfdca",
+      "especificacion": {
+        "datos": "/tmp/escala_datos/gt_s42_e175000_i35000.csv",
+        "perfil": "produccion_estandar",
+        "confiables": [],
+        "variables_extra": null,
+        "ajustes_perfil": null,
+        "perfil_multicampo": null,
+        "semilla": 42
+      },
+      "dir_trabajo": null
+    }
+  }
+}
