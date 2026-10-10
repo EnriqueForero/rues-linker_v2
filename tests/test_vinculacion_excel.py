@@ -506,7 +506,7 @@ def test_leeme_celdas_combinadas_alturas_y_anchos(libro):
 
 
 def test_leeme_textos_declarados_ya_no_nombran_empresas_reales(libro):
-    """Los tres ejemplos de la guía de revisión cambiaron de marca; lo demás del texto sigue igual."""
+    """Los ejemplos de la guía de revisión y del glosario cambiaron de marca; lo demás del texto sigue igual."""
     hoja = libro["LEEME"]
     assert hoja["B50"].value == (
         "La evidencia: 'misma web vantiko.es y misma ciudad', 'es la matriz según su web', "
@@ -517,7 +517,8 @@ def test_leeme_textos_declarados_ya_no_nombran_empresas_reales(libro):
         "DECISION=EMPRESA · AUTOR=M. Pérez · FECHA=2026-10-02 · RAZON=Mismo nombre y web vantiko.es"
     )
     todo = " ".join(str(c.value) for f in hoja.iter_rows() for c in f if c.value)
-    assert "gullon" not in todo.lower() and "ESA34002501" not in todo
+    assert "ESA34002501" not in todo
+    assert "(Quelmar frente a Zelvora)" in todo
 
 
 def test_leeme_sin_destinos_lo_dice(tmp_path):

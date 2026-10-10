@@ -35,9 +35,9 @@ _PASOS_DE_LECTURA = (
     "como ARCHIVO_DECISIONES. Nada de lo que está en C se vincula sin esa decisión.",
 )
 
-# Hallazgo F3: la definición de RELACIÓN DE PROPIEDAD trae un ejemplo con dos empresas reales (y otros textos
-# nombran productos de datos reales). No se cambian: la tabla de textos declarados del arnés solo cubre el
-# «p. ej.» del RESUMEN, no esta frase; cambiarla rompe la paridad.
+# Cambio declarado de F3: el ejemplo de RELACIÓN DE PROPIEDAD nombraba dos empresas reales; ahora usa marcas
+# inventadas (Quelmar frente a Zelvora), igual que el «p. ej.» del RESUMEN. Los productos de datos que citan
+# otros textos (fDi Markets, Orbis) no son empresas del universo y se conservan.
 _GLOSARIO = (
     (
         "NIVEL EMPRESA",
@@ -54,7 +54,7 @@ _GLOSARIO = (
     ),
     (
         "RELACIÓN DE PROPIEDAD",
-        "Vínculo por dueño o matriz SIN nombre compartido (Kaufland frente a Lidl). Solo lo aporta la "
+        "Vínculo por dueño o matriz SIN nombre compartido (Quelmar frente a Zelvora). Solo lo aporta la "
         "revisión y no cuenta como vínculo.",
     ),
     ("BANDA A", "Automático, alta confianza: mismo nombre normalizado y mismo país."),
