@@ -9,15 +9,20 @@
 > sin promediarse con nada.
 
 ```bash
-python scripts/conformidad.py                    # dedup + linkage
+python scripts/conformidad.py                    # dedup + linkage, motor multicampo
 python scripts/conformidad.py --corroborar       # con levantamiento de veto (F3)
+python scripts/conformidad.py --camino linkage   # los mismos 43 por api.linkage() (F2.13)
+python scripts/conformidad.py --camino flujo.cruce   # … y por flujo.cruce con arrastre
+python scripts/conformidad.py --camino todos
 python scripts/conformidad.py --escenario dedup --etiqueta mi_cambio
 python scripts/conformidad.py --importar ruta/Ground_Truth_Multicampo_v1.xlsx
 ```
 
 Devuelve 0 si todos los casos **firmes** aprueban, 1 si alguno reprueba. Los
 casos que el catálogo marca `TP_DIFICIL` son deuda declarada, se listan aparte
-y no reprueban.
+y no reprueban. **Cada camino tiene su propia línea base** (§4): el veredicto
+del camino de producción se registra tal cual, no se ajusta el motor para
+cuadrarlo.
 
 > **Dónde busca el conjunto (v0.22.1).** El conjunto vive en el repositorio,
 > no dentro del paquete, así que la ruta no se puede derivar de la ubicación
@@ -91,7 +96,7 @@ comparables entre sí, que es justo lo que ADR-0001 existe para evitar.
 
 ## 3. Qué cubre el catálogo
 
-**Deduplicación (24 casos firmes + 2 frontera).** Match exacto cross-source;
+**Deduplicación (27 casos firmes + 2 frontera).** Match exacto cross-source;
 NIT idéntico con variación leve, sufijo legal, nombre truncado, prefijo C.I.,
 ruido administrativo, orden de palabras y formato de NIT; homónimos; NIT
 idéntico con nombres muy distintos; persona contra empresa; cadena transitiva
@@ -100,10 +105,25 @@ cortos y muy largos; datos faltantes; grupo excesivamente grande; score en la
 frontera del umbral; stopwords críticas; singleton sin match; y cinco casos
 multicampo (`MC01`, `MC04`–`MC07`).
 
-**Record linkage (10 casos firmes + 1 frontera).** Cruce exacto, con sufijo,
+**Record linkage (13 casos firmes + 1 frontera).** Cruce exacto, con sufijo,
 comercial contra legal, truncado, prefijo C.I., orden alterado, NIT
 formateado, typo, sin tildes, abreviado; solo en A y solo en B; homónimo
 cross-base; y cruce sin NIT en A.
+
+> **Seis casos sin pares declarados, juzgados por registro (F2.13).** Las
+> hojas de pares del libro nombran 37 de los 43 casos. `C20` (datos
+> faltantes), `C24` (stopwords críticas), `C25` (ocho singletons), `solo_A`,
+> `solo_B` y `homonimo_cross` aciertan cuando el registro **no se une a
+> nadie**, y «con nadie» no se puede enumerar en una hoja de pares. Hasta
+> F2.13 quedaban sin veredicto: verde sin haber medido. Ahora cada registro
+> del caso se juzga contra la columna de verdad (`ID_GRUPO_ESPERADO` /
+> `ENTIDAD_ID_ESPERADO`): acierta si el grupo que le tocó tiene exactamente
+> los miembros que la verdad dice (para el cruce: si cruza exactamente con
+> los registros del otro lado que la verdad manda, ninguno si la entidad es
+> negativa). El JSON lo declara en `origen` (`pares_declarados` /
+> `verdad_por_registro`) y el resumen los marca `·reg`; los 37 con pares se
+> evalúan exactamente igual que antes. Un singleton que absorbe a un ajeno
+> reprueba, y es firme: `C25` es `TN`, no deuda.
 
 **Los dos casos frontera** que el libro original declaraba pendientes:
 
@@ -111,20 +131,130 @@ cross-base; y cruce sin NIT en A.
   captura, no dos entidades.
 - **C21** — la entidad tiene dos NIT legítimos por reestructuración societaria.
 
-## 4. Línea base
+## 4. Línea base, por camino
 
-Motor multicampo, esquema derivado del propio DICCIONARIO del libro:
+Los mismos 43 casos corren por **tres caminos** del motor (`--camino`), y la
+evidencia registra con cuál se midió (`camino` en el JSON y en el nombre del
+archivo: `conformidad_<escenario>[_<camino>]_<etiqueta>.json`; el camino
+histórico conserva los nombres de F0).
 
-| escenario | precisión | recall | F1 | casos firmes |
-|---|---:|---:|---:|---|
-| deduplicación | 1,0000 | 0,9847 | 0,9923 | 24/24 |
-| deduplicación **con `--corroborar`** | 1,0000 | **1,0000** | **1,0000** | 24/24 |
-| record linkage | 1,0000 | 1,0000 | 1,0000 | 10/10 |
+| camino | qué es | escenario | precisión | recall | F1 | casos firmes |
+|---|---|---|---:|---:|---:|---|
+| `dedupe_esquema` | `api.dedupe_esquema`, motor multicampo, esquema derivado del DICCIONARIO del libro | deduplicación | 1,0000 | 0,9847 | 0,9923 | 27/27 |
+| `dedupe_esquema` **con `--corroborar`** | ídem, con levantamiento de veto por contacto (F3) | deduplicación | 1,0000 | **1,0000** | **1,0000** | 27/27 |
+| `dedupe_esquema` | | record linkage | 1,0000 | 1,0000 | 1,0000 | 13/13 |
+| `linkage` | `api.linkage()`, la fachada de producción (Orchestrator L1…L5, perfil `produccion_estandar`) | deduplicación | 1,0000 | 0,9695 | 0,9845 | **23/27** |
+| `linkage` | | record linkage | 1,0000 | 1,0000 | 1,0000 | 13/13 |
+| `flujo.cruce` | `flujo.cruce.ejecutar_cruce` sobre CSV por fuente, con columnas de arrastre (`DIRECCION`, `DEPARTAMENTO`, `SECTOR`, `REG_ID`) que viajan fuera del motor y se re-adjuntan | deduplicación | 1,0000 | 0,9695 | 0,9845 | **23/27** |
+| `flujo.cruce` | | record linkage | 1,0000 | 1,0000 | 1,0000 | 13/13 |
 
-La primera fila reproduce **exactamente** la cifra que publica la hoja LEEME
-del libro, medida con la versión 0.10.0 del motor. Que dos implementaciones
+Hasta F2.13 los firmes eran 24/24 y 10/10: son los mismos casos más los seis
+juzgados por registro (§3); ningún veredicto de los 37 anteriores cambió. La
+primera fila reproduce **exactamente** la cifra que publica la hoja LEEME del
+libro, medida con la versión 0.10.0 del motor. Que dos implementaciones
 independientes den el mismo número es la mejor evidencia de que el instrumento
-mide lo que dice medir.
+mide lo que dice medir. `flujo.cruce` da **exactamente** la misma partición que
+`linkage` en los dos escenarios: el arrastre de columnas no mueve ningún grupo,
+que es lo que ese camino mide.
+
+### Cómo se monta el camino de producción
+
+`linkage()` entiende la confianza **por fuente** (una fuente confiable no se
+deduplica internamente); el libro la declara **por fila** (`ES_TRUSTED`): el
+bloque `GEN` trae registros RUES y SUPERSOCIEDADES marcados `False` que **sí**
+deben unirse entre sí. Marcar RUES entera como confiable reprobaría `GEN`; no
+marcarla dejaría `C15` sin la política que mide. La proyección fiel es partir
+las fuentes declaradas confiables por el DICCIONARIO (RUES, SUPERSOCIEDADES)
+en dos: las filas verificadas con su nombre y las demás en
+`<SRC>_SIN_VERIFICAR` (`scripts/conformidad.py::fuentes_por_confianza`). La
+evidencia lo registra en `extra.fuentes` y `extra.confiables`. Evidencia
+adicional: `CIUDAD` (`col_ciudad`) y `TELEFONO`/`EMAIL` con los comparadores
+`telefono_signed`/`email_signed`, peso 0,10 cada uno. En el cruce A↔B, CRM y
+RUES son las fuentes y RUES la confiable.
+
+### Veredicto de los 43, por camino
+
+`par` = pares de la hoja; `reg` = registros juzgados contra la verdad (§3).
+🟡 = frontera (`TP_DIFICIL`, no reprueba). Generado desde los JSON de
+`docs/evidencia/`; `tests/test_conformidad_caminos.py` exige que los 43 estén.
+
+| caso | tipo | unidad | `dedupe_esquema` | `dedupe_esquema --corroborar` | `linkage` | `flujo.cruce` |
+|---|---|---|:--:|:--:|:--:|:--:|
+| `C01` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
+| `C02` | TP | par | ✅ 6/6 | ✅ 6/6 | ✅ 6/6 | ✅ 6/6 |
+| `C03` | TP | par | ✅ 6/6 | ✅ 6/6 | ✅ 6/6 | ✅ 6/6 |
+| `C04` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
+| `C05` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
+| `C06` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C07` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C08` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C09` | TP_DIFICIL | par | 🟡 0/1 | ✅ 1/1 | 🟡 0/1 | 🟡 0/1 |
+| `C11` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C12` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C13` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C14` | CHAIN | par | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 |
+| `C15` | TRUSTED | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C17` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
+| `C18` | EDGE | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C19` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C20` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `C21` | TP_DIFICIL | par | 🟡 0/1 | ✅ 1/1 | 🟡 0/1 | 🟡 0/1 |
+| `C22` | ANOMALY | par | ✅ 28/28 | ✅ 28/28 | ✅ 28/28 | ✅ 28/28 |
+| `C23` | BOUNDARY | par | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `C24` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `C25` | TN | reg | ✅ 8/8 | ✅ 8/8 | ✅ 8/8 | ✅ 8/8 |
+| `MC01` | TP | par | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `MC04` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `MC05` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `MC06` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `MC07` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `GEN` | MIXTO | par | ✅ 69/69 | ✅ 69/69 | ✅ 69/69 | ✅ 69/69 |
+| `exacto` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
+| `sufijo` | TP | par | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 |
+| `comercial_vs_legal` | TP | par | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 |
+| `truncado` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `prefijo_ci` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `orden` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `nit_formato` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `sin_nit_en_A` | TP_DIFICIL | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `typo` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `tildes` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `abreviado` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `solo_A` | TN | reg | ✅ 4/4 | ✅ 4/4 | ✅ 4/4 | ✅ 4/4 |
+| `solo_B` | TN | reg | ✅ 5/5 | ✅ 5/5 | ✅ 5/5 | ✅ 5/5 |
+| `homonimo_cross` | FP_trap | reg | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 |
+
+### Lo que el camino de producción no sabe hacer hoy (medido en F2.13)
+
+Cuatro casos firmes reprueban por `linkage`/`flujo.cruce` y pasan por el motor
+multicampo. Se registran tal cual —esta tarea no ajusta el motor— y son
+insumo de F2 (cobertura por estrellas, genéricos) y de F3:
+
+- **`C20` + `C24`, una fusión escandalosa.** El registro 56 (`EMPRESA SAS`,
+  sin NIT, CRM) y el 57 (`DE LA Y SAS`, NIT 9004344457, RUES) acaban en el
+  **mismo grupo**: dos empresas distintas unidas. Al limpiar el nombre, uno
+  queda en un genérico (`EMPRESA`) y el otro en stopwords (`DE LA Y`), y lo
+  que sobrevive se parece. Es la clase de error que la regla de Enrique
+  castiga más —unir dos empresas distintas duele más que dejar sin unir— y el
+  motor multicampo no lo comete. Los dos casos reprueban juntos porque los
+  dos registros son los que se unen.
+- **`MC01`.** Sin NIT en los dos registros, correo y teléfono idénticos: el
+  multicampo los une; `linkage()` no, porque en el régimen sin identificador
+  el peso de `TELEFONO`/`EMAIL` (0,10 cada uno) no alcanza para que
+  `SOLUCIONES TECNOLOGICAS APLICADAS SAS` y `SOLUCIONES TEC APLICADAS` pasen
+  el umbral.
+- **`C23`.** `PROYECTOS Y DISEÑOS URBANOS SAS` contra `PROYECTOS URBANOS`
+  (nombre parcial, sin NIT, mismo teléfono y dirección): score en la frontera;
+  el multicampo lo une, `linkage()` lo deja fuera.
+
+> **Regla para `--corroborar` en el camino de producción.** La corroboración
+> por contacto (F3) vive **solo** en el motor multicampo. `linkage()` y
+> `flujo.cruce` no tienen esa perilla, así que `scripts/conformidad.py` **se
+> niega** a correr `--corroborar` con `--camino linkage` o `flujo.cruce`
+> (error con qué pasó / por qué importa / qué hacer): una evidencia con
+> `corroborar: true` sobre un motor que no la tiene mentiría. En esos caminos
+> `C09` y `C21` reprueban **siempre** y cuentan como frontera, sin flag que lo
+> cambie, hasta que F3 lleve la corroboración a la librería.
 
 ### El levantamiento de veto (F3)
 
@@ -138,9 +268,11 @@ C21 sin perder ni una de las seis trampas de falso positivo.
 > (deuda declarada, la corrida sigue en PASA). Desde esta versión la evidencia
 > publicada registra con qué se midió: `conformidad_{dedup,linkage}_base.json`
 > es la corrida **sin** corroborar y `..._corroborado.json` la corrida **con**,
-> y cada JSON lleva `corroborar` (true/false) y `camino` (`dedupe_esquema`).
-> Una evidencia sin ese campo no dice qué midió; `test_conformidad_evidencia.py`
-> lo exige.
+> y cada JSON lleva `corroborar` (true/false) y `camino` (`dedupe_esquema`,
+> `linkage` o `flujo.cruce`; los dos últimos van también en el nombre del
+> archivo: `conformidad_dedup_linkage_base.json`…). Una evidencia sin esos
+> campos no dice qué midió; `test_conformidad_evidencia.py` y
+> `test_conformidad_caminos.py` lo exigen.
 
 **Advertencia honesta sobre el parámetro.** `min_corroborantes=2` se eligió por
 criterio de riesgo, no porque esta suite lo respalde: con 1 también da
@@ -171,6 +303,14 @@ producción. Hoy los 24 comparadores están en un solo catálogo.
 3. **Un caso reprobado reprueba.** No se promedia.
 4. **Los `TP_DIFICIL` no reprueban pero se cuentan.** Separarlos impide que un
    caso realmente roto se esconda entre las fronteras conocidas.
+5. **Los 43 tienen veredicto, siempre.** Los seis casos sin pares declarados
+   se juzgan por registro contra la columna de verdad (§3) y el JSON dice de
+   qué regla salió cada veredicto (`origen`). Un caso sin fila es un caso sin
+   medir, y eso ya pasó una vez.
+6. **El camino va en la evidencia.** `camino` es uno de `dedupe_esquema`,
+   `linkage`, `flujo.cruce` (un nombre libre se rechaza) y cada camino tiene
+   su línea base. Un caso que da distinto entre caminos se registra con su
+   explicación (§4); el motor no se ajusta desde la suite.
 
 ## 7. Lo que esta suite NO mide
 
@@ -185,4 +325,4 @@ producción. Hoy los 24 comparadores están en un solo catálogo.
 
 ---
 
-*Autor: Claude (asesor de Enrique Forero) · 2026-08-29 · v0.20.0*
+*Autor: Claude (asesor de Enrique Forero) · 2026-08-29 · v0.20.0 · caminos de producción (F2.13): 2026-10-06*

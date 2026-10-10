@@ -57,6 +57,7 @@ __all__ = [
     "evaluar_calidad",
     "huella_particion",
     "parsear_ajustes",
+    "silenciar_pipeline",
 ]
 
 #: Semilla única de todo el banco. Cualquier proceso aleatorio la usa.
@@ -630,8 +631,15 @@ def cargar_referencia(ruta: Path) -> pd.DataFrame:
 
 
 @contextmanager
-def _silenciar_pipeline() -> Iterator[None]:
-    """Baja el ruido de logging del pipeline durante la medición."""
+def silenciar_pipeline() -> Iterator[None]:
+    """Baja el ruido de logging del pipeline durante una medición.
+
+    Lo usan el banco y `scripts/conformidad.py` (F2.13): una sola copia de
+    qué callar. Bajar el nivel de los registradores conocidos no basta: cada
+    componente construye su `CustomLogger` al vuelo, le fija INFO y corta la
+    propagación, así que lo que de verdad calla es `logging.disable(INFO)`,
+    que se restaura al salir. Los WARNING y superiores siguen pasando.
+    """
     import logging
 
     niveles = {}
@@ -639,9 +647,12 @@ def _silenciar_pipeline() -> Iterator[None]:
         registrador = logging.getLogger(nombre)
         niveles[nombre] = registrador.level
         registrador.setLevel(logging.WARNING)
+    tope_anterior = logging.root.manager.disable
+    logging.disable(logging.INFO)
     try:
         yield
     finally:
+        logging.disable(tope_anterior)
         for nombre, nivel in niveles.items():
             logging.getLogger(nombre).setLevel(nivel)
 
@@ -682,7 +693,7 @@ def correr_banco(espec: EspecificacionBanco, *, silencioso: bool = True) -> Corr
 
         shutil.rmtree(espec.dir_trabajo, ignore_errors=True)
 
-    contexto = _silenciar_pipeline() if silencioso else _sin_contexto()
+    contexto = silenciar_pipeline() if silencioso else _sin_contexto()
     t0 = time.perf_counter()
     with MuestreadorRecursos(espec.intervalo_muestreo) as muestreador, contexto:
         salida = linkage(

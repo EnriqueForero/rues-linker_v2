@@ -11,7 +11,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "comercial_vs_legal",
@@ -21,7 +22,8 @@
       "aciertos": 2,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "exacto",
@@ -31,7 +33,19 @@
       "aciertos": 3,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
+    },
+    {
+      "codigo": "homonimo_cross",
+      "nombre": "Homónimo cross-base",
+      "tipo_esperado": "FP_trap",
+      "pares": 2,
+      "aciertos": 2,
+      "pasa": true,
+      "frontera": false,
+      "detalle": [],
+      "origen": "verdad_por_registro"
     },
     {
       "codigo": "nit_formato",
@@ -41,7 +55,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "orden",
@@ -51,7 +66,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "prefijo_ci",
@@ -61,7 +77,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "sin_nit_en_A",
@@ -71,7 +88,30 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": true,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
+    },
+    {
+      "codigo": "solo_A",
+      "nombre": "Solo en base A",
+      "tipo_esperado": "TN",
+      "pares": 4,
+      "aciertos": 4,
+      "pasa": true,
+      "frontera": false,
+      "detalle": [],
+      "origen": "verdad_por_registro"
+    },
+    {
+      "codigo": "solo_B",
+      "nombre": "Solo en base B",
+      "tipo_esperado": "TN",
+      "pares": 5,
+      "aciertos": 5,
+      "pasa": true,
+      "frontera": false,
+      "detalle": [],
+      "origen": "verdad_por_registro"
     },
     {
       "codigo": "sufijo",
@@ -81,7 +121,8 @@
       "aciertos": 2,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "tildes",
@@ -91,7 +132,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "truncado",
@@ -101,7 +143,8 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     },
     {
       "codigo": "typo",
@@ -111,13 +154,14 @@
       "aciertos": 1,
       "pasa": true,
       "frontera": false,
-      "detalle": []
+      "detalle": [],
+      "origen": "pares_declarados"
     }
   ],
   "precision": 1.0,
   "recall": 1.0,
   "f1": 1.0,
-  "nota": "F3 activo: corroboración por contacto (EMAIL y TELEFONO)",
+  "nota": "con corroboración por contacto (F3): dos NIT distintos se reúnen si email Y teléfono coinciden",
   "corroborar": true,
   "camino": "dedupe_esquema",
   "extra": {

@@ -64,10 +64,10 @@ DIRECTORIO_CONJUNTO = RAIZ_REPO / "data" / "conformidad"
 
 @pytest.fixture(scope="module")
 def conjunto() -> ConjuntoConformidad:
-    try:
-        return cargar_conjunto(DIRECTORIO_CONJUNTO)
-    except FileNotFoundError:  # pragma: no cover
-        pytest.skip("data/conformidad/ no está presente en esta copia")
+    # Sin `pytest.skip` (F2.13): el conjunto vive en el repositorio y su
+    # ausencia es un fallo, no un entorno raro. Una compuerta que se salta
+    # reporta verde sin haber medido.
+    return cargar_conjunto(DIRECTORIO_CONJUNTO)
 
 
 def test_el_conjunto_versionado_es_coherente(conjunto: ConjuntoConformidad) -> None:

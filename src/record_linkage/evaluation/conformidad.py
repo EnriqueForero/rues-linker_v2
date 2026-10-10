@@ -31,6 +31,27 @@ acta**, porque si cambia, las métricas históricas dejan de ser comparables.
 * `linkage_ground_truth.csv` 15 cruces verdaderos.
 * `catalogo_casos.csv`   la taxonomía de los 43 casos.
 
+Dos formas de veredicto, 43/43 (F2.13)
+--------------------------------------
+Las hojas de pares nombran 37 de los 43 casos. Los otros seis —C20, C24 y C25
+en deduplicación; solo_A, solo_B y homonimo_cross en el cruce— no tienen ningún
+par declarado porque su acierto consiste en **no** unirse con nadie, y una
+hoja de pares no puede enumerar «con nadie». Hasta F2.13 quedaban sin fila:
+verde sin haber medido. Ahora se juzgan **por registro** contra la columna de
+verdad (``ID_GRUPO_ESPERADO`` / ``ENTIDAD_ID_ESPERADO``): el registro acierta
+si el grupo que le tocó tiene exactamente los miembros que la verdad dice.
+Cada ``ResultadoCaso`` declara de cuál de las dos reglas salió (``origen``),
+y los 37 con pares se siguen evaluando exactamente igual que antes.
+
+Caminos del motor
+-----------------
+La partición que se evalúa puede venir de tres caminos (``CAMINOS``):
+``dedupe_esquema`` (motor multicampo, el histórico), ``linkage`` (la fachada
+de producción ``api.linkage``) y ``flujo.cruce`` (``ejecutar_cruce`` sobre
+archivos, con columnas de arrastre). El camino va en la evidencia y en el
+nombre del archivo; cada camino tiene su propia línea base y un caso que da
+distinto entre caminos se registra tal cual, con su explicación.
+
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-08-29  ·  Version: 0.20.0
 """
 
@@ -47,8 +68,11 @@ import numpy as np
 import pandas as pd
 
 __all__ = [
+    "CAMINOS",
     "CAMINO_POR_DEFECTO",
     "DIRECTORIO_POR_DEFECTO",
+    "ORIGEN_PARES_DECLARADOS",
+    "ORIGEN_VERDAD_POR_REGISTRO",
     "VARIABLE_ENTORNO",
     "ConjuntoConformidad",
     "Informe",
@@ -136,11 +160,36 @@ TIPOS_FRONTERA = frozenset({"TP_DIFICIL"})
 #: se identifican explícitamente en vez de inferirse.
 TIPOS_NEGATIVOS = frozenset({"FP_trap", "TN", "TRUSTED"})
 
-#: Camino del motor con el que se produce la partición evaluada. Hoy el único
-#: es `api.dedupe_esquema` (`scripts/conformidad.py` lo usa para los dos
-#: escenarios); se registra por nombre para que, cuando exista otro, la
-#: evidencia diga con cuál se midió.
-CAMINO_POR_DEFECTO = "dedupe_esquema"
+#: Caminos del motor con los que `scripts/conformidad.py` produce la partición
+#: evaluada. Se registran por nombre en la evidencia (`Informe.camino`) y en
+#: el nombre del archivo, porque cada camino tiene su propia línea base:
+#:
+#: * ``dedupe_esquema`` — `api.dedupe_esquema`, motor multicampo (histórico).
+#: * ``linkage``        — `api.linkage`, la fachada de producción (Orchestrator).
+#: * ``flujo.cruce``    — `flujo.cruce.ejecutar_cruce` sobre archivos, con
+#:   columnas de arrastre; envuelve a `linkage()`.
+CAMINOS = ("dedupe_esquema", "linkage", "flujo.cruce")
+
+#: El camino histórico: el único hasta F2.13 y el que conserva los nombres de
+#: archivo de la evidencia de F0 (`conformidad_<escenario>_<etiqueta>.json`).
+CAMINO_POR_DEFECTO = CAMINOS[0]
+
+#: De dónde salió el veredicto de un caso (`ResultadoCaso.origen`).
+#: `pares_declarados`: de la hoja de pares del libro, como siempre.
+#: `verdad_por_registro`: el caso no tiene pares declarados y se juzga por
+#: registro contra la columna de verdad (F2.13; ver el docstring del módulo).
+ORIGEN_PARES_DECLARADOS = "pares_declarados"
+ORIGEN_VERDAD_POR_REGISTRO = "verdad_por_registro"
+
+
+def _validar_camino(camino: str) -> str:
+    if camino not in CAMINOS:
+        raise ValueError(
+            f"camino={camino!r} no es un camino del motor conocido. "
+            "La evidencia registra con qué camino se midió y un nombre libre la "
+            f"haría incomparable. Use uno de {list(CAMINOS)}."
+        )
+    return camino
 
 
 @dataclass(frozen=True)
@@ -155,7 +204,10 @@ class ResultadoCaso:
         aciertos: pares resueltos como el catálogo manda.
         pasa: True si todos los pares del caso se resolvieron bien.
         frontera: el catálogo lo declara frontera conocida.
-        detalle: los pares fallados, para poder mirarlos.
+        detalle: los pares (o registros) fallados, para poder mirarlos.
+        origen: `ORIGEN_PARES_DECLARADOS` si `pares` cuenta pares de la hoja;
+            `ORIGEN_VERDAD_POR_REGISTRO` si el caso no tiene pares declarados
+            y `pares` cuenta registros juzgados contra la columna de verdad.
     """
 
     codigo: str
@@ -166,6 +218,7 @@ class ResultadoCaso:
     pasa: bool
     frontera: bool
     detalle: tuple[str, ...] = ()
+    origen: str = ORIGEN_PARES_DECLARADOS
 
     @property
     def tasa(self) -> float:
@@ -183,7 +236,7 @@ class Informe:
             una partición ya hecha y no pueden comprobarlo—, y va en la
             evidencia porque C09 y C21 solo pasan con ella: un JSON sin este
             campo no dice qué midió (F0.3).
-        camino: camino del motor que produjo la partición (`CAMINO_POR_DEFECTO`).
+        camino: camino del motor que produjo la partición; uno de `CAMINOS`.
     """
 
     etiqueta: str
@@ -213,9 +266,26 @@ class Informe:
         d["pasa"] = self.pasa
         return d
 
+    @property
+    def por_registro(self) -> tuple[ResultadoCaso, ...]:
+        """Casos juzgados por registro porque no tienen pares declarados."""
+        return tuple(c for c in self.casos if c.origen == ORIGEN_VERDAD_POR_REGISTRO)
+
+    def nombre_archivo(self) -> str:
+        """`conformidad_<escenario>[_<camino>]_<etiqueta>.json`.
+
+        El camino por defecto no aparece en el nombre: así la evidencia de F0
+        (`conformidad_dedup_base.json`…) conserva su nombre y sigue siendo la
+        misma serie. Los otros caminos lo llevan, con el punto cambiado por
+        guion bajo (`flujo.cruce` → `flujo_cruce`), para que dos caminos nunca
+        se pisen el archivo.
+        """
+        camino = "" if self.camino == CAMINO_POR_DEFECTO else self.camino.replace(".", "_") + "_"
+        return f"conformidad_{self.escenario}_{camino}{self.etiqueta}.json"
+
     def guardar(self, directorio: Path) -> Path:
         directorio.mkdir(parents=True, exist_ok=True)
-        destino = directorio / f"conformidad_{self.escenario}_{self.etiqueta}.json"
+        destino = directorio / self.nombre_archivo()
         destino.write_text(
             json.dumps(self.a_dict(), indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -228,6 +298,7 @@ class Informe:
         firmes = self.firmes
         aprobados = sum(1 for c in firmes if c.pasa)
         frontera = tuple(c for c in self.casos if c.frontera)
+        por_registro = self.por_registro
         partes = [
             linea,
             f"  CONFORMIDAD · {self.escenario} · {self.etiqueta} · rues-linker {self.version}",
@@ -236,12 +307,16 @@ class Informe:
             f"  PARES          precision {self.precision:.4f}   recall {self.recall:.4f}"
             f"   F1 {self.f1:.4f}",
             f"  CASOS FIRMES   {aprobados}/{len(firmes)} aprobados",
+            f"  VEREDICTOS     {len(self.casos)} casos: {len(self.casos) - len(por_registro)} por "
+            f"{ORIGEN_PARES_DECLARADOS} · {len(por_registro)} por {ORIGEN_VERDAD_POR_REGISTRO}"
+            " (marcados ·reg)",
             "─" * ancho,
         ]
         for caso in sorted(self.casos, key=lambda c: (c.pasa, c.frontera, c.codigo)):
             marca = "✅" if caso.pasa else ("🟡" if caso.frontera else "❌")
+            unidad = "·reg" if caso.origen == ORIGEN_VERDAD_POR_REGISTRO else "    "
             partes.append(
-                f"  {marca} {caso.codigo:<18s} {caso.aciertos:>3d}/{caso.pares:<3d}"
+                f"  {marca} {caso.codigo:<18s} {caso.aciertos:>3d}/{caso.pares:<3d}{unidad}"
                 f"  {caso.tipo_esperado:<11s} {caso.nombre[:34]}"
             )
         if frontera:
@@ -386,6 +461,147 @@ def _agrupar_por_caso(
     return tuple(salida)
 
 
+def _miembros_por_grupo(ids: np.ndarray, grupos: np.ndarray) -> dict[Any, frozenset[str]]:
+    """{grupo: conjunto de REG_ID que lo integran}."""
+    serie = pd.Series(ids, index=pd.Index(grupos)).astype(str)
+    return {grupo: frozenset(bloque) for grupo, bloque in serie.groupby(level=0)}
+
+
+def _caso_por_registro(
+    codigo: str,
+    catalogo: Mapping[str, tuple[str, str]],
+    aciertos: Sequence[bool],
+    fallados: Sequence[str],
+) -> ResultadoCaso:
+    nombre, tipo = catalogo.get(codigo, (codigo, "?"))
+    return ResultadoCaso(
+        codigo=codigo,
+        nombre=nombre,
+        tipo_esperado=tipo,
+        pares=len(aciertos),
+        aciertos=int(sum(aciertos)),
+        pasa=all(aciertos),
+        frontera=tipo in TIPOS_FRONTERA,
+        detalle=tuple(fallados[:6]),
+        origen=ORIGEN_VERDAD_POR_REGISTRO,
+    )
+
+
+def _veredictos_por_registro_dedup(
+    conjunto: ConjuntoConformidad,
+    predicho: np.ndarray,
+    codigos_con_pares: set[str],
+    catalogo: Mapping[str, tuple[str, str]],
+) -> list[ResultadoCaso]:
+    """Un veredicto por registro para los casos que no tienen pares declarados.
+
+    C20 (datos faltantes), C24 (stopwords) y C25 (singletons) aciertan cuando
+    **no** se unen a nadie, y eso una hoja de pares no lo puede enumerar. Se
+    juzga cada registro del caso por su grupo completo: acierta si el grupo
+    que le tocó tiene exactamente los miembros que ``ID_GRUPO_ESPERADO`` dice.
+    Así, un singleton que absorbe a un registro ajeno reprueba, igual que uno
+    que se queda fuera de su grupo.
+    """
+    registros = conjunto.dedup_registros
+    casos = registros["CASO_TIPO"].astype(str).to_numpy()
+    sin_pares = sorted(set(casos) - codigos_con_pares)
+    if not sin_pares:
+        return []
+    ids = registros["REG_ID"].astype(str).to_numpy()
+    esperado = registros["ID_GRUPO_ESPERADO"].astype(str).to_numpy()
+    miembros_esperados = _miembros_por_grupo(ids, esperado)
+    miembros_predichos = _miembros_por_grupo(ids, predicho)
+    salida = []
+    for codigo in sin_pares:
+        aciertos, fallados = [], []
+        for i in np.flatnonzero(casos == codigo):
+            debe, tiene = miembros_esperados[esperado[i]], miembros_predichos[predicho[i]]
+            aciertos.append(debe == tiene)
+            if debe != tiene:
+                sobran, faltan = sorted(tiene - debe), sorted(debe - tiene)
+                fallados.append(
+                    f"{ids[i]}: "
+                    + (f"unido a {sobran}" if sobran else "")
+                    + (" · " if sobran and faltan else "")
+                    + (f"separado de {faltan}" if faltan else "")
+                )
+        salida.append(_caso_por_registro(codigo, catalogo, aciertos, fallados))
+    return salida
+
+
+def _cruces_esperados(
+    lado: pd.DataFrame, col_id: str, otro: pd.DataFrame, col_otro: str
+) -> dict[str, frozenset[str]]:
+    """{REG_ID: ids del otro lado con su misma entidad}; entidad ≤ 0 = ninguno.
+
+    La entidad se compara con ``strip`` en los dos lados: un ``' 3'`` que
+    trajera una reimportación del libro buscaría ``'3'`` en un diccionario
+    con llave ``' 3'`` y el caso reprobaría por una razón falsa.
+    """
+    por_entidad = (
+        otro.assign(_id=otro[col_otro].astype(str))
+        .groupby(otro["ENTIDAD_ID_ESPERADO"].astype(str).str.strip())["_id"]
+        .agg(frozenset)
+        .to_dict()
+    )
+    ids = lado[col_id].astype(str).to_numpy()
+    entidades = lado["ENTIDAD_ID_ESPERADO"].astype(str).str.strip().to_numpy()
+    positivas = pd.to_numeric(pd.Series(entidades), errors="coerce").fillna(-1).to_numpy() > 0
+    return {
+        reg: (por_entidad.get(entidad, frozenset()) if positiva else frozenset())
+        for reg, entidad, positiva in zip(ids, entidades, positivas, strict=True)
+    }
+
+
+def _veredictos_por_registro_linkage(
+    conjunto: ConjuntoConformidad,
+    predichos: set[tuple[str, str]],
+    codigos_con_pares: set[str],
+    catalogo: Mapping[str, tuple[str, str]],
+) -> tuple[list[ResultadoCaso], set[str]]:
+    """Veredicto por registro para los retos sin pares declarados (A y B).
+
+    solo_A, solo_B y homonimo_cross aciertan cuando el registro **no cruza con
+    nadie**. Cada registro del reto, de la base que sea, acierta si el conjunto
+    de registros del otro lado con que la librería lo cruzó es exactamente el
+    que ``ENTIDAD_ID_ESPERADO`` manda (vacío si la entidad es negativa).
+
+    Returns:
+        Los casos y el conjunto de códigos juzgados así (para que un cruce
+        inventado que ya cuenta aquí no se impute además como par).
+    """
+    a, b = conjunto.linkage_a, conjunto.linkage_b
+    retos = set(a["RETO"].astype(str)) | set(b["RETO"].astype(str))
+    sin_pares = sorted(retos - codigos_con_pares)
+    if not sin_pares:
+        return [], set()
+    esperado_a = _cruces_esperados(a, "REG_ID_A", b, "REG_ID_B")
+    esperado_b = _cruces_esperados(b, "REG_ID_B", a, "REG_ID_A")
+    obtenido_a: dict[str, set[str]] = {}
+    obtenido_b: dict[str, set[str]] = {}
+    for x, y in predichos:
+        obtenido_a.setdefault(x, set()).add(y)
+        obtenido_b.setdefault(y, set()).add(x)
+    lados = (
+        ("A", a, "REG_ID_A", esperado_a, obtenido_a, "B"),
+        ("B", b, "REG_ID_B", esperado_b, obtenido_b, "A"),
+    )
+    salida = []
+    for codigo in sin_pares:
+        aciertos, fallados = [], []
+        for marca, lado, col_id, esperado, obtenido, otra in lados:
+            bloque = lado.loc[lado["RETO"].astype(str) == codigo, col_id].astype(str)
+            for reg in bloque:
+                debe, tiene = esperado[reg], frozenset(obtenido.get(reg, ()))
+                aciertos.append(debe == tiene)
+                if debe != tiene:
+                    fallados.append(
+                        f"{marca}{reg}: cruza con {otra}{sorted(tiene)}, debía {otra}{sorted(debe)}"
+                    )
+        salida.append(_caso_por_registro(codigo, catalogo, aciertos, fallados))
+    return salida, set(sin_pares)
+
+
 def evaluar_dedup(
     conjunto: ConjuntoConformidad,
     grupos_predichos: np.ndarray,
@@ -413,6 +629,7 @@ def evaluar_dedup(
     Raises:
         ValueError: si la longitud no coincide con el conjunto.
     """
+    _validar_camino(camino)
     registros = conjunto.dedup_registros
     if len(grupos_predichos) != len(registros):
         raise ValueError(
@@ -421,6 +638,11 @@ def evaluar_dedup(
         )
     posicion = {str(r): i for i, r in enumerate(registros["REG_ID"])}
     predicho = np.asarray(grupos_predichos)
+    if pd.isna(predicho).any():
+        raise ValueError(
+            "grupos_predichos trae registros sin grupo (NaN/None). Un registro sin "
+            "grupo no se puede juzgar; alinee la partición por REG_ID antes de evaluar."
+        )
 
     esperados, obtenidos, codigos, etiquetas = [], [], [], []
     for fila in conjunto.dedup_pares.itertuples(index=False):
@@ -431,13 +653,16 @@ def evaluar_dedup(
         etiquetas.append(f"({fila.REG_ID_A},{fila.REG_ID_B})")
 
     precision, recall, f1 = _metricas_de_pares(esperados, obtenidos)
+    catalogo = _catalogo_por_codigo(conjunto.catalogo)
+    casos = [
+        *_agrupar_por_caso(codigos, esperados, obtenidos, etiquetas, catalogo),
+        *_veredictos_por_registro_dedup(conjunto, predicho, set(codigos), catalogo),
+    ]
     return Informe(
         etiqueta=etiqueta,
         version=version,
         escenario="dedup",
-        casos=_agrupar_por_caso(
-            codigos, esperados, obtenidos, etiquetas, _catalogo_por_codigo(conjunto.catalogo)
-        ),
+        casos=tuple(sorted(casos, key=lambda c: c.codigo)),
         precision=precision,
         recall=recall,
         f1=f1,
@@ -468,8 +693,10 @@ def evaluar_linkage(
             registra en el informe, no se comprueba.
         camino: camino del motor que produjo los pares.
     """
+    _validar_camino(camino)
     verdad = conjunto.linkage_verdad
     predichos = {(str(a), str(b)) for a, b in pares_predichos}
+    catalogo = _catalogo_por_codigo(conjunto.catalogo)
 
     esperados, obtenidos, codigos, etiquetas = [], [], [], []
     for fila in verdad.itertuples(index=False):
@@ -478,26 +705,44 @@ def evaluar_linkage(
         obtenidos.append(clave in predichos)
         codigos.append(str(fila.RETO))
         etiquetas.append(f"A{fila.REG_ID_A}↔B{fila.REG_ID_B}")
+    por_registro, codigos_por_registro = _veredictos_por_registro_linkage(
+        conjunto, predichos, set(codigos), catalogo
+    )
+    n_declarados = len(esperados)
 
     # Los cruces que la librería inventó y el conjunto no declara: cada uno es
-    # un falso positivo y se imputa al caso del registro de A, que es donde el
-    # catálogo describe el reto.
+    # un falso positivo para la precisión y se imputa al caso del registro de
+    # A, que es donde el catálogo describe el reto — salvo que ese reto ya se
+    # juzgue por registro (solo_A, homonimo_cross): ahí el cruce ya cuenta como
+    # registro fallado y no se cuenta dos veces.
     reto_a = dict(zip(conjunto.linkage_a["REG_ID_A"], conjunto.linkage_a["RETO"], strict=True))
     declarados = {(str(f.REG_ID_A), str(f.REG_ID_B)) for f in verdad.itertuples(index=False)}
+    en_caso = [True] * n_declarados
     for a, b in sorted(predichos - declarados):
+        reto = str(reto_a.get(a, "desconocido"))
         esperados.append(False)
         obtenidos.append(True)
-        codigos.append(str(reto_a.get(a, "desconocido")))
+        codigos.append(reto)
         etiquetas.append(f"A{a}↔B{b} (no declarado)")
+        en_caso.append(reto not in codigos_por_registro)
 
     precision, recall, f1 = _metricas_de_pares(esperados, obtenidos)
+    filtro = np.asarray(en_caso)
+    casos = [
+        *_agrupar_por_caso(
+            list(np.asarray(codigos, dtype=object)[filtro]),
+            list(np.asarray(esperados)[filtro]),
+            list(np.asarray(obtenidos)[filtro]),
+            list(np.asarray(etiquetas, dtype=object)[filtro]),
+            catalogo,
+        ),
+        *por_registro,
+    ]
     return Informe(
         etiqueta=etiqueta,
         version=version,
         escenario="linkage",
-        casos=_agrupar_por_caso(
-            codigos, esperados, obtenidos, etiquetas, _catalogo_por_codigo(conjunto.catalogo)
-        ),
+        casos=tuple(sorted(casos, key=lambda c: c.codigo)),
         precision=precision,
         recall=recall,
         f1=f1,
