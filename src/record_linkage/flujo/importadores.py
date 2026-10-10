@@ -67,9 +67,11 @@ escritor del estándar), igual que ``linkage()``:
   ``NOMBRE_NORM`` tiene líder y cero miembros: no genera par y queda solo en
   ``revision_grupos`` (la métrica «grupos marcados sin par en revision.csv»
   y ``manifiesto.flujo.grupos_marcados_sin_par`` lo cuentan). En
-  ``ResultadoImportadores.tablas()`` la hoja ``REVISION`` conserva el
-  contenido de v1 (los grupos) y los pares van en ``REVISION_PARES``
-  (``docs/CONSUMIDORES.md`` 3.8.i.5). ``paises`` sigue en memoria (es un
+  ``ResultadoImportadores.tablas()`` —y con las MISMAS claves en el dict de
+  ``construir_entregables``— la hoja ``REVISION`` conserva el contenido de v1
+  (los grupos) y los pares van en ``REVISION_PARES`` (``docs/CONSUMIDORES.md``
+  3.8.i.5); ``ensamblar_resultado`` es la única regla que reparte ese dict en
+  los atributos. ``paises`` sigue en memoria (es un
   agrupado de la correlativa; no es un artefacto del estándar).
 * Una columna de la fuente que choca con una columna del contrato, de las
   propias o de las de trabajo del merge (``_COLUMNAS_INTERNAS``) se conserva
@@ -139,6 +141,7 @@ __all__ = [
     "deduplicar_importadores",
     "diccionario_importadores",
     "ejecutar",
+    "ensamblar_resultado",
     "escribir_importadores",
     "metricas",
     "muestra_para_revision",
@@ -955,7 +958,9 @@ def decisiones_con_nombres(decisiones: pd.DataFrame, representantes: pd.DataFram
     )
 
 
-def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
+def ejecutar(
+    prep: pd.DataFrame, cfg: ConfigImportadores, *, marca_tiempo: datetime | None = None
+) -> dict:
     """Bloqueo + scoring + clustering + cobertura, particionando por país.
 
     Memoria (0.22.4): cada partición se puntúa en lotes de
@@ -964,6 +969,9 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
     como posiciones globales en ``representantes``. Antes se guardaban los
     ~50 M candidatos de la base real con los dos nombres en cada fila y la
     partición más grande se puntuaba de una vez: OOM en 15 GiB.
+
+    ``marca_tiempo`` fija ``corrida["creado_en"]`` (el ``CREATED_AT`` del
+    golden); ``None`` lee el reloj (UTC) una sola vez aquí.
     """
     agregados = {c: (c, "sum") for c in cfg.cols_metricas}
     rep = (
@@ -1092,20 +1100,30 @@ def ejecutar(prep: pd.DataFrame, cfg: ConfigImportadores) -> dict:
         "segundos": segundos,
         # CREATED_AT del golden: UNA marca por corrida, fijada aquí y no en
         # cada llamada a construir_entregables (que puede repetirse y compararse).
-        "creado_en": _marca_de_corrida(),
+        "creado_en": _marca_de_corrida(marca_tiempo),
     }
 
 
-def _marca_de_corrida() -> str:
-    """``CREATED_AT`` del golden: la hora UTC en que se fijó la corrida, en el
-    formato del contrato (``AAAA-MM-DD HH:MM:SS``)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+def _marca_de_corrida(marca_tiempo: datetime | None = None) -> str:
+    """``CREATED_AT`` del golden en el formato del contrato (``AAAA-MM-DD HH:MM:SS``):
+    ``marca_tiempo`` si se inyectó, si no la hora UTC en que se fijó la corrida."""
+    marca = marca_tiempo if marca_tiempo is not None else datetime.now(timezone.utc)
+    return marca.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def construir_entregables(
     prep: pd.DataFrame, corrida: dict, cfg: ConfigImportadores
 ) -> dict[str, pd.DataFrame]:
-    """CORRELATIVA, GOLDEN, PAISES, REVISION y REVISION_GRUPOS a partir de la corrida.
+    """CORRELATIVA, GOLDEN, PAISES, REVISION y REVISION_PARES a partir de la corrida.
+
+    Las claves son las hojas de :meth:`ResultadoImportadores.tablas` y
+    significan lo mismo (un solo vocabulario): ``REVISION`` es la tabla de
+    GRUPOS marcados de v1 (``MOTIVO_REVISION``…, lo que terceros reciben en el
+    07) y ``REVISION_PARES`` el archivo de decisiones del estándar
+    (``contrato.REVISION``, lo que ``escribir_resultado`` publica como
+    ``revision.csv``). ``muestra_para_revision``, ``metricas``,
+    ``verificar_invariantes`` y :func:`ensamblar_resultado` leen este dict tal
+    cual.
 
     Deja en ``corrida["regla_id_registro"]`` el reporte de
     ``salida.completar._asignar_id_registro`` (``{fuente: {regla, columna,
@@ -1286,14 +1304,14 @@ def construir_entregables(
     )
     revision_grupos = golden.assign(MOTIVO_REVISION=motivo)
     revision_grupos = revision_grupos[revision_grupos.MOTIVO_REVISION != ""].reset_index(drop=True)
-    revision = _revision_pares(corr, revision_grupos, cfg)
+    revision_pares = _revision_pares(corr, revision_grupos, cfg)
 
     return {
         "CORRELATIVA": correlativa,
         "GOLDEN": golden,
         "PAISES": paises,
-        "REVISION": revision,
-        "REVISION_GRUPOS": revision_grupos,
+        "REVISION": revision_grupos,
+        "REVISION_PARES": revision_pares,
     }
 
 
@@ -1451,21 +1469,21 @@ def _revision_pares(
 
 
 def _grupos_marcados_sin_par(tablas: dict) -> int:
-    """Grupos de ``REVISION_GRUPOS`` sin ningún par en ``REVISION`` (ver ``_revision_pares``).
+    """Grupos de ``REVISION`` sin ningún par en ``REVISION_PARES`` (ver ``_revision_pares``).
 
     ``CLAVE_A`` es el ``ID_REGISTRO`` del líder: se resuelve a ``ID_GRUPO`` por
     la correlativa. Incluye los ``sin_nombre_utilizable`` (nunca forman par) y
     los marcados con un solo ``NOMBRE_NORM``.
     """
-    correlativa, revision, grupos = (
+    correlativa, pares, grupos = (
         tablas["CORRELATIVA"],
+        tablas["REVISION_PARES"],
         tablas["REVISION"],
-        tablas["REVISION_GRUPOS"],
     )
     if grupos.empty:
         return 0
     grupo_de = correlativa.set_index("ID_REGISTRO")["ID_GRUPO"]
-    con_par = revision["CLAVE_A"].astype(str).map(grupo_de).dropna().unique()
+    con_par = pares["CLAVE_A"].astype(str).map(grupo_de).dropna().unique()
     return int((~grupos["ID_GRUPO"].isin(con_par)).sum())
 
 
@@ -1517,8 +1535,8 @@ def metricas(
         ("pares candidatos evaluados", corrida["n_candidatos"]),
         ("cortes por cohesión", corrida["n_cortes"]),
         ("segundos de ejecución", round(corrida["segundos"])),
-        ("grupos marcados para revisión", len(tablas["REVISION_GRUPOS"])),
-        ("pares (líder, miembro) en revision.csv", len(tablas["REVISION"])),
+        ("grupos marcados para revisión", len(tablas["REVISION"])),
+        ("pares (líder, miembro) en revision.csv", len(tablas["REVISION_PARES"])),
         ("grupos marcados sin par en revision.csv", _grupos_marcados_sin_par(tablas)),
     ]
     if peso:
@@ -1538,8 +1556,8 @@ def metricas(
             ),
             (
                 f"{peso} en grupos de revisión",
-                f"{tablas['REVISION_GRUPOS'][peso].sum() / total:.1%}"
-                if len(tablas["REVISION_GRUPOS"]) and total
+                f"{tablas['REVISION'][peso].sum() / total:.1%}"
+                if len(tablas["REVISION"]) and total
                 else "0.0%",
             ),
         ]
@@ -1624,7 +1642,9 @@ def verificar_invariantes(
         # escribir_resultado hace en estricto, pero aquí queda en la tabla.
         (
             "cumple el contrato de salida 1.0",
-            ResultadoLinkage(correlativa=correlativa, golden=golden, revision=tablas["REVISION"])
+            ResultadoLinkage(
+                correlativa=correlativa, golden=golden, revision=tablas["REVISION_PARES"]
+            )
             .validar()
             .ok,
         ),
@@ -1957,7 +1977,7 @@ def _manifiesto_importadores(
         "segundos_emparejamiento": round(float(corrida["segundos"]), 3),
         "n_importadores": int(correl["ID_IMPORTADOR"].nunique()),
         "n_empresas_globales": int(correl["ID_EMPRESA_GLOBAL"].nunique()),
-        "grupos_en_revision": len(tablas["REVISION_GRUPOS"]),
+        "grupos_en_revision": len(tablas["REVISION"]),
         "grupos_marcados_sin_par": _grupos_marcados_sin_par(tablas),
     }
     return manifiesto
@@ -1993,6 +2013,86 @@ def escribir_importadores(
     return manifiesto
 
 
+def ensamblar_resultado(
+    df: pd.DataFrame,
+    prep: pd.DataFrame,
+    corrida: dict,
+    tablas: dict[str, pd.DataFrame],
+    cfg: ConfigImportadores,
+    *,
+    muestra: pd.DataFrame,
+    extra: dict[str, pd.DataFrame] | None = None,
+    sugerencias_pais: pd.DataFrame | None = None,
+    tabla_metricas: pd.DataFrame | None = None,
+    tabla_invariantes: pd.DataFrame | None = None,
+) -> ResultadoImportadores:
+    """Arma el ``ResultadoImportadores`` COMPLETO a partir de las piezas de una corrida.
+
+    Es la única regla que sabe qué va en cada atributo (``revision`` = pares,
+    ``revision_grupos`` = grupos, manifiesto con la huella del insumo,
+    diccionario con ``cols_metricas``): la usan :func:`deduplicar_importadores`
+    y el notebook 07, que corre las mismas etapas una a una para
+    cronometrarlas. Armar ``ResultadoImportadores(...)`` a mano fuera de aquí
+    es lo que dejó al 07 sin hoja ``REVISION`` y sin manifiesto (F2.6, ronda 2).
+
+    Args:
+        df: la base cruda (para la huella del insumo en el manifiesto).
+        prep: ``preparar(df, cfg)``.
+        corrida: ``ejecutar(prep, cfg)``.
+        tablas: ``construir_entregables(prep, corrida, cfg)``.
+        cfg: la configuración de la corrida.
+        muestra: ``muestra_para_revision(tablas, cfg)``.
+        extra: hojas adicionales (``SENSIBILIDAD``, ``RECALL_BLOQUEO``,
+            ``PARAMETROS``, ``SUGERENCIAS_PAIS``…); ``None`` = ninguna.
+        sugerencias_pais: ``sugerir_alias_pais(...)`` de las grafías sin
+            clasificar (vacía con sus columnas si no hay); ``None`` toma
+            ``extra["SUGERENCIAS_PAIS"]`` o una tabla vacía.
+        tabla_metricas: ``metricas(prep, tablas, corrida, cfg)``; ``None`` la
+            calcula aquí (el 07 la pasa porque la cronometra aparte).
+        tabla_invariantes: ``verificar_invariantes(prep, tablas, cfg)``;
+            ``None`` la calcula aquí.
+    """
+    extra = dict(extra or {})
+    manifiesto = _manifiesto_importadores(df, cfg, tablas, corrida)
+    return ResultadoImportadores(
+        correlativa=tablas["CORRELATIVA"],
+        golden=tablas["GOLDEN"],
+        paises=tablas["PAISES"],
+        revision=tablas["REVISION_PARES"],
+        muestra=muestra,
+        metricas=(
+            tabla_metricas if tabla_metricas is not None else metricas(prep, tablas, corrida, cfg)
+        ),
+        invariantes=(
+            tabla_invariantes
+            if tabla_invariantes is not None
+            else verificar_invariantes(prep, tablas, cfg)
+        ),
+        decisiones=corrida["decisiones"],
+        comparador=corrida["comparador"],
+        preparada=prep,
+        representantes=corrida["representantes"],
+        sugerencias_pais=(
+            sugerencias_pais
+            if sugerencias_pais is not None
+            else extra.get("SUGERENCIAS_PAIS", pd.DataFrame())
+        ),
+        segundos=corrida["segundos"],
+        n_candidatos=corrida["n_candidatos"],
+        n_cortes_cohesion=corrida["n_cortes"],
+        extra=extra,
+        revision_grupos=tablas["REVISION"],
+        diccionario=diccionario_importadores(
+            tablas["CORRELATIVA"],
+            tablas["GOLDEN"],
+            tablas["REVISION_PARES"],
+            renombres=manifiesto["completar"]["renombres"],
+            cols_metricas=cfg.cols_metricas,
+        ),
+        manifiesto=manifiesto,
+    )
+
+
 def deduplicar_importadores(
     df: pd.DataFrame,
     cfg: ConfigImportadores | None = None,
@@ -2000,6 +2100,7 @@ def deduplicar_importadores(
     carpeta_salida: Path | str | None = None,
     nombre: str = "importadores",
     excel: bool = True,
+    marca_tiempo: datetime | None = None,
 ) -> ResultadoImportadores:
     """Fachada: de un DataFrame crudo a la correlativa y su control de calidad.
 
@@ -2011,20 +2112,25 @@ def deduplicar_importadores(
             :func:`escribir_importadores` y la deja en ``.carpeta_salida``.
         nombre: nombre simple que cierra el de la carpeta.
         excel: escribir ``excel/`` (completo o LEEME; nunca recorte).
+        marca_tiempo: UNA marca para toda la corrida: ``CREATED_AT`` del golden
+            (vía :func:`ejecutar`) y, si se escribe, el nombre de la carpeta y
+            ``manifest.marca_tiempo``. ``None`` lee el reloj (UTC) una sola vez
+            aquí, así que dos corridas con la misma ``marca_tiempo`` dan el
+            mismo golden y la carpeta nunca lleva otra hora que el golden.
 
     Returns:
         ``ResultadoImportadores``. Revise ``.todo_ok`` ANTES de usar nada:
         si una invariante falla, el resultado no es utilizable.
     """
     cfg = cfg or ConfigImportadores()
+    marca = marca_tiempo if marca_tiempo is not None else datetime.now(timezone.utc)
     prep = preparar(df, cfg)
     sugerencias = sugerir_alias_pais(
         prep.loc[prep.PAIS_METODO == "sin_clasificar", "PAIS_NORMALIZADO"],
         catalogo=cfg.catalogo_paises,
     )
-    corrida = ejecutar(prep, cfg)
+    corrida = ejecutar(prep, cfg, marca_tiempo=marca)
     tablas = construir_entregables(prep, corrida, cfg)
-    muestra = muestra_para_revision(tablas, cfg)
     extra = {
         "SENSIBILIDAD": sensibilidad_umbral(corrida, cfg),
         "RECALL_BLOQUEO": recall_del_bloqueo(corrida, cfg),
@@ -2035,34 +2141,16 @@ def deduplicar_importadores(
     }
     if len(sugerencias):
         extra["SUGERENCIAS_PAIS"] = sugerencias
-    manifiesto = _manifiesto_importadores(df, cfg, tablas, corrida)
-    resultado = ResultadoImportadores(
-        correlativa=tablas["CORRELATIVA"],
-        golden=tablas["GOLDEN"],
-        paises=tablas["PAISES"],
-        revision=tablas["REVISION"],
-        muestra=muestra,
-        metricas=metricas(prep, tablas, corrida, cfg),
-        invariantes=verificar_invariantes(prep, tablas, cfg),
-        decisiones=corrida["decisiones"],
-        comparador=corrida["comparador"],
-        preparada=prep,
-        representantes=corrida["representantes"],
-        sugerencias_pais=sugerencias,
-        segundos=corrida["segundos"],
-        n_candidatos=corrida["n_candidatos"],
-        n_cortes_cohesion=corrida["n_cortes"],
+    resultado = ensamblar_resultado(
+        df,
+        prep,
+        corrida,
+        tablas,
+        cfg,
+        muestra=muestra_para_revision(tablas, cfg),
         extra=extra,
-        revision_grupos=tablas["REVISION_GRUPOS"],
-        diccionario=diccionario_importadores(
-            tablas["CORRELATIVA"],
-            tablas["GOLDEN"],
-            tablas["REVISION"],
-            renombres=manifiesto["completar"]["renombres"],
-            cols_metricas=cfg.cols_metricas,
-        ),
-        manifiesto=manifiesto,
+        sugerencias_pais=sugerencias,
     )
     if carpeta_salida is not None:
-        escribir_importadores(resultado, carpeta_salida, nombre, excel=excel)
+        escribir_importadores(resultado, carpeta_salida, nombre, marca_tiempo=marca, excel=excel)
     return resultado

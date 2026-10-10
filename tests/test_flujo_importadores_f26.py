@@ -25,6 +25,7 @@ Las empresas son inventadas.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -469,3 +470,72 @@ def test_sufijo_de_colision_es_el_de_salida_completar() -> None:
     fuente = inspect.getsource(importadores)
     assert re.search(r"^_SUFIJO_COLISION\s*=", fuente, re.M) is None
     assert "_SUFIJO_COLISION" in fuente.split("from ..salida.completar import", 1)[1][:200]
+
+
+# ── Ronda 2: un solo vocabulario, marca inyectable y el 07 arma con la librería ──
+
+
+def test_construir_entregables_habla_el_vocabulario_de_tablas() -> None:
+    """``construir_entregables`` y ``tablas()`` nombran igual: ``REVISION`` son los
+    GRUPOS (contenido de v1) y ``REVISION_PARES`` el archivo de decisiones."""
+    from record_linkage.flujo.importadores import construir_entregables, ejecutar, preparar
+
+    cfg = _cfg()
+    prep = preparar(_base(), cfg)
+    t = construir_entregables(prep, ejecutar(prep, cfg), cfg)
+    assert list(t["REVISION_PARES"].columns) == list(contrato.COLUMNAS_REVISION)
+    assert "MOTIVO_REVISION" in t["REVISION"].columns
+    assert "REVISION_GRUPOS" not in t
+    r = deduplicar_importadores(_base(), cfg)
+    assert r.tablas()["REVISION"] is r.revision_grupos
+    assert r.tablas()["REVISION_PARES"] is r.revision
+
+
+def test_marca_tiempo_inyectable_en_la_fachada_fija_golden_y_carpeta(tmp_path: Path) -> None:
+    """Dos corridas con la misma ``marca_tiempo`` dan el mismo golden (CREATED_AT
+    incluido) y la carpeta del estándar usa ESA marca, no otra lectura del reloj."""
+    cfg = _cfg()
+    a = deduplicar_importadores(_base(), cfg, marca_tiempo=MARCA)
+    b = deduplicar_importadores(_base(), cfg, marca_tiempo=MARCA)
+    assert a.golden.equals(b.golden)
+    r = deduplicar_importadores(_base(), cfg, carpeta_salida=tmp_path, marca_tiempo=MARCA)
+    assert r.golden["CREATED_AT"].eq(MARCA.strftime("%Y-%m-%d %H:%M:%S")).all()
+    assert r.carpeta_salida is not None
+    assert r.carpeta_salida.name == "2026-10-06_1500_importadores"
+    manifest = json.loads((r.carpeta_salida / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["marca_tiempo"] == MARCA.isoformat(timespec="seconds")
+
+
+def test_ensamblar_resultado_arma_lo_mismo_que_la_fachada() -> None:
+    """El 07 corre las etapas una a una (para cronometrarlas) y arma el resultado
+    con ``ensamblar_resultado``: hoja ``REVISION`` de v1 llena, manifiesto y
+    diccionario presentes, estándar escribible. Antes armaba
+    ``ResultadoImportadores(...)`` a mano y perdía las tres cosas."""
+    from record_linkage.flujo.importadores import (
+        construir_entregables,
+        ejecutar,
+        ensamblar_resultado,
+        muestra_para_revision,
+        preparar,
+    )
+
+    cfg = _cfg()
+    df = _base()
+    prep = preparar(df, cfg)
+    corrida = ejecutar(prep, cfg, marca_tiempo=MARCA)
+    tablas = construir_entregables(prep, corrida, cfg)
+    r = ensamblar_resultado(
+        df, prep, corrida, tablas, cfg, muestra=muestra_para_revision(tablas, cfg), extra={}
+    )
+    hojas = r.tablas()
+    assert "MOTIVO_REVISION" in hojas["REVISION"].columns and len(hojas["REVISION"]) >= 2
+    assert list(hojas["REVISION_PARES"].columns) == list(contrato.COLUMNAS_REVISION)
+    assert r.manifiesto["funcion"] == "deduplicar_importadores"
+    assert not r.diccionario.empty
+    r.a_resultado_linkage().validar(estricto=True)
+    assert r.todo_ok
+    fachada = deduplicar_importadores(df, cfg, marca_tiempo=MARCA)
+    assert r.golden.equals(fachada.golden)
+    assert r.correlativa.equals(fachada.correlativa)
+    assert r.revision_grupos.equals(fachada.revision_grupos)
+    assert r.metricas.equals(fachada.metricas)
