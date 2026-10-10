@@ -14,7 +14,8 @@ Componentes principales:
       validacion_cruzada, ajustes_perfil para linkage(), verdad por registro
       o por pares etiquetados, evaluar_correlativa, guardar_estudio.
     - evaluar_pares_etiquetados / MetricasParesEtiquetados: la métrica sobre
-      los pares que una persona etiquetó (pairwise.py; F2.15).
+      los pares que una persona etiquetó (pairwise.py; F2.15);
+      validar_etiquetas falla rápido si un IS_MATCH no es 0/1.
     - graficar_convergencia / graficar_importancia: figuras matplotlib de una
       optimización (graficas_optimizacion.py).
     - HyperparameterOptimizer: Optuna sobre linkage_pipeline.run() (legacy).
@@ -31,6 +32,7 @@ from .pairwise import (
     PairwiseMetrics,
     evaluar_pares,
     evaluar_pares_etiquetados,
+    validar_etiquetas,
 )
 
 __all__ = [
@@ -44,6 +46,7 @@ __all__ = [
     "evaluar_pares_etiquetados",
     "graficar_convergencia",
     "graficar_importancia",
+    "validar_etiquetas",
 ]
 
 # Imports opt-in (requieren optuna)

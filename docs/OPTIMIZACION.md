@@ -36,7 +36,10 @@ costo está invertido.
    del DataFrame: póngale la columna única por fila (`COL_ID`) antes.
 2. **Etiquetar**: una persona abre `pares_para_etiquetar.xlsx` y llena
    `IS_MATCH` con `1` (misma empresa) o `0` (distinta). Lo que no sabe lo deja
-   vacío y no cuenta. En el notebook la etiqueta se **simula** desde la
+   vacío y no cuenta (vacío es `NaN` o `""`: el archivo releído con
+   `dtype=str` y `fillna("")` sigue valiendo). Cualquier otro valor (`si`,
+   `x`) hace fallar al optimizador **al construirlo**, con el mensaje que
+   dice cuáles corregir: ningún trial se gasta con una verdad inválida. En el notebook la etiqueta se **simula** desde la
    columna `ENTIDAD` de la base de demostración; con datos reales la pone una
    persona, y eso no se puede automatizar sin convertir el estudio en una
    medición de la regla que usted mismo escribió.
@@ -84,7 +87,15 @@ optimizer.guardar_estudio(salida / "estudio_optuna.json")
 - El espacio se contrasta con el perfil **antes del primer trial**: una clave
   que el perfil no declare (`nit_empty_passes_filter` en
   `produccion_estandar`, aunque el scorer la lea) falla al construir el
-  optimizador, porque `linkage` la rechazaría al aplicar.
+  optimizador, porque `linkage` la rechazaría al aplicar. El espacio por
+  defecto (`default_search_space`) incluye `nit_empty_passes_filter`, así que
+  solo vale con perfiles que la declaren (`produccion_calibrada`,
+  `alta_precision`); con `produccion_estandar` use `espacio_de_busqueda({...})`
+  sin esa clave.
+- Un trial cuya correlativa no se puede medir contra la verdad (los ids de
+  `ID_1`/`ID_2` no son los de la correlativa) queda como `failed` con su
+  `error` en el historial, no como un score 0,0: si todos fallan, el estudio
+  termina sin trials completados y `guardar_estudio` se niega a escribirlo.
 - `evaluar_correlativa` mide la correlativa de producción sobre los mismos
   pares: el score aplicado debe ser el del estudio. Si no lo es, cambió la
   base, el perfil o la versión; no aplique los ajustes.

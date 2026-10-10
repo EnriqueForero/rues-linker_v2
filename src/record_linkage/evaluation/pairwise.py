@@ -211,8 +211,26 @@ class MetricasParesEtiquetados:
         return {campo: getattr(self, campo) for campo in self.__dataclass_fields__}
 
 
-def _etiquetas_binarias(valores: pd.Series) -> np.ndarray:
-    """``IS_MATCH`` como booleanos; acepta 1/0, "1"/"0", True/False, 1.0/0.0."""
+def esta_revisado(valores: pd.Series) -> pd.Series:
+    """Máscara de los ``IS_MATCH`` que una persona llenó.
+
+    Un par sin revisar llega como ``NaN``/``None`` (el archivo recién leído)
+    o como ``""`` (releído con ``dtype=str`` y ``fillna("")``, como el
+    notebook lee su base). Ninguno de los dos es una etiqueta: se ignoran.
+    La regla vive aquí una vez; el optimizador la usa para validar la verdad
+    antes del primer trial.
+    """
+    return valores.notna() & (valores.astype(str).str.strip() != "")
+
+
+def validar_etiquetas(valores: pd.Series) -> np.ndarray:
+    """``IS_MATCH`` como booleanos; acepta 1/0, "1"/"0", True/False, 1.0/0.0.
+
+    Falla rápido si algún valor no es ninguno de los dos (``"si"``, ``"x"``):
+    el mensaje dice cuántos y cuáles, para corregir el archivo de etiquetas.
+    Pública para que quien construya un estudio valide la verdad ANTES de
+    gastar trials (``OrchestratorOptimizer`` lo hace en el constructor).
+    """
     texto = valores.astype(str).str.strip().str.lower()
     positivos = texto.isin({"1", "1.0", "true"})
     negativos = texto.isin({"0", "0.0", "false"})
@@ -235,7 +253,7 @@ def evaluar_pares_etiquetados(
     Args:
         pares: DataFrame con ``ID_1``, ``ID_2`` e ``IS_MATCH`` (el archivo de
             ``GroundTruthGenerator`` ya revisado). Las filas con ``IS_MATCH``
-            vacío son pares sin revisar y se ignoran.
+            vacío (``NaN`` o ``""``) son pares sin revisar y se ignoran.
         grupos: etiqueta de grupo predicha por registro, indexada por el id
             del registro (``correlativa.set_index("ID")["ID_GRUPO"]``). Los
             ids se comparan como texto.
@@ -264,7 +282,7 @@ def evaluar_pares_etiquetados(
         )
     serie = pd.Series(serie.to_numpy().astype(str), index=indice)
 
-    revisados = pares.loc[pares["IS_MATCH"].notna()]
+    revisados = pares.loc[esta_revisado(pares["IS_MATCH"])]
     n_etiquetados = len(revisados)
     g1 = revisados["ID_1"].astype(str).map(serie)
     g2 = revisados["ID_2"].astype(str).map(serie)
@@ -275,7 +293,7 @@ def evaluar_pares_etiquetados(
             "ninguno aparecen sus dos registros en la predicción. Los ids de ID_1/ID_2 "
             "deben ser los mismos que identifican cada fila en la correlativa."
         )
-    positivo = _etiquetas_binarias(revisados["IS_MATCH"])[evaluable]
+    positivo = validar_etiquetas(revisados["IS_MATCH"])[evaluable]
     mismo = (g1.to_numpy()[evaluable] == g2.to_numpy()[evaluable]).astype(bool)
 
     tp = int((positivo & mismo).sum())

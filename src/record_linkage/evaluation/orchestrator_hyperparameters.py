@@ -85,8 +85,10 @@ from .banco import evaluar_calidad
 from .pairwise import (
     COLUMNAS_PARES_ETIQUETADOS,
     PairwiseMetrics,
+    esta_revisado,
     evaluar_pares,
     evaluar_pares_etiquetados,
+    validar_etiquetas,
 )
 
 #: Métricas que ``optimize`` sabe maximizar. ``macro_f1`` exige ``ESTRATO`` en la verdad.
@@ -103,6 +105,35 @@ _PESOS: dict[str, str] = {"weight_name": "name", "weight_nit": "nit", "weight_ph
 
 #: Columnas con las que una fuente o la correlativa identifican sus registros.
 _COLUMNAS_ID: tuple[str, ...] = ("ID_REGISTRO", "ID", "id_registro")
+
+
+def _f_beta(precision: float, recall: float, beta: float = 2.0) -> float:
+    """F-beta: ``(1+β²)·P·R / (β²·P + R)``; 0.0 sin denominador.
+
+    ``beta=2`` (el ``f2`` que ``optimize`` sabe maximizar) pesa el recall
+    cuatro veces más que la precisión: útil cuando los duplicados perdidos
+    cuestan más. Escrita una vez para los dos caminos de ``_evaluate``
+    (verdad por registro y por pares).
+    """
+    denominador = beta**2 * precision + recall
+    if denominador <= 0:
+        return 0.0
+    return (1 + beta**2) * precision * recall / denominador
+
+
+def _trial_fallido(
+    numero: int, params: Mapping[str, Any], elapsed: float, error: str
+) -> dict[str, Any]:
+    """Entrada del historial para un trial que no produjo métricas."""
+    return {
+        "trial": numero,
+        "params": dict(params),
+        "score": 0.0,
+        "elapsed_s": elapsed,
+        "status": "failed",
+        "metrics": {},
+        "error": error,
+    }
 
 
 def _a_json(valor: Any) -> Any:
@@ -127,6 +158,11 @@ def default_search_space(trial) -> dict[str, Any]:
     Cubre los parámetros que el código REALMENTE LEE (verificados en
     auditoría Fase 1). Cualquiera puede pasar su propia función al
     constructor de OrchestratorOptimizer si necesita otro espacio.
+
+    Incluye ``nit_empty_passes_filter``: solo válido con perfiles que la
+    declaren (``produccion_calibrada``, ``alta_precision``); con
+    ``produccion_estandar`` el constructor falla antes del primer trial
+    (``_validar_espacio``): use ``espacio_de_busqueda({...})`` sin esa clave.
 
     Returns:
         Dict con valores sugeridos para cada parámetro. Estructura plana
@@ -317,6 +353,8 @@ class OrchestratorOptimizer:
                 c for c in _COLUMNAS_BANCO if c in truth.columns
             ]
         self.truth = truth[columnas].copy()
+        if self.verdad_por_pares:
+            self._validar_verdad_por_pares(self.truth)
         self.search_space = search_space or default_search_space
         self._validar_espacio(base_config["profiles"][active], active)
         self.silent = silent
@@ -365,6 +403,25 @@ class OrchestratorOptimizer:
                 + (f" ({', '.join(con_la_clave)})" if con_la_clave else "")
                 + "."
             )
+
+    @staticmethod
+    def _validar_verdad_por_pares(truth: pd.DataFrame) -> None:
+        """Fail-fast: las etiquetas son 0/1 y hay al menos un par revisado.
+
+        Sin esta guarda, un ``IS_MATCH`` con «si»/«no» pasaba el constructor
+        (solo mira columnas) y cada trial moría dentro de
+        ``evaluar_pares_etiquetados`` con score 0,0: el mensaje accionable
+        existía pero nunca llegaba a quien optimiza (revisión F2.15).
+        """
+        revisadas = truth.loc[esta_revisado(truth["IS_MATCH"]), "IS_MATCH"]
+        if revisadas.empty:
+            raise ValueError(
+                f"Qué pasó: ninguno de los {len(truth)} pares de `truth` tiene IS_MATCH "
+                "(todos vacíos). Por qué importa: sin pares revisados no hay verdad contra "
+                "la que medir y todos los trials darían 0. Qué hacer: etiquete pares "
+                "(1 = misma empresa, 0 = distinta) y vuelva a construir el optimizador."
+            )
+        validar_etiquetas(revisadas)
 
     @staticmethod
     def _es_verdad_por_pares(truth: pd.DataFrame) -> bool:
@@ -541,12 +598,7 @@ class OrchestratorOptimizer:
             "n_records": m.n_records,
             "n_pred_groups": m.n_pred_groups,
         }
-        # F2 score (favorece recall) — útil cuando los duplicados perdidos cuestan más
-        beta2 = 4.0
-        if m.precision + m.recall > 0:
-            metrics["f2"] = (1 + beta2) * m.precision * m.recall / (beta2 * m.precision + m.recall)
-        else:
-            metrics["f2"] = 0.0
+        metrics["f2"] = _f_beta(m.precision, m.recall)
 
         if "ESTRATO" in df.columns:
             metrics.update(self._metricas_banco(df))
@@ -583,16 +635,7 @@ class OrchestratorOptimizer:
         except ValueError as exc:
             return 0.0, {"error": f"evaluar_pares_etiquetados falló: {exc}"}
         metrics: dict[str, Any] = medidas.como_dict()
-        beta2 = 4.0
-        if medidas.precision + medidas.recall > 0:
-            metrics["f2"] = (
-                (1 + beta2)
-                * medidas.precision
-                * medidas.recall
-                / (beta2 * medidas.precision + medidas.recall)
-            )
-        else:
-            metrics["f2"] = 0.0
+        metrics["f2"] = _f_beta(medidas.precision, medidas.recall)
         return float(metrics[optimization_target]), metrics
 
     @staticmethod
@@ -726,20 +769,22 @@ class OrchestratorOptimizer:
 
             correlative, elapsed = self._run_orchestrator(cfg)
             if correlative is None:
-                # Run falló
                 self.optimization_history.append(
-                    {
-                        "trial": trial.number,
-                        "params": params,
-                        "score": 0.0,
-                        "elapsed_s": elapsed,
-                        "status": "failed",
-                        "metrics": {},
-                    }
+                    _trial_fallido(trial.number, params, elapsed, "Orchestrator.run() falló")
                 )
                 return 0.0
 
             score, metrics = self._evaluate(correlative, optimization_target)
+            if "error" in metrics:
+                # La correlativa no se pudo medir contra la verdad (ids que no
+                # alinean, etc.): es un trial FALLIDO, no un score 0,0. Si todos
+                # fallan, el estudio termina sin trials completados y
+                # guardar_estudio se niega (revisión F2.15).
+                self.logger.warning(f"Trial falló al evaluar la correlativa: {metrics['error']}")
+                self.optimization_history.append(
+                    _trial_fallido(trial.number, params, elapsed, str(metrics["error"]))
+                )
+                return 0.0
 
             # Penalización por tiempo (opcional)
             if time_penalty_seconds > 0 and elapsed > time_penalty_seconds:
@@ -842,7 +887,10 @@ class OrchestratorOptimizer:
 
         Returns:
             Métricas de ``_evaluate`` más ``score`` (la del objetivo) y
-            ``elapsed_s``. Si el run falla: ``{"error": ..., "score": 0.0}``.
+            ``elapsed_s``. Si el run falla o la correlativa no se puede medir
+            contra la verdad (ids que no alinean): ``{"error": ..., "score":
+            0.0, "elapsed_s": ...}``, sin métricas; el mismo caso que
+            ``optimize`` registra como trial ``failed``.
         """
         self._validar_objetivo(optimization_target, truth)
         cfg = self._build_config_for_trial(params)
@@ -857,6 +905,9 @@ class OrchestratorOptimizer:
         if correlativa is None:
             return {"error": "Orchestrator.run() falló", "score": 0.0, "elapsed_s": elapsed}
         score, metricas = self._evaluate(correlativa, optimization_target, truth)
+        if "error" in metricas:
+            self.logger.warning(f"No se pudo medir la correlativa: {metricas['error']}")
+            return {"error": metricas["error"], "score": 0.0, "elapsed_s": elapsed}
         return {**metricas, "score": score, "elapsed_s": elapsed}
 
     def validacion_cruzada(
@@ -958,7 +1009,7 @@ class OrchestratorOptimizer:
         ``mejores_parametros``, ``mejores_metricas``, ``ajustes_perfil`` (lo
         que recibe ``linkage(ajustes_perfil=...)``) e ``historial`` (un
         registro por trial con ``params``, ``score``, ``elapsed_s``,
-        ``status`` y ``metrics``).
+        ``status`` y ``metrics``; los fallidos traen además ``error``).
 
         Raises:
             ValueError: si aún no se ha optimizado (no hay estudio que guardar).
@@ -1001,6 +1052,8 @@ class OrchestratorOptimizer:
                 "elapsed_s": h["elapsed_s"],
                 "status": h["status"],
             }
+            if h.get("error"):
+                row["error"] = h["error"]
             row.update({f"param_{k}": v for k, v in h["params"].items()})
             row.update({f"metric_{k}": v for k, v in h["metrics"].items()})
             rows.append(row)

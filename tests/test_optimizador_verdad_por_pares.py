@@ -32,6 +32,7 @@ from record_linkage.evaluation import OPTUNA_AVAILABLE
 from record_linkage.evaluation.pairwise import (
     MetricasParesEtiquetados,
     evaluar_pares_etiquetados,
+    validar_etiquetas,
 )
 
 if not OPTUNA_AVAILABLE:
@@ -83,6 +84,27 @@ def test_las_etiquetas_admiten_texto_y_booleanos() -> None:
     pares["IS_MATCH"] = ["1", "0", "0.0", True]
     metricas = evaluar_pares_etiquetados(pares, _grupos_predichos())
     assert (metricas.tp, metricas.fp, metricas.fn) == (1, 1, 1)
+
+
+def test_la_cadena_vacia_es_un_par_sin_revisar() -> None:
+    """Revisión F2.15 (hallazgo 4): el archivo etiquetado releído como el
+    notebook lee su base (``dtype=str`` + ``fillna("")``) trae ``""`` en los
+    pares sin revisar; es «sin revisar», no una etiqueta inválida."""
+    pares = pd.DataFrame(
+        {"ID_1": ["a", "a", "c"], "ID_2": ["b", "c", "d"], "IS_MATCH": ["1", "", "0"]}
+    )
+    metricas = evaluar_pares_etiquetados(pares, _grupos_predichos())
+    assert metricas.n_pares_etiquetados == 2
+    assert (metricas.tp, metricas.fp, metricas.fn) == (1, 1, 0)
+    # Un espacio en blanco también es «sin revisar».
+    pares["IS_MATCH"] = ["1", "  ", "0"]
+    assert evaluar_pares_etiquetados(pares, _grupos_predichos()).n_pares_etiquetados == 2
+
+
+def test_validar_etiquetas_es_publica_y_acepta_los_mismos_valores() -> None:
+    assert validar_etiquetas(pd.Series([1, "0", True, "1.0"])).tolist() == [True, False, True, True]
+    with pytest.raises(ValueError, match="IS_MATCH"):
+        validar_etiquetas(pd.Series(["si"]))
 
 
 def test_una_etiqueta_que_no_es_0_ni_1_falla_rapido() -> None:
@@ -159,6 +181,56 @@ def test_una_verdad_sin_ninguno_de_los_dos_formatos_falla_rapido(base_cfg: dict)
         OrchestratorOptimizer(
             base_cfg, {}, pd.DataFrame({"ID_REGISTRO": ["1"]}), search_space=ESPACIO
         )
+
+
+def test_una_etiqueta_invalida_falla_al_construir_el_optimizador(base_cfg: dict) -> None:
+    """Revisión F2.15 (hallazgo 1a): «si»/«no» pasaban el constructor (solo mira
+    columnas) y cada trial moría en silencio con score 0,0 y ``status='completed'``.
+    La etiqueta se valida ANTES del primer trial, con el mensaje accionable."""
+    verdad = pd.DataFrame(
+        {"ID_1": ["R000", "R001"], "ID_2": ["R001", "R002"], "IS_MATCH": ["si", "no"]}
+    )
+    with pytest.raises(ValueError, match="IS_MATCH"):
+        OrchestratorOptimizer(base_cfg, {}, verdad, search_space=ESPACIO)
+    # Los pares sin revisar (NaN o "") no cuentan, pero sin ninguno revisado no hay verdad.
+    sin_revisar = pd.DataFrame({"ID_1": ["R000", "R001"], "ID_2": ["R001", "R002"]})
+    sin_revisar["IS_MATCH"] = [None, ""]
+    with pytest.raises(ValueError, match="ning"):
+        OrchestratorOptimizer(base_cfg, {}, sin_revisar, search_space=ESPACIO)
+    # Con un par revisado (y otro vacío) se construye.
+    sin_revisar["IS_MATCH"] = ["1", ""]
+    OrchestratorOptimizer(base_cfg, {}, sin_revisar, search_space=ESPACIO)
+
+
+def test_un_trial_sin_pares_evaluables_no_cuenta_como_completado(
+    base_cfg: dict, sintetica: pd.DataFrame, tmp_path: Path
+) -> None:
+    """Revisión F2.15 (hallazgo 1b): ids que no son los de la correlativa daban un
+    estudio «completo» con todos los trials a 0,0 y ``guardar_estudio`` lo escribía."""
+    optuna.logging.set_verbosity(optuna.logging.ERROR)
+    fuentes = {"DEMO": sintetica[["ID", "NIT", "RAZON_SOCIAL", "CIUDAD"]].copy()}
+    verdad = pd.DataFrame({"ID_1": ["X1", "X2"], "ID_2": ["X2", "X3"], "IS_MATCH": [1, 0]})
+    opt = OrchestratorOptimizer(base_cfg, fuentes, verdad, search_space=ESPACIO, silent=True)
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        antes = opt.evaluar_config({}, "f1")
+        resultado = opt.optimize(n_trials=1, optimization_target="f1", show_progress_bar=False)
+    assert antes["score"] == 0.0 and "Ningún par etiquetado es evaluable" in antes["error"]
+    assert resultado["total_trials_completed"] == 0
+    assert resultado["best_params"] is None and resultado["best_metrics"] == {}
+    assert [h["status"] for h in resultado["optimization_history"]] == ["failed"]
+    assert "Ningún par etiquetado es evaluable" in resultado["optimization_history"][0]["error"]
+    with pytest.raises(ValueError, match="optimize"):
+        opt.guardar_estudio(tmp_path / "estudio.json")
+
+
+def test_f_beta_se_escribe_una_vez() -> None:
+    """Revisión F2.15 (hallazgo 2): la fórmula de F-beta vivía dos veces."""
+    from record_linkage.evaluation.orchestrator_hyperparameters import _f_beta
+
+    assert _f_beta(0.5, 0.5) == pytest.approx(0.5)
+    assert _f_beta(1.0, 0.5) == pytest.approx(5 * 0.5 / (4 + 0.5))  # beta=2 favorece recall
+    assert _f_beta(1.0, 0.5, beta=1.0) == pytest.approx(2 / 3)
+    assert _f_beta(0.0, 0.0) == 0.0
 
 
 def test_evaluar_correlativa_mide_sobre_los_pares_etiquetados(
