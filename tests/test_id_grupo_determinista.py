@@ -282,6 +282,17 @@ def test_id_grupo_del_entregable_es_el_rango_del_menor_id_registro(tmp_path: Pat
         correl["ID_GRUPO"].to_numpy(), correl["ID_REGISTRO"].to_numpy(dtype=object)
     )
     assert correl["ID_GRUPO"].tolist() == esperado.tolist()
+    # Oráculo independiente de la función bajo prueba (revisión, ronda 2): el
+    # representante de cada grupo es su menor ID_REGISTRO y los ids crecen con él.
+    rep = correl.groupby("ID_GRUPO")["ID_REGISTRO"].min()
+    assert rep.sort_index().tolist() == sorted(rep.tolist())
+    # Un grupo conocido del fixture: NIT 800300000 une CRM-A000, CRM-A000X y
+    # ADUANAS-B000; su id es la posición del menor ("ADUANAS-B000") entre los
+    # representantes ordenados.
+    grupo = dict(zip(correl["ID_REGISTRO"], correl["ID_GRUPO"], strict=True))
+    assert grupo["CRM-A000"] == grupo["CRM-A000X"] == grupo["ADUANAS-B000"]
+    assert rep[grupo["ADUANAS-B000"]] == "ADUANAS-B000"
+    assert grupo["ADUANAS-B000"] == sorted(rep.tolist()).index("ADUANAS-B000")
     # Denso desde 0 y el golden habla el mismo idioma.
     assert sorted(correl["ID_GRUPO"].unique().tolist()) == list(range(correl["ID_GRUPO"].nunique()))
     assert res.golden is not None
@@ -367,6 +378,62 @@ def test_trabajo_y_reportes_llevan_los_ids_del_entregable_cuando_l5_renumera(
     assert set(l5_golden["ID_GRUPO"]) == set(res.golden["ID_GRUPO"])
 
     # Reportes L6: la correlativa exportada y los grupos que listan los reportes.
+    l6 = dir_trabajo / "L6_reporting"
+    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
+        _ids_por_registro(correl)
+    )
+    grupos_entregable = set(correl["ID_GRUPO"].tolist())
+    for nombre in ("reporte_casos_revision.xlsx", "reporte_estadisticas_grupos.xlsx"):
+        for _, hoja in pd.read_excel(l6 / nombre, sheet_name=None).items():
+            if "ID_GRUPO" in hoja.columns:
+                assert set(hoja["ID_GRUPO"].dropna().astype(int)) <= grupos_entregable
+
+
+# ── Colapso exacto: la expansión reasigna ORIGINAL_INDEX; L6 debe llevar los ids finales ──
+
+
+def _fuentes_con_duplicados_exactos() -> dict[str, pd.DataFrame]:
+    """Las fuentes de ``_fuentes`` con 3 + 2 filas exactamente duplicadas."""
+    fuentes = _fuentes()
+    a, b = fuentes["CRM"], fuentes["ADUANAS"]
+    return {
+        "CRM": pd.concat([a, a.iloc[[0, 5, 17]]], ignore_index=True),
+        "ADUANAS": pd.concat([b, b.iloc[[1, 9]]], ignore_index=True),
+    }
+
+
+@pytest.mark.parametrize("col_id", ["CODIGO", None])
+def test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable(
+    tmp_path: Path, col_id: str | None
+) -> None:
+    """Revisión F2.3 (ronda 2, hallazgo 1): con ``collapse_exact_duplicates=True`` la
+    expansión renumera ``ORIGINAL_INDEX`` y, al restaurar los duplicados, ``col_id``
+    deja de ser única en la fuente (la clave pasa de ``<SRC>-<CODIGO>`` a
+    ``<SRC>-F<n>``). Sin aplicar la regla tras la expansión, L6 corría con los ids
+    de L5 y ``completar`` los cambiaba después (16 de 45 en este fixture): quien
+    abría un reporte no encontraba el grupo en la correlativa. Ahora ``api.linkage``
+    aplica la regla tras expandir y antes de L6; ``completar`` no cambia nada."""
+    dir_trabajo = tmp_path / "colapso"
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = rl.linkage(
+            _fuentes_con_duplicados_exactos(),
+            work_dir=str(dir_trabajo),
+            skip_reporting=False,
+            col_ciudad="CIUDAD",
+            col_id=col_id,
+            collapse_exact_duplicates=True,
+        )
+    correl = res.correlativa
+    assert len(correl) == 45  # 40 únicas + 5 restauradas
+    assert res.metricas["preprocessing"]["exact_duplicate_collapse"]["CRM"]["collapsed_rows"] == 3
+    # Con duplicados restaurados CODIGO ya no es única: la regla cae a la fila.
+    reglas = res.manifiesto["completar"]["id_registro"]
+    assert {f: r["regla"] for f, r in reglas.items()} == {"CRM": "fila", "ADUANAS": "fila"}
+
+    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
+    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
+    assert set(correl["ID_GRUPO"]) == set(range(correl["ID_GRUPO"].nunique()))
+
     l6 = dir_trabajo / "L6_reporting"
     assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
         _ids_por_registro(correl)

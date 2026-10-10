@@ -596,7 +596,29 @@ def linkage(
         result["correlative"] = _expand_exact_correlative(
             result["correlative"], source_order, collapse_plan
         )
-        result["preprocessing"] = {"exact_duplicate_collapse": collapse_plan["stats"]}
+        # F2.3 (revisión, ronda 2): la expansión reasigna ORIGINAL_INDEX y, al
+        # restaurar los duplicados, col_id deja de ser única en la fuente, así
+        # que la clave de registro cambia (de <SRC>-<id> a <SRC>-F<n>) y con
+        # ella el ID_GRUPO por contenido. La MISMA regla y la MISMA clave que
+        # L4/L5 se aplican aquí, ANTES de L6, para que los reportes lleven los
+        # ids del entregable; completar_correlativa no tendrá nada que cambiar.
+        from .salida.identificadores_registro import (
+            asignar_id_registro,
+            nombre_efectivo,
+            recodificar_id_grupo,
+        )
+
+        nombre_id = (
+            nombre_efectivo(col_id, result["correlative"].columns, canonicos) if col_id else None
+        )
+        claves, _ = asignar_id_registro(result["correlative"], nombre_id)
+        result["golden"], info_grupo = recodificar_id_grupo(
+            result["correlative"], result["golden"], claves
+        )
+        result["preprocessing"] = {
+            "exact_duplicate_collapse": collapse_plan["stats"],
+            "id_grupo_tras_expansion": info_grupo,
+        }
 
         # Diferenciar registros únicos procesados de filas de entrada
         # restauradas, sin alterar la semántica histórica de RECORD_COUNT.

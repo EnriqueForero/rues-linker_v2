@@ -44,14 +44,22 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    de la consolidación por NIT, que fusiona), con la misma clave que L4
    (`asignar_id_registro(correlativa, col_id efectivo)`) y antes de persistir,
    para que `_trabajo/L5_golden/*.parquet` y los reportes L6 (que leen ese
-   resultado) lleven los `ID_GRUPO` del entregable; **y** en
+   resultado) lleven los `ID_GRUPO` del entregable; **con
+   `collapse_exact_duplicates=True`, en `api.linkage`** justo después de
+   `_expand_exact_correlative` y ANTES de L6 (la expansión reasigna
+   `ORIGINAL_INDEX` y, al restaurar los duplicados, `col_id` deja de ser única
+   en la fuente: la clave pasa de `<SRC>-<id>` a `<SRC>-F<n>` y con ella el
+   id), con la misma clave (`nombre_efectivo` + `asignar_id_registro`), y el
+   resultado queda declarado en
+   `metricas["preprocessing"]["id_grupo_tras_expansion"]`; **y** en
    `completar_correlativa`, como red de seguridad, porque `dedupe` llega con
-   etiquetas de texto (`C<n>`/`S<n>`) y el colapso de duplicados exactos
-   reasigna `ORIGINAL_INDEX`. La recodificación de correlativa y golden con el
-   mismo mapa vive en `identificadores_registro.recodificar_id_grupo`. Si el
-   motor ya venía por contenido, `completar` no cambia nada y el reporte lo
-   declara (`id_grupo.recodificado: False`, `valores_cambiados: 0`: es lo que
-   ocurre en `linkage()` sin colapso, medido en el banco). Sin claves
+   etiquetas de texto (`C<n>`/`S<n>`). La recodificación de correlativa y
+   golden con el mismo mapa vive en
+   `identificadores_registro.recodificar_id_grupo`. Si el motor ya venía por
+   contenido, `completar` no cambia nada y el reporte lo declara
+   (`id_grupo.recodificado: False`, `valores_cambiados: 0`: es lo que ocurre
+   en `linkage()` con y sin colapso; medido en el banco y en
+   `tests/test_id_grupo_determinista.py`). Sin claves
    (`claves_registro=None`, llamadores heredados del clusterer) el
    representante sigue siendo el nodo mínimo: la partición es la misma en
    ambos casos.
@@ -62,6 +70,18 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    otros que los del entregable (L4 12.232 grupos → L5 13.069): quien abría el
    reporte de casos de revisión no encontraba el grupo en la correlativa. Por
    eso la regla se aplica también al cierre de L5.
+
+   *Revisión (ronda 2):* con `collapse_exact_duplicates=True` quedaba el mismo
+   defecto por otro camino: L6 corría sobre el resultado expandido (ids de L5)
+   y `completar` los cambiaba después (16 de 45 en el fixture de
+   `test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable`). Por
+   eso, con colapso, la regla se aplica en `api.linkage` tras la expansión y
+   antes de L6. La regla se evalúa así hasta cuatro veces por corrida (L4,
+   cierre de L5, expansión del colapso, `completar`); con las cifras de abajo
+   son ≈ 12 s a 2M filas. Anotado para F4 (escala): cuando no hay colapso ni
+   `dedupe`, `completar` puede saltarse la recodificación si el estado de L5
+   ya declara la regla aplicada, o reutilizar las claves de L5 en vez de
+   recomputarlas; medir con `scripts/escala.py`.
 
 4. **Orden lexicográfico, no numérico.** `ID_REGISTRO` es texto; el único
    orden total válido para cualquier fuente es el de cadenas (`RUES-F10` <
@@ -115,6 +135,9 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
   Como el cannot-link y la fusión por NIT cambian la partición entre L4 y L5,
   los ids de `clusters.parquet` NO son, en general, los del entregable: son
   trazables por `record_id` (posición de L1 = `ORIGINAL_INDEX`), no por valor.
-  Con `collapse_exact_duplicates` la expansión reasigna `ORIGINAL_INDEX` y
-  `completar` vuelve a aplicar la regla sobre el `ID_REGISTRO` final.
+  Con `collapse_exact_duplicates` la expansión reasigna `ORIGINAL_INDEX` (y
+  `col_id` deja de ser única en la fuente): la regla se aplica en
+  `api.linkage` tras expandir y antes de L6, así que los reportes L6 llevan
+  los ids del entregable también con colapso y `completar` no cambia nada
+  (`tests/test_id_grupo_determinista.py::test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable`).
 - Pendiente (F2.4): la herencia entre corridas vive en `ID_ENTIDAD`, no aquí.
