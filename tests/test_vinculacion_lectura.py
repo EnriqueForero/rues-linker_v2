@@ -415,3 +415,12 @@ def test_sha256_archivo_lee_por_bloques_y_da_lo_mismo_que_hashlib(tmp_path):
     ruta.write_bytes(contenido)
     assert len(contenido) > 2 * (1 << 20)
     assert sha256_archivo(ruta) == hashlib.sha256(contenido).hexdigest()
+
+
+def test_sha256_archivo_acepta_la_ruta_con_barra_final_como_leer_tabla(tmp_path):
+    # Cambio declarado (revisión g1, H1): el original abría la ruta con open() y ejecutar() reventaba AL FINAL con
+    # NotADirectoryError si la ruta de una fuente traía barra final, aunque leer_tabla (que usa Path) ya la había
+    # leído bien. Ahora la huella se calcula con la misma ruta normalizada que la lectura.
+    ruta = tmp_path / "ancla.csv"
+    ruta.write_bytes(b"abc")
+    assert sha256_archivo(f"{ruta}/") == sha256_archivo(ruta)
