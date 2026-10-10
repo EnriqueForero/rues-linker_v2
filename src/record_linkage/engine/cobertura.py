@@ -206,15 +206,21 @@ class ConfigCoberturaSinIdentificador:
     Attributes:
         activa: aplicar la cobertura en L5. Ausente en el perfil = inactiva,
             que conserva la huella del banco (regla 4 del CLAUDE.md).
-        umbral: similitud mínima nombre–líder en escala 0–1. Medido en el
-            banco de 30.486 (ADR-0011): 0,70 → macro-F1 0,8935 / 277 FP sobre
-            negativos / recall SIN_ID 0,6471; 0,75 → 0,8906 / 264 / 0,6297;
-            0,80 → 0,8803 / 246 / 0,5836. El defecto es 0,80 porque a 139k es
-            el que deja el grupo mayor sin identificador en 13 registros (0,70
-            lo deja en 100) y porque unir dos empresas distintas duele más que
-            dejar sin unir; queda declarado que NO cumple la cifra «recall sin
-            NIT ≥ 0,62» de la tarea (0,75 sí la cumple en el banco, pero no
-            está medido a 139k). F2.2 barre el umbral por estrato y decide.
+        umbral: similitud mínima nombre–líder en escala 0–1. El defecto 0,80
+            es el que elige la regla de ``evaluation.cobertura_umbral`` sobre
+            el barrido medido de F2.2 (``docs/evidencia/cobertura_umbral.json``,
+            ADR-0011 «Umbral medido»): de 0,70/0,75/0,80/0,84/0,88, pasan la
+            compuerta de F2 solo 0,75 y 0,80 (0,70 deja un grupo de 100 filas
+            / 52 entidades a 139k; 0,84 y 0,88 bajan la macro-F1 de 0,880), y
+            entre los dos gana el que menos une mal: 0,80 (246 FP sobre
+            negativos y P 0,9557 en el banco; 34 FP y P 0,9856 a 139k, frente
+            a 264/0,9513 y 92/0,9191 con 0,75). Maximizar la macro-F1 habría
+            elegido 0,75 (0,8906 frente a 0,8803); la regla de Enrique —unir
+            dos empresas distintas duele más que dejar sin unir— rompe ese
+            empate hacia la precisión. Queda declarado que 0,80 NO cumple la
+            cifra «recall sin NIT ≥ 0,62» del plan (0,5836 en el banco).
+            ``tests/test_cobertura_umbral_f22.py`` exige que este defecto sea
+            el que la tabla reproduce.
         regla_lider: ``"cobertura"`` (cubre a más miembros) o ``"masa"``
             (el nombre más repetido), como en :func:`cobertura_estrella`.
     """

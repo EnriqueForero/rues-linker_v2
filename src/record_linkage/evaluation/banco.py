@@ -56,10 +56,21 @@ __all__ = [
     "correr_banco",
     "evaluar_calidad",
     "huella_particion",
+    "parsear_ajustes",
 ]
 
 #: Semilla única de todo el banco. Cualquier proceso aleatorio la usa.
 SEMILLA = 42
+
+#: Desde cuántas filas un grupo predicho sin identificador cuenta como «grande».
+#: Es la cifra de la compuerta de F2 («grupo mayor sin identificador ≤ 50 en el
+#: sintético de 139k»); ``evaluar_calidad`` la usa para contar cuántos grupos
+#: la alcanzan, de modo que la compuerta se lea del JSON y no de un parquet.
+FILAS_GRUPO_GRANDE = 50
+
+#: Prefijo del régimen de los registros SIN identificador (``SIN_ID`` en el
+#: banco institucional, ``SIN_NIT`` en los sintéticos).
+PREFIJO_REGIMEN_SIN_IDENTIFICADOR = "SIN_"
 
 #: Columnas mínimas que debe traer el conjunto de referencia.
 COLUMNAS_REQUERIDAS = frozenset(
@@ -141,6 +152,14 @@ class MetricasCalidad:
         recall_por_caso: recall dentro de cada categoría del conjunto.
         fp_que_tocan_negativo: falsos positivos que involucran un registro
             diseñado como negativo. Son los errores más caros.
+        calidad_por_estrato: precisión, recall, F1 y pares por ``ESTRATO``.
+        macro_f1: media del F1 por estrato (lea este, no solo el F1).
+        grupo_mayor_sin_identificador: el grupo predicho más grande entre los
+            que NO tienen identificador (todas sus filas con régimen ``SIN_*``):
+            ``filas`` que tiene, ``entidades`` verdaderas que mezcla,
+            ``grupos`` sin identificador en total y ``grupos_grandes`` (los
+            que llegan a ``FILAS_GRUPO_GRANDE`` filas). Es la cifra de la
+            compuerta de F2 a 139k (F2.2); vacío en corridas anteriores.
     """
 
     registros: int
@@ -161,6 +180,7 @@ class MetricasCalidad:
     fp_que_tocan_negativo: int = 0
     calidad_por_estrato: dict[str, dict[str, float]] = field(default_factory=dict)
     macro_f1: float = float("nan")
+    grupo_mayor_sin_identificador: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -248,6 +268,15 @@ class Corrida:
             f"                 grupos {c.grupos_predichos:,} vs {c.grupos_verdad:,} "
             f"verdaderos\n"
             f"                 FP que tocan un negativo: {c.fp_que_tocan_negativo}\n"
+            + (
+                f"                 grupo mayor sin identificador: "
+                f"{c.grupo_mayor_sin_identificador['filas']:,} filas / "
+                f"{c.grupo_mayor_sin_identificador['entidades']:,} entidades "
+                f"({c.grupo_mayor_sin_identificador['grupos_grandes']:,} grupos "
+                f"≥ {FILAS_GRUPO_GRANDE})\n"
+                if c.grupo_mayor_sin_identificador
+                else ""
+            )
             + (
                 "".join(
                     f"  ESTRATO        {n:<12s} F1 {m['f1']:.4f}  "
@@ -455,6 +484,7 @@ def evaluar_calidad(referencia: pd.DataFrame, prediccion: np.ndarray) -> Metrica
     caso = referencia["CASO"].to_numpy()
     negativos = set(np.flatnonzero(pd.Series(caso).str.startswith("negativo")).tolist())
     fp_negativos = sum(1 for a, b in (pares_p - pares_v) if a in negativos or b in negativos)
+    grupo_mayor = grupo_mayor_sin_identificador(verdad, np.asarray(prediccion), regimen)
 
     return MetricasCalidad(
         registros=len(referencia),
@@ -475,7 +505,49 @@ def evaluar_calidad(referencia: pd.DataFrame, prediccion: np.ndarray) -> Metrica
         fp_que_tocan_negativo=fp_negativos,
         calidad_por_estrato=por_estrato,
         macro_f1=macro,
+        grupo_mayor_sin_identificador=grupo_mayor,
     )
+
+
+def grupo_mayor_sin_identificador(
+    verdad: np.ndarray, prediccion: np.ndarray, regimen: np.ndarray
+) -> dict[str, int]:
+    """Mide el encadenamiento entre registros sin identificador (compuerta F2).
+
+    Un grupo predicho «sin identificador» es aquel en el que TODAS las filas
+    tienen régimen ``SIN_*``: es exactamente el conjunto sobre el que actúa la
+    cobertura por estrellas (ADR-0011) y donde el single-linkage encadena
+    empresas distintas (630 registros / 198 entidades a 139k sin cobertura).
+    Un grupo con una sola fila con identificador no cuenta: ahí decidió el
+    identificador.
+
+    Args:
+        verdad: etiqueta de grupo verdadera por fila.
+        prediccion: etiqueta de grupo predicha por fila.
+        regimen: régimen por fila (``CON_ID``/``SIN_ID`` o ``CON_NIT``/``SIN_NIT``).
+
+    Returns:
+        ``filas`` y ``entidades`` (grupos verdaderos distintos) del grupo mayor,
+        ``grupos`` sin identificador y ``grupos_grandes`` (≥ ``FILAS_GRUPO_GRANDE``
+        filas). Todo en cero si no hay grupos sin identificador.
+    """
+    marco = pd.DataFrame({"g": prediccion, "v": verdad, "r": regimen})
+    marco["sin_id"] = marco["r"].astype(str).str.startswith(PREFIJO_REGIMEN_SIN_IDENTIFICADOR)
+    todas_sin_id = marco.groupby("g", observed=True)["sin_id"].transform("all")
+    sin_identificador = marco[todas_sin_id]
+    if sin_identificador.empty:
+        return {"filas": 0, "entidades": 0, "grupos": 0, "grupos_grandes": 0}
+    por_grupo = sin_identificador.groupby("g", observed=True).agg(
+        filas=("v", "size"), entidades=("v", "nunique")
+    )
+    # El mayor por filas; a igual tamaño, el que mezcla más entidades (el peor).
+    mayor = por_grupo.sort_values(["filas", "entidades"], ascending=False).iloc[0]
+    return {
+        "filas": int(mayor["filas"]),
+        "entidades": int(mayor["entidades"]),
+        "grupos": len(por_grupo),
+        "grupos_grandes": int((por_grupo["filas"] >= FILAS_GRUPO_GRANDE).sum()),
+    }
 
 
 def huella_particion(indices: Sequence[int], grupos: Sequence[Any]) -> str:
@@ -727,3 +799,53 @@ def _rss_por_fase(manifiesto: Mapping[str, Any]) -> dict[str, float]:
 #: Nombre histórico de ``pipeline.metricas.contar_filas_sqlite`` (la regla vive
 #: allí desde F1.12; las pruebas y ``reporting.suite`` lo importaban de aquí).
 _contar_filas_sqlite = contar_filas_sqlite
+
+
+# ── Ajustes de perfil desde la línea de comandos ──────────────────────────
+
+
+def _valor_ajuste(bruto: str) -> object:
+    """Infiere el tipo de un valor de ``--ajuste``: bool, int, float o texto."""
+    if bruto.lower() in {"true", "false"}:
+        return bruto.lower() == "true"
+    try:
+        return int(bruto)
+    except ValueError:
+        try:
+            return float(bruto)
+        except ValueError:
+            return bruto
+
+
+def parsear_ajustes(pares: Sequence[str]) -> dict[str, object]:
+    """Convierte ``clave=valor`` en el diccionario de ``ajustes_perfil``.
+
+    Lo comparten ``scripts/banco.py --ajuste`` y ``scripts/escala.py --ajuste``
+    (F2.2): una regla, un sitio. Una clave con punto apunta a una perilla
+    anidada (F2.1): ``cobertura_sin_identificador.umbral=0.70`` produce
+    ``{"cobertura_sin_identificador": {"umbral": 0.70}}``; varias claves con
+    el mismo prefijo se funden en el mismo diccionario. Las claves que no se
+    nombran las completa el perfil (``ConfigCoberturaSinIdentificador``).
+
+    Raises:
+        ValueError: ante un par sin ``=`` o una clave usada a la vez como
+            escalar y como diccionario.
+    """
+    salida: dict[str, object] = {}
+    for par in pares:
+        if "=" not in par:
+            raise ValueError(f"--ajuste espera CLAVE=VALOR, recibió {par!r}")
+        clave, _, bruto = par.partition("=")
+        valor = _valor_ajuste(bruto)
+        if "." not in clave:
+            salida[clave] = valor
+            continue
+        padre, _, hija = clave.partition(".")
+        anidado = salida.setdefault(padre, {})
+        if not isinstance(anidado, dict):
+            raise ValueError(
+                f"--ajuste {clave!r}: '{padre}' ya recibió un valor escalar ({anidado!r}); "
+                f"no puede ser a la vez escalar y diccionario."
+            )
+        anidado[hija] = valor
+    return salida
