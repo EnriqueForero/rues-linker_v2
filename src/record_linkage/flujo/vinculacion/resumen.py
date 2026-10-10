@@ -324,7 +324,7 @@ def huella_enlaces(df: pd.DataFrame) -> str:
     if df is None or not len(df):
         return "vacía"
     return hashlib.sha256(
-        pd.util.hash_pandas_object(df.astype(str), index=False).values.tobytes()
+        pd.util.hash_pandas_object(df.astype(str), index=False).to_numpy().tobytes()
     ).hexdigest()[:16]
 
 

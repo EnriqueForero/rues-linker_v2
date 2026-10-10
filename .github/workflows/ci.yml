@@ -105,6 +105,8 @@ jobs:
             src/record_linkage/api.py \
             src/record_linkage/config \
             src/record_linkage/exporters \
+            src/record_linkage/flujo/vinculacion \
+            src/record_linkage/flujo/vinculacion_excel \
             src/record_linkage/ingestion \
             src/record_linkage/matching/motor_bloqueo.py \
             src/record_linkage/matching/normalizadores.py \
