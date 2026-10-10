@@ -284,6 +284,45 @@ def _expand_exact_correlative(
     return expanded
 
 
+def _trabajo_en_pendiente(
+    carpeta_salida: str | Path | None, nombre: str, dir_trabajo: str | None
+) -> str | None:
+    """Tramo común de ``linkage``/``dedupe``/``link`` ANTES de correr (F2.7).
+
+    Con ``carpeta_salida`` valida ``nombre`` ya (falla antes de L1, no después
+    de L1…L5) y, si no se pidió un directorio de trabajo, lo pone en
+    ``_trabajo/`` DENTRO de la pendiente ``<carpeta_salida>/.<nombre>.pendiente/``
+    para que el ``rename`` final del escritor lo deje en su sitio. Sin
+    ``carpeta_salida`` devuelve ``dir_trabajo`` tal cual.
+    """
+    from .exporters.escritor import carpeta_pendiente
+
+    if carpeta_salida is None:
+        return dir_trabajo
+    pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
+    if dir_trabajo is None:
+        return str(pendiente / "_trabajo")
+    return dir_trabajo
+
+
+def _publicar(res: ResultadoLinkage, carpeta_salida: str | Path | None, nombre: str) -> None:
+    """Tramo común DESPUÉS de correr (F2.7): escribe la carpeta del estándar.
+
+    Única puerta de ``api`` al escritor (``exporters.escritor.escribir_resultado``).
+    Las PNG de L6 (dashboard, visualizaciones) van a ``figuras/``; los
+    reportes y alias de v1 se quedan en ``_trabajo/L6_reporting``. Sin
+    ``carpeta_salida`` no hace nada.
+    """
+    from .exporters.escritor import escribir_resultado
+
+    if carpeta_salida is None:
+        return
+    figuras = [
+        Path(f) for f in (res.metricas.get("report_files") or ()) if str(f).lower().endswith(".png")
+    ]
+    escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
+
+
 def linkage(
     sources: Any,
     *,
@@ -302,8 +341,9 @@ def linkage(
     collapse_exact_duplicates: bool = False,
     consume_sources: bool = False,
     col_id: str | None = None,
-    carpeta_salida: Path | None = None,
+    carpeta_salida: str | Path | None = None,
     nombre: str = "linkage",
+    corrida_anterior: Path | str | None = None,
 ) -> ResultadoLinkage:
     """Ejecuta deduplicación + record linkage multi-fuente en una sola llamada.
 
@@ -368,7 +408,14 @@ def linkage(
             primaria). Si existe y es única y no vacía en una fuente,
             ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
             None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
-            Un nombre que no existe en ninguna fuente falla de inmediato.
+            Un nombre que no existe en ninguna fuente falla al completar el
+            contrato (tras el motor); un valor que contenga ``|`` —o un
+            nombre de fuente que lo contenga— falla ANTES de L1 con
+            ``IdRegistroInvalidoError`` y no deja ``work_dir`` (``|`` es el
+            separador de ``REGISTROS`` en ``entidades_ids.parquet``); se
+            rechaza aunque la columna no resulte única en esa fuente (el
+            fallback ``<SRC>-F<fila>`` no se evalúa ahí: la unicidad la decide
+            ``completar`` tras el motor), y el mensaje ofrece ``col_id=None``.
         carpeta_salida: si se da, al terminar se escribe la carpeta del
             estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
             (``exporters.escritor.escribir_resultado``: parquet, csv,
@@ -382,6 +429,14 @@ def linkage(
             ``VERSION_RETIRO_ALIAS_V1``).
         nombre: cierra el nombre de la carpeta del estándar; un nombre simple
             (sin separadores). Default ``"linkage"``.
+        corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
+            de la corrida previa desde la que los grupos SIN identificador
+            heredan su ``ID_ENTIDAD`` (``ENT-…``) por mayor solapamiento de
+            ``ID_REGISTRO`` (``identidad.estable``, F2.4, ADR-0012). Se valida
+            ANTES de L1 (``CorridaAnteriorError`` si no sirve). El manifiesto
+            declara la ruta y la huella usadas (``completar.id_entidad.herencia``)
+            y el crosswalk nuevo lleva los retiros (``RETIRADO_EN``). Sin ella
+            los ``ENT-…`` son nuevos y deterministas por contenido.
 
     Returns:
         ``ResultadoLinkage`` (contrato 1.0, ``record_linkage.contrato``), ya
@@ -434,16 +489,14 @@ def linkage(
 
     from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
-    from .exporters.escritor import carpeta_pendiente, escribir_resultado
+    from .identidad.estable import cargar_corrida_anterior, exigir_fuentes_sin_separador
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
         raise TypeError("consume_sources=True requiere sources como dict mutable")
-    if carpeta_salida is not None:
-        # Falla AHORA si el nombre no sirve, no después de L1…L5.
-        pendiente = carpeta_pendiente(Path(carpeta_salida), nombre)
-        if work_dir is None:
-            work_dir = str(pendiente / "_trabajo")
+    # Falla AHORA si la corrida anterior no sirve para heredar, no tras L1…L5.
+    anterior = cargar_corrida_anterior(corrida_anterior) if corrida_anterior is not None else None
+    work_dir = _trabajo_en_pendiente(carpeta_salida, nombre, work_dir)
     owned_sources = sources if consume_sources else None
 
     sources, ingestion_reports = _prepare_sources(
@@ -453,6 +506,9 @@ def linkage(
         col_ciudad=col_ciudad,
         extra_features=extra_features,
     )
+    # Falla AHORA si un nombre de fuente o un valor de col_id lleva '|' (no
+    # cabría en REGISTROS del crosswalk), no al cierre tras L1…L5 (F2.4).
+    exigir_fuentes_sin_separador(sources, col_id)
 
     source_order = list(sources)
     # Un ``set`` no tiene orden estable entre procesos. Ordenar por el orden
@@ -479,6 +535,7 @@ def linkage(
             "matcher_max_pairs": matcher_max_pairs,
             "skip_reporting": skip_reporting,
             "collapse_exact_duplicates": collapse_exact_duplicates,
+            "corrida_anterior": str(corrida_anterior) if corrida_anterior is not None else None,
         },
         sources,
     )
@@ -512,6 +569,10 @@ def linkage(
         trusted_unique_sources=trusted,
         **(ajustes_perfil or {}),
     )
+    # F2.3: L4 construye la clave por registro (ID_REGISTRO) con col_id para
+    # que ID_GRUPO sea determinista por contenido; el mismo valor va al
+    # manifiesto arriba y a completar_correlativa abajo (una sola regla).
+    config["col_id"] = col_id
     if owned_sources is not None:
         # Orchestrator debe recibir exactamente el mapping cuya propiedad se
         # cedió; así puede vaciar las referencias del llamador después de L1.
@@ -601,6 +662,31 @@ def linkage(
             result["golden"]["ID_GRUPO"].map(input_counts).fillna(0).astype("int64")
         )
 
+    if needs_postprocessing:
+        # F2.3 (revisión, rondas 2 y 3): el postprocesado de linkage() cambia
+        # los ID_GRUPO que L5 dejó por contenido. El matcher asigna a los
+        # subgrupos que separa ids nuevos max+1; la expansión del colapso
+        # reasigna ORIGINAL_INDEX y, al restaurar los duplicados, col_id deja
+        # de ser única en la fuente, así que la clave de registro cambia (de
+        # <SRC>-<id> a <SRC>-F<n>) y con ella el id. La MISMA regla y la MISMA
+        # clave que L4/L5 se aplican UNA vez, aquí, sobre el resultado ya
+        # postprocesado y ANTES de L6, para que los reportes lleven los ids del
+        # entregable; completar_correlativa no tendrá nada que cambiar.
+        from .salida.identificadores_registro import (
+            asignar_id_registro,
+            nombre_efectivo,
+            recodificar_id_grupo,
+        )
+
+        nombre_id = (
+            nombre_efectivo(col_id, result["correlative"].columns, canonicos) if col_id else None
+        )
+        claves, _ = asignar_id_registro(result["correlative"], nombre_id)
+        result["golden"], info_grupo = recodificar_id_grupo(
+            result["correlative"], result["golden"], claves
+        )
+        result.setdefault("preprocessing", {})["id_grupo_tras_postprocesado"] = info_grupo
+
     if needs_postprocessing and reporting_requested:
         # Los checkpoints L5 pertenecen al resultado compacto/anterior al
         # matcher. Exportar desde memoria evita reportes obsoletos, y pasar
@@ -630,6 +716,7 @@ def linkage(
         canonicos=canonicos,
         score_par_previo=info_score_par,
         prioridad_fuentes=orchestrator.prioridad_fuentes,
+        corrida_anterior=anterior,
     )
     # F1.12: los parámetros EFECTIVOS del motor (perfil con sus overrides,
     # LSH, scoring, pesos y la prioridad real del golden) van al manifiesto;
@@ -652,13 +739,7 @@ def linkage(
     res = _armar_resultado(
         correlativa, golden, metricas, manifiesto, reporte, Path(work_dir), source_order
     )
-    if carpeta_salida is not None:
-        # Las PNG de L6 (dashboard, visualizaciones) van a figuras/; los
-        # reportes y alias de v1 se quedan en _trabajo/L6_reporting.
-        figuras = [
-            Path(f) for f in (metricas.get("report_files") or ()) if str(f).lower().endswith(".png")
-        ]
-        escribir_resultado(res, Path(carpeta_salida), nombre, figuras=figuras)
+    _publicar(res, carpeta_salida, nombre)
     return res
 
 
@@ -739,6 +820,7 @@ def _armar_resultado(
         revision=revision,
         diccionario=diccionario,
         dir_trabajo=dir_trabajo,
+        entidades_ids=reporte.entidades_ids,
     )
     resultado.validar(estricto=True)
     return resultado
@@ -864,6 +946,8 @@ def dedupe(
     profile_sin_nit: str | None = None,
     output_dir: str | None = None,
     col_id: str | None = None,
+    carpeta_salida: str | Path | None = None,
+    nombre: str = "dedupe",
 ) -> ResultadoLinkage:
     """Deduplica UNA tabla por la ruta canónica de producción (F1.1).
 
@@ -875,7 +959,10 @@ def dedupe(
     la correlativa se COMPLETA al contrato 1.0 (``salida.completar``): se
     añaden ``ID_REGISTRO``, ``ID_ENTIDAD``, ``METODO_UNION`` y las columnas
     fijas van primero; las técnicas (``NOMBRE_LIMPIO``, ``NIT_OK``…) salen del
-    entregable y quedan en ``output_dir/<regimen>/``.
+    entregable y quedan en ``correlativa.parquet`` de ``output_dir`` (por
+    régimen, ``con_nit/``/``sin_nit/``, si el dataset es mixto), junto a
+    ``conexiones.parquet`` (``contrato.CONEXIONES``); las rutas van en
+    ``metricas['stats_pipeline']`` (F2.10).
 
     Args:
         df: tabla con al menos ``col_nit`` y ``col_name``.
@@ -886,8 +973,20 @@ def dedupe(
             validado de la ruta auto. Ver ``get_profile``/``REGISTRO_PERFILES``.
         profile_sin_nit: ídem para SIN_NIT.
         output_dir: carpeta de salida (reportes y golden por régimen). None →
-            temporal; la ruta queda en ``metricas['output_dir']``.
+            temporal; la ruta queda en ``metricas['output_dir']``. Con
+            ``carpeta_salida`` y ``output_dir=None`` va a ``_trabajo/`` DENTRO
+            de la carpeta publicada (como ``work_dir`` en ``linkage``).
         col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
+        carpeta_salida: si se da, al terminar se escribe la carpeta del
+            estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/`` con el
+            escritor único (``exporters.escritor.escribir_resultado``), de
+            forma atómica, igual que ``linkage()`` (F2.7). ``golden.parquet``
+            se omite y el manifiesto lo declara (esta ruta no lo produce);
+            los perfiles por régimen (``profile_con_nit``/``profile_sin_nit``)
+            se conservan y quedan en ``parametros.llamada`` del manifiesto.
+            Un ``nombre`` inválido falla ANTES de deduplicar.
+        nombre: cierra el nombre de la carpeta del estándar; un nombre simple
+            (sin separadores). Default ``"dedupe"``.
 
     Returns:
         ResultadoLinkage (contrato 1.0). ``golden`` es None aquí: esta ruta
@@ -896,13 +995,20 @@ def dedupe(
         el manifiesto (``completar``): ``CONFIANZA`` queda nula (es la del
         golden), ``SCORE_PAR`` queda nulo (esta ruta no deja
         ``L3_scoring/scored.db``) e ``ID_GRUPO`` se recodifica de las
-        etiquetas ``C<n>``/``S<n>`` por régimen a entero por orden de primera
-        aparición (determinista por contenido); ``REGIMEN_AUTO`` sigue
-        diciendo por qué ruta pasó cada registro.
+        etiquetas ``C<n>``/``S<n>`` por régimen a entero determinista por
+        contenido (posición lexicográfica del menor ``ID_REGISTRO`` del
+        grupo, la misma regla de ``linkage``; F2.3, ADR-0013);
+        ``REGIMEN_AUTO`` sigue diciendo por qué ruta pasó cada registro.
+        Con ``carpeta_salida``, ``manifiesto['carpeta_salida']`` es la carpeta
+        escrita y ``dir_trabajo``/``metricas['output_dir']`` apuntan a su
+        ``_trabajo/``.
 
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué
-            importa / qué hacer).
+            importa / qué hacer); ``ValueError`` también si ``nombre`` no es
+            un nombre simple.
+        IdRegistroInvalidoError: un valor de ``col_id`` contiene ``|`` (ver
+            ``linkage``); se rechaza antes del motor y sin crear ``output_dir``.
 
     Ejemplo:
         >>> import pandas as pd, record_linkage as rl
@@ -914,8 +1020,11 @@ def dedupe(
     import tempfile
 
     from .deduplication.auto import deduplicate_auto
+    from .identidad.estable import exigir_fuentes_sin_separador
 
     _preflight(df, [col_nit, col_name], "df")
+    exigir_fuentes_sin_separador({"df": df}, col_id)
+    output_dir = _trabajo_en_pendiente(carpeta_salida, nombre, output_dir)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="rues_linker_dedupe_")
 
@@ -966,9 +1075,11 @@ def dedupe(
         # _SIGNIFICADOS_MOTOR_EXTRA para las copias).
         canonicos=None,
     )
-    return _armar_resultado(
+    res = _armar_resultado(
         correlativa, None, metricas, manifiesto, reporte, Path(output_dir), ["df"]
     )
+    _publicar(res, carpeta_salida, nombre)
+    return res
 
 
 def _conteos_cruce(corr: pd.DataFrame, nombre_a: str, nombre_b: str) -> tuple[int, int]:
@@ -1023,6 +1134,8 @@ def link(
     skip_reporting: bool | None = None,
     collapse_exact_duplicates: bool = False,
     col_id: str | None = None,
+    carpeta_salida: str | Path | None = None,
+    nombre: str = "link",
 ) -> ResultadoLinkage:
     """Cruza DOS tablas (record linkage A↔B) sobre el Orchestrator (F1.1).
 
@@ -1038,8 +1151,16 @@ def link(
         extra_features: columnas adicionales para el scoring.
         profile: plantilla del Orchestrator (``PERFILES_BASE``).
         matching_profile: refinamiento multi-variable opcional (ver linkage()).
-        work_dir: carpeta de trabajo; None → temporal.
+        work_dir: carpeta de trabajo; None → temporal (con ``carpeta_salida``,
+            ``_trabajo/`` dentro de la carpeta publicada, como en ``linkage``).
         col_id: columna única por fila para ``ID_REGISTRO`` (ver ``linkage``).
+        carpeta_salida: si se da, al terminar se escribe la carpeta del
+            estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/`` con el
+            escritor único, de forma atómica (F2.7). Se escribe DESPUÉS de
+            poner las métricas de cruce y el manifiesto de ``link`` (no se
+            delega a ``linkage(carpeta_salida=...)``: su manifiesto diría
+            ``funcion='linkage'`` y no traería ``n_grupos_cruzados``).
+        nombre: cierra el nombre de la carpeta del estándar. Default ``"link"``.
 
     Returns:
         ResultadoLinkage (contrato 1.0, el mismo objeto completado y validado
@@ -1066,6 +1187,7 @@ def link(
             f"Qué hacer: use etiquetas distintas, p. ej. nombre_a='RUES', "
             f"nombre_b='ADUANAS'."
         )
+    work_dir = _trabajo_en_pendiente(carpeta_salida, nombre, work_dir)
 
     res = linkage(
         sources={nombre_a: df_a, nombre_b: df_b},
@@ -1122,6 +1244,7 @@ def link(
     metricas["segundos_manifiesto"] = res.metricas.get("segundos_manifiesto", 0.0)
     res.metricas = metricas
     res.manifiesto = manifiesto
+    _publicar(res, carpeta_salida, nombre)
     return res
 
 

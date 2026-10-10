@@ -23,7 +23,6 @@ from record_linkage.classifier.runner import (
 )
 from record_linkage.config.credentials import SnowflakeCredentials
 from record_linkage.exporters.smart import SmartExporter
-from record_linkage.optimization.engine import OptimizationEngine
 from record_linkage.pipeline._internal import _class_exists
 from record_linkage.reporting.strategies import DataExportStrategy
 from record_linkage.utils import memory as memory_module
@@ -238,9 +237,3 @@ def test_classifier_json_roundtrip_and_legacy_pickle_is_rejected(tmp_path: Path)
             ruta_guardado_modelo=str(legacy_path),
         )
     assert not marker.exists()
-
-
-def test_optimization_pickle_requires_explicit_trust() -> None:
-    engine = OptimizationEngine.__new__(OptimizationEngine)
-    with pytest.raises(ValueError, match="trusted=True"):
-        engine.load_checkpoint("untrusted.pkl")

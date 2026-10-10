@@ -127,6 +127,7 @@ secrets.json
 !notebooks/06_orquestador_configurable.ipynb
 !notebooks/07_deduplicar_importadores_razon_social_pais.ipynb
 !notebooks/08_PUBLICAR_GITHUB.ipynb
+!notebooks/12_optimizar_parametros_con_optuna.ipynb
 !tests/data/baseline_multicampo.json
 !tests/data/baseline_v0_9_0.json
 !tests/data/golden_truth.csv

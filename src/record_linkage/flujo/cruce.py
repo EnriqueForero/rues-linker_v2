@@ -4,22 +4,35 @@ Contexto: Google Colab Free (~12 GB RAM, sesión ~12 h). El flujo sigue el
 orden que evita perder horas de cómputo:
 
     preflight → insumos a disco local → carga proyectada → smoke test →
-    corrida completa con checkpoints → invariantes → exportes → metadatos
+    corrida completa con checkpoints → invariantes → carpeta del estándar
 
 Nada de esto es específico del RUES: las fuentes se declaran con
 ``SourceSpec``, así que los mismos pasos sirven para cualquier par de
 archivos con nombres, formatos y tipos distintos.
+
+F2.5 — el cruce escribe el estándar
+-----------------------------------
+``ejecutar_cruce`` devuelve un ``ResultadoLinkage`` (``ResultadoCruce`` lo
+extiende con el QA del cruce, ``reportes_carga`` y ``rutas``) y escribe UNA
+carpeta ``<workspace>/<AAAA-MM-DD_HHMM>_<nombre>/`` con
+``exporters.escritor.escribir_resultado``; ya no hay ``golden.parquet`` suelto
+ni ``metadatos_corrida.json``: lo que ese JSON traía (la ``ConfigCruce``, los
+reportes de ingesta, los tiempos por fase del flujo) vive en
+``manifest.json`` → ``corrida.cruce``. Las invariantes del cruce son
+``ResultadoLinkage.validar()`` (``_validar_cruce`` la llama y añade el cruce
+con las filas que el flujo contó al cargar). En modo disco se conservan las
+generaciones (``resultados.generations/<token>/`` + ``resultados.manifest.json``
++ retención), pero cada generación tiene la forma del estándar
+(``resultados_disco.escribir_estandar_de_expansion``) y ``leer_resultado`` la
+lee; ``ResultadoCruceDisco.leer()`` es ese atajo.
 """
 
 from __future__ import annotations
 
-import json
 import math
-import os
 import shutil
 import time
-import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import Enum
@@ -32,12 +45,18 @@ import pandas as pd
 
 from .. import contrato
 from ..api import linkage
+from ..exporters.escritor import (
+    NOMBRE_MANIFEST,
+    Manifiesto,
+    carpeta_pendiente,
+    escribir_resultado,
+    leer_resultado,
+)
 from ..golden.columnas_finales import (
     COLUMNAS_FINALES,
-    POR_QUE_IMPORTA_SIN_IDENTIDAD,
     faltantes,
-    faltantes_en,
 )
+from ..identidad.estable import cargar_corrida_anterior, exigir_nombres_sin_separador
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -47,7 +66,12 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
-from ..pipeline.errores import ColumnasArrastreError, ContratoSalidaError, mensaje_accionable
+from ..pipeline.errores import (
+    ColumnasArrastreError,
+    ContratoSalidaError,
+    CorridaAnteriorError,
+    mensaje_accionable,
+)
 from ..resultado import ResultadoLinkage
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
@@ -60,10 +84,13 @@ from .insumos import (
 )
 from .reportes import reportar_composicion, reportar_cruce_por_fuente
 from .resultados_disco import (
+    ExpansionDisco,
     PublicacionResultadosDisco,
     TablaParquet,
     _configure_connection,
     _quote_literal,
+    escribir_estandar_de_expansion,
+    expandir_en_disco,
     publicar_resultados_duckdb,
 )
 
@@ -78,9 +105,6 @@ __all__ = [
     "resolver_motor",
 ]
 
-#: Filas por encima de las cuales Excel deja de ser un formato razonable.
-_LIMITE_EXCEL = 500_000
-
 
 @dataclass
 class ConfigCruce:
@@ -91,7 +115,13 @@ class ConfigCruce:
 
     Attributes:
         fuentes: contratos de las fuentes a cruzar (una o varias).
-        workspace: carpeta de resultados. Puede estar en Drive.
+        workspace: carpeta de resultados. Puede estar en Drive. La corrida
+            deja ``<workspace>/<AAAA-MM-DD_HHMM>_<nombre>/`` con la forma del
+            estándar (modo dataframe) o ``<workspace>/resultados.generations/``
+            (modo disco).
+        nombre: cierra el nombre de la carpeta del estándar; un nombre simple,
+            sin separadores. Dos corridas con el mismo nombre en el mismo
+            minuto chocan: el escritor nunca sobrescribe una publicada.
         confiables: fuentes con NIT verificado; no se deduplican internamente
             y tienen prioridad para el nombre canónico.
         dir_trabajo: carpeta de trabajo (checkpoints). Debe ser disco local;
@@ -107,7 +137,9 @@ class ConfigCruce:
         col_nit / col_nombre / col_ciudad: nombres canónicos post-mapeo.
         variables_extra: columnas adicionales para el scoring.
         filas_smoke: tamaño del ensayo previo. 0 lo desactiva.
-        exportar_excel: si además del Parquet se escribe un Excel.
+        exportar_excel: si además del Parquet se escribe ``excel/`` (completo
+            hasta ``LIMITE_FILAS_EXCEL`` filas o un ``<tabla>_LEEME.xlsx``;
+            nunca un recorte: regla del escritor, F1.11).
         reusar_checkpoints: si False, la corrida ignora el estado previo.
         dir_procesados: en ``motor_ingesta="pandas"``, carpeta donde se
             reutilizan las fuentes ya proyectadas
@@ -148,6 +180,14 @@ class ConfigCruce:
             sigue al motor resuelto: disco con DuckDB, DataFrame con pandas.
         preservar_payload: conserva fuera del matcher las columnas no usadas
             para comparar y las re-adjunta por fila física al publicar.
+        corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
+            de la corrida previa desde la que los grupos sin identificador
+            heredan su ``ID_ENTIDAD`` (F2.4). Se valida al construirse. Solo
+            con ``motor_ingesta='pandas'`` (F2.18): con DuckDB la expansión
+            recalcula los ``ENT-`` por contenido de las filas publicadas y la
+            herencia no sobreviviría; se rechaza al recibirla (y al resolverse
+            ``'auto'`` a DuckDB), no en silencio. Una generación del modo disco
+            SÍ sirve como corrida anterior de una corrida pandas posterior.
     """
 
     fuentes: list[SourceSpec]
@@ -181,6 +221,10 @@ class ConfigCruce:
     #: por mapear DEPARTAMENTO los representantes pasaron de 19.407 a 32.745.
     #: Solo aplica al motor de ingesta pandas (DuckDB usa ``preservar_payload``).
     separar_columnas_extra: bool = True
+    #: F2.4 — herencia de ``ID_ENTIDAD`` desde el crosswalk de la corrida previa.
+    corrida_anterior: Path | str | None = None
+    #: F2.5 — nombre de la carpeta del estándar (``<marca>_<nombre>``).
+    nombre: str = "cruce"
 
     def __post_init__(self) -> None:
         if not self.fuentes:
@@ -194,6 +238,9 @@ class ConfigCruce:
         nombres = [f.name for f in self.fuentes]
         if len(set(nombres)) != len(nombres):
             raise ValueError(f"Nombres de fuente duplicados: {nombres}.")
+        # Un nombre con «|» lo rechazaría linkage() antes de L1, pero después de
+        # la ingesta (lo caro con DuckDB): la misma regla, al construirse.
+        exigir_nombres_sin_separador(nombres)
         if self.filas_smoke < 0:
             raise ValueError("ConfigCruce.filas_smoke no puede ser negativo.")
         motor_ingesta = str(self.motor_ingesta).strip().lower()
@@ -239,6 +286,12 @@ class ConfigCruce:
             )
         if not isinstance(self.preservar_payload, bool):
             raise TypeError("preservar_payload debe ser bool.")
+        if self.corrida_anterior is not None:
+            _exigir_corrida_anterior_con_pandas(motor_ingesta, self.corrida_anterior)
+            # Falla al construirse, no tras cuarenta minutos de corrida: lee y
+            # valida el crosswalk (existe, trae REGISTROS, ids únicos), no solo
+            # la ruta. Es un parquet pequeño; linkage() lo vuelve a leer.
+            cargar_corrida_anterior(Path(self.corrida_anterior))
         if self.perfil_multicampo is not None and not isinstance(
             self.perfil_multicampo, (str, MatchingProfile)
         ):
@@ -265,6 +318,9 @@ class ConfigCruce:
             limites_normalizados[fuente] = int(limite)
         self.limite_filas = limites_normalizados or None
         self.workspace = Path(self.workspace).expanduser()
+        # Falla ahora si el nombre no sirve, no después de L1…L5 (misma regla
+        # que linkage(carpeta_salida=, nombre=)).
+        carpeta_pendiente(self.workspace, self.nombre)
         self.confiables = frozenset(self.confiables)
         sobrantes = set(self.limite_filas or {}) - set(nombres)
         if sobrantes:
@@ -610,23 +666,33 @@ def _tabla_tiempos(metricas: dict[str, Any], titulo_base: str = "TIEMPO") -> str
 
 
 @dataclass
-class ResultadoCruce:
-    """Salida de :func:`ejecutar_cruce`, con todo lo necesario para auditar.
+class ResultadoCruce(ResultadoLinkage):
+    """Salida de :func:`ejecutar_cruce` en modo dataframe: el ``ResultadoLinkage``
+    del contrato (F2.5) más lo que el cruce sabe de sí mismo.
+
+    Hereda ``correlativa``, ``golden``, ``metricas``, ``manifiesto``,
+    ``revision``, ``diccionario``, ``dir_trabajo`` y ``validar()``; el QA del
+    cruce (``conflictos_identificador``, ``distribucion_grupos``…) es el mismo
+    que en modo disco (:class:`ControlCalidad`).
 
     Attributes:
-        golden: un registro por entidad única.
-        correlativa: cada fila original con su ``ID_GRUPO``.
         reportes_carga: reporte de ingesta por fuente.
-        metricas: tiempos, filas y conteos de la corrida.
-        rutas: archivos escritos, más ``rutas["dir_trabajo"]`` (carpeta L1…L5 de
-            la corrida, donde quedan las columnas técnicas que el contrato retira).
+        rutas: artefactos de la carpeta del estándar por clave
+            (``correlativa_parquet``, ``golden_parquet``, ``entidades_ids_parquet``,
+            ``revision_csv``, ``diccionario_csv``, ``manifest``, ``carpeta``,
+            ``<tabla>_excel`` si hay Excel, ``figura_<nombre>``), más
+            ``rutas["dir_trabajo"]`` (carpeta L1…L5 de la corrida, donde quedan
+            las columnas técnicas que el contrato retira).
+        carpeta: la carpeta del estándar escrita (``<marca>_<nombre>``).
+        metricas: las de ``linkage()`` (``n_registros``…) más las del cruce
+            (``filas_entrada``, ``entidades``, ``conflictos_identificador``,
+            ``segundos_por_fase``, ``pico_rss_mib_por_fase``, ``por_fuente``…).
     """
 
-    golden: pd.DataFrame
-    correlativa: pd.DataFrame
-    reportes_carga: dict[str, Any]
-    metricas: dict[str, Any]
-    rutas: dict[str, Path]
+    reportes_carga: dict[str, Any] = field(default_factory=dict)
+    rutas: dict[str, Path] = field(default_factory=dict)
+    carpeta: Path | None = None
+    _qa_cache: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     def cruce_por_fuente(self) -> pd.DataFrame:
         """Tabla de cuántos registros de cada fuente quedaron enlazados."""
@@ -638,13 +704,11 @@ class ResultadoCruce:
 
     def _qa(self) -> dict[str, Any]:
         """Métricas de QA cacheadas por resultado."""
-        if getattr(self, "_qa_cache", None) is None:
-            object.__setattr__(
-                self,
-                "_qa_cache",
-                _qa_desde_dataframe(self.correlativa, _conflictos_del_contrato(self.metricas)),
+        if self._qa_cache is None:
+            self._qa_cache = _qa_desde_dataframe(
+                self.correlativa, _conflictos_del_contrato(self.metricas)
             )
-        return self._qa_cache  # type: ignore[return-value]
+        return self._qa_cache
 
     def conflictos_identificador(self) -> int:
         """Grupos que mezclan dos identificadores válidos distintos."""
@@ -712,14 +776,47 @@ class ResultadoCruce:
 
 @dataclass
 class ResultadoCruceDisco:
-    """Salida productiva: tablas Parquet consultables sin materializarlas."""
+    """Salida productiva: tablas Parquet consultables sin materializarlas.
+
+    No es un ``ResultadoLinkage`` (ese objeto lleva las tablas en pandas y en
+    modo disco nada se materializa), pero ``carpeta`` —la generación
+    publicada— tiene la forma del estándar (F2.5) y :meth:`leer` la devuelve
+    como ``ResultadoLinkage`` cuando el usuario decide pagar la memoria.
+
+    Attributes:
+        carpeta: la generación publicada (``resultados.generations/<token>/``),
+            una carpeta del estándar: ``correlativa.parquet``, ``golden.parquet``,
+            ``entidades_ids.parquet``, ``revision.csv``, ``diccionario.csv``,
+            ``manifest.json``.
+        rutas: los mismos artefactos por clave que en modo dataframe, más
+            ``generation_dir`` (= ``carpeta``), ``manifest_generaciones``
+            (``resultados.manifest.json``, el puntero a la generación vigente)
+            y ``dir_trabajo``.
+    """
 
     golden: TablaParquet
     correlativa: TablaParquet
     reportes_carga: dict[str, Any]
     metricas: dict[str, Any]
     rutas: dict[str, Path]
+    carpeta: Path
     _publicacion: PublicacionResultadosDisco = field(repr=False)
+    _qa_cache: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+
+    def leer(self, alias: str | None = None) -> ResultadoLinkage:
+        """Materializa la generación como ``ResultadoLinkage`` (``leer_resultado``).
+
+        Verifica las huellas del manifiesto y carga la correlativa completa:
+        es la decisión explícita de traerla a memoria. ``dir_trabajo`` vuelve
+        a señalar L1…L5 de esta corrida (está fuera del workspace y
+        ``leer_resultado`` solo resuelve un ``_trabajo/`` interno).
+        """
+        res = leer_resultado(self.carpeta, alias)
+        dir_trabajo = self.rutas.get("dir_trabajo")
+        if res.dir_trabajo is None and dir_trabajo is not None and Path(dir_trabajo).is_dir():
+            res.dir_trabajo = Path(dir_trabajo)
+            res.manifiesto["dir_trabajo"] = str(res.dir_trabajo)
+        return res
 
     def cruce_por_fuente(self) -> pd.DataFrame:
         """Cuenta filas y entidades enlazadas mediante una consulta DuckDB."""
@@ -751,17 +848,13 @@ class ResultadoCruceDisco:
 
     def _qa(self) -> dict[str, Any]:
         """Métricas de QA resueltas en DuckDB, cacheadas por resultado."""
-        if getattr(self, "_qa_cache", None) is None:
-            object.__setattr__(
-                self,
-                "_qa_cache",
-                _qa_desde_parquet(
-                    Path(self.correlativa.path),
-                    _AJUSTES_QA,
-                    _conflictos_del_contrato(self.metricas),
-                ),
+        if self._qa_cache is None:
+            self._qa_cache = _qa_desde_parquet(
+                Path(self.correlativa.path),
+                _AJUSTES_QA,
+                _conflictos_del_contrato(self.metricas),
             )
-        return self._qa_cache  # type: ignore[return-value]
+        return self._qa_cache
 
     def conflictos_identificador(self) -> int:
         """Grupos que mezclan dos identificadores válidos distintos."""
@@ -861,6 +954,233 @@ class ResultadoCruceDisco:
         """Entidades ausentes de una fuente, consultadas directamente en disco."""
 
         return self._publicacion.entidades_ausentes_de(source, limit=limit)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F2.5 — el resultado del cruce es el del contrato y se escribe con el escritor
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _validar_cruce(res: ResultadoLinkage, *, filas_entrada: int) -> None:
+    """Las invariantes del cruce: ``ResultadoLinkage.validar()`` más el cruce de filas.
+
+    Hasta F2.5 ``_verificar_invariantes`` repetía por su cuenta lo que el
+    contrato ya exige (una fila por registro de entrada, ``ID_GRUPO`` no nulo,
+    golden ↔ correlativa, ``NIT_FINAL``/``RAZON_SOCIAL_FINAL`` presentes,
+    ADR-0008). Ahora la regla vive una vez en ``validar()``; aquí solo se
+    añade lo que el contrato no puede saber: cuántas filas contó ESTE flujo al
+    cargar las fuentes, que debe coincidir con la correlativa aunque el
+    manifiesto estuviera mal armado.
+
+    Raises:
+        ContratoSalidaError: con todos los fallos, los del contrato y el propio.
+    """
+    fallos = list(res.validar().fallos)
+    if len(res.correlativa) != filas_entrada:
+        fallos.append(
+            mensaje_accionable(
+                f"la correlativa trae {len(res.correlativa):,} filas y entraron {filas_entrada:,}.",
+                "el cruce debe conservar TODAS las filas de entrada.",
+                "no use este resultado; reporte el caso.",
+            )
+        )
+    if fallos:
+        raise ContratoSalidaError(fallos)
+
+
+def _insumos_reales(
+    entradas: Mapping[str, Any], compactaciones: Mapping[str, DuckDBCompactionResult]
+) -> dict[str, Any]:
+    """``entradas`` del manifiesto con las filas REALES de cada fuente (motor DuckDB).
+
+    ``linkage()`` hashea y cuenta lo que recibe: los representantes que DuckDB
+    dejó tras colapsar duplicados exactos. La correlativa publicada tiene una
+    fila por registro original, así que el manifiesto declara esas filas y
+    conserva, declarado, sobre qué se calculó la huella.
+    """
+    insumos: dict[str, Any] = {}
+    for nombre, entrada in entradas.items():
+        copia = dict(entrada) if isinstance(entrada, Mapping) else {"valor": entrada}
+        compactacion = compactaciones.get(nombre)
+        if compactacion is not None:
+            copia["filas"] = int(compactacion.input_rows)
+            copia["representantes"] = int(compactacion.compact_rows)
+            copia["huella_de"] = (
+                "representantes (DuckDB colapsó duplicados exactos antes del motor)"
+            )
+        insumos[nombre] = copia
+    return insumos
+
+
+def _resultado_cruce(
+    salida: ResultadoLinkage,
+    correlativa: pd.DataFrame,
+    golden: pd.DataFrame,
+    reporte_arrastre: ReporteColumnasArrastre,
+    *,
+    reportes_carga: dict[str, Any],
+    insumos: Mapping[str, Any] | None = None,
+    entidades_ids: pd.DataFrame | None = None,
+) -> ResultadoCruce:
+    """El ``ResultadoCruce`` a partir de lo que devolvió ``linkage()`` y la correlativa entregada.
+
+    La correlativa puede traer más columnas que la que vio el motor (las de
+    arrastre re-adjuntadas o el payload de DuckDB): el diccionario se
+    recalcula con ellas como columnas de la fuente, y ``metricas``/``entradas``
+    describen la tabla entregada, no la compacta. ``entidades_ids`` es el
+    crosswalk que ``identidad.estable`` calculó dentro de ``linkage()`` (con
+    ``REGISTROS`` y los retiros, F2.4): se pasa SOLO cuando la correlativa
+    entregada es la que el motor identificó (motor pandas); tras la expansión
+    DuckDB los ``ENT-`` se recalcularon y el escritor deriva el crosswalk de
+    la tabla publicada con la misma regla (``_entidades_ids``).
+    """
+    manifiesto = dict(salida.manifiesto)
+    manifiesto["funcion"] = "ejecutar_cruce"
+    if insumos is not None:
+        manifiesto["entradas"] = dict(insumos)
+    metricas = dict(salida.metricas)
+    metricas["n_registros"] = len(correlativa)
+    metricas["n_grupos"] = int(correlativa["ID_GRUPO"].nunique()) if len(correlativa) else 0
+    completar = manifiesto.get("completar") or {}
+    diccionario = contrato.diccionario(
+        {
+            "correlativa": correlativa,
+            "golden": golden,
+            "enlaces": None,
+            "revision": salida.revision,
+        },
+        columnas_fuente=[*completar.get("columnas_fuente", ()), *reporte_arrastre.adjuntadas],
+        renombres=completar.get("renombres"),
+        renombres_canonicos=completar.get("renombres_canonicos"),
+    )
+    return ResultadoCruce(
+        correlativa=correlativa,
+        golden=golden,
+        metricas=metricas,
+        manifiesto=manifiesto,
+        enlaces=None,
+        revision=salida.revision,
+        diccionario=diccionario,
+        dir_trabajo=salida.dir_trabajo,
+        entidades_ids=entidades_ids,
+        reportes_carga=reportes_carga,
+    )
+
+
+def _clave_de_artefacto(ruta_relativa: str) -> str:
+    """``correlativa.parquet`` → ``correlativa_parquet``; ``excel/golden.xlsx`` →
+    ``golden_excel``; ``excel/correlativa_LEEME.xlsx`` → ``correlativa_leeme_excel``;
+    ``figuras/dashboard.png`` → ``figura_dashboard``."""
+    ruta = Path(ruta_relativa)
+    if ruta.parent.name == "excel":
+        return f"{ruta.stem.lower()}_excel"
+    if ruta.parent.name == "figuras":
+        return f"figura_{ruta.stem.lower()}"
+    return f"{ruta.stem}_{ruta.suffix.lstrip('.')}"
+
+
+def _rutas_de(
+    manifiesto: Manifiesto, dir_trabajo: Path, *, con_carpeta: bool = True
+) -> dict[str, Path]:
+    """``rutas`` del resultado a partir de los artefactos que el manifiesto lista.
+
+    ``con_carpeta=False`` en modo disco: ahí la carpeta es ``generation_dir``
+    (el único directorio que los consumidores esperan en ``rutas`` además de
+    ``dir_trabajo``; el notebook 06 orquestador copia el resto como archivos).
+    """
+    rutas: dict[str, Path] = {"manifest": manifiesto.carpeta / NOMBRE_MANIFEST}
+    if con_carpeta:
+        rutas["carpeta"] = manifiesto.carpeta
+    for artefacto in manifiesto.artefactos:
+        relativa = str(artefacto["ruta"])
+        rutas[_clave_de_artefacto(relativa)] = manifiesto.carpeta / relativa
+    rutas["dir_trabajo"] = dir_trabajo
+    return rutas
+
+
+def _metricas_cruce(
+    cronometro: _Cronometro,
+    *,
+    filas_entrada: int,
+    filas_correlativa: int,
+    entidades: int,
+    conflictos_identificador: int,
+    segundos_linkage: float,
+    por_fuente: Mapping[str, int],
+) -> dict[str, Any]:
+    return {
+        "filas_entrada": filas_entrada,
+        "filas_correlativa": filas_correlativa,
+        "entidades": entidades,
+        "conflictos_identificador": int(conflictos_identificador),
+        "segundos_linkage": round(segundos_linkage, 2),
+        "segundos_total": round(cronometro.total, 2),
+        "segundos_por_fase": {k: round(v, 2) for k, v in cronometro.fases.items()},
+        "pico_rss_mib_por_fase": {k: round(v, 1) for k, v in cronometro.rss_mib.items()},
+        "por_fuente": dict(por_fuente),
+    }
+
+
+def _cerrar_tiempos(metricas: dict[str, Any], cronometro: _Cronometro) -> None:
+    """Actualiza el total y las fases tras la última fase medida (la escritura).
+
+    El manifiesto se escribe DENTRO de la fase ``exportes`` y no puede
+    contener el tiempo de escribirse a sí mismo: ``manifest.json`` →
+    ``corrida.cruce.metricas.segundos_total`` llega hasta el inicio de esa fase;
+    el objeto devuelto sí trae el total completo.
+    """
+    metricas["segundos_total"] = round(cronometro.total, 2)
+    metricas["segundos_por_fase"] = {k: round(v, 2) for k, v in cronometro.fases.items()}
+    metricas["pico_rss_mib_por_fase"] = {k: round(v, 1) for k, v in cronometro.rss_mib.items()}
+
+
+def _bloque_cruce(
+    config: ConfigCruce,
+    reporte_arrastre: ReporteColumnasArrastre,
+    metricas: Mapping[str, Any],
+    reportes_carga: Mapping[str, Any],
+) -> dict[str, Any]:
+    """``manifest.json`` → ``corrida.cruce``: lo que ``metadatos_corrida.json`` traía hasta F2.5."""
+    return _normalizar_json(
+        {
+            "parametros": {
+                "nombre": config.nombre,
+                "perfil": config.perfil,
+                "confiables": sorted(config.confiables),
+                "col_nit": config.col_nit,
+                "col_nombre": config.col_nombre,
+                "col_ciudad": config.col_ciudad,
+                "variables_extra": config.variables_extra,
+                "filas_smoke": config.filas_smoke,
+                "exportar_excel": config.exportar_excel,
+                "reusar_checkpoints": config.reusar_checkpoints,
+                "forzar_relectura": config.forzar_relectura,
+                "dir_trabajo": str(config.ruta_trabajo),
+                "colapsar_duplicados_exactos": config.colapsar_duplicados_exactos,
+                "limite_filas": config.limite_filas,
+                "columnas_arrastre": reporte_arrastre.como_manifiesto(),
+                "ajustes_perfil": config.ajustes_perfil,
+                "perfil_multicampo": _serializar_perfil_multicampo(config.perfil_multicampo),
+                "motor_ingesta": config.motor_ingesta,
+                "modo_resultado": config.modo_resultado,
+                "preservar_payload": config.preservar_payload,
+                "corrida_anterior": (
+                    str(config.corrida_anterior) if config.corrida_anterior is not None else None
+                ),
+                "separar_columnas_extra": config.separar_columnas_extra,
+                "duckdb_settings": (
+                    asdict(config.duckdb_settings) if config.duckdb_settings is not None else None
+                ),
+                "fuentes": [
+                    {"nombre": f.name, "ruta": str(f.path), "mapeo": dict(f.column_mapping)}
+                    for f in config.fuentes
+                ],
+                "source_specs": [_serializar_source_spec(f) for f in config.fuentes],
+            },
+            "metricas": dict(metricas),
+            "ingesta": dict(reportes_carga),
+        }
+    )
 
 
 class _Cronometro:
@@ -1028,19 +1348,10 @@ def _rutas_publicacion_reservadas(
             (("generaciones de resultados", workspace / "resultados.generations"),),
         )
 
-    archivos: list[tuple[str, Path]] = [
-        ("golden Parquet", workspace / "golden.parquet"),
-        ("correlativa Parquet", workspace / "correlativa.parquet"),
-        ("metadatos de corrida", workspace / "metadatos_corrida.json"),
-    ]
-    if config.exportar_excel:
-        archivos.extend(
-            (
-                ("golden Excel", workspace / "golden.xlsx"),
-                ("correlativa Excel", workspace / "correlativa.xlsx"),
-            )
-        )
-    return tuple(archivos), ()
+    # F2.5: el escritor del estándar limpia y renombra la carpeta pendiente;
+    # la definitiva lleva marca de tiempo y, si existiera, el escritor falla
+    # sin tocarla, así que no hay nada más que reservar.
+    return (), (("carpeta pendiente del estándar", carpeta_pendiente(workspace, config.nombre)),)
 
 
 def _es_control_pendiente_disco(ruta: Path, workspace: Path) -> bool:
@@ -1312,57 +1623,6 @@ def _cargar(
     return cargadas, compactaciones
 
 
-def _expandir_correlativa_duckdb(
-    correlativa: pd.DataFrame,
-    source_order: list[str],
-    compactaciones: dict[str, DuckDBCompactionResult],
-) -> pd.DataFrame:
-    """Expande representantes con los mapas Parquet sin cargar el origen.
-
-    Solo se lee la columna entera ``compact_record_id`` (un ``int64`` por fila)
-    de cada mapa. La tabla transaccional completa nunca vuelve a pandas; el
-    único DataFrame grande que se crea es la correlativa final solicitada por
-    el contrato público.
-    """
-
-    import numpy as np
-
-    source_values = correlativa["SRC"].astype(str).to_numpy(copy=False)
-    take_by_source: list[np.ndarray] = []
-    for name in source_order:
-        resultado = compactaciones[name]
-        positions = np.flatnonzero(source_values == name)
-        if len(positions):
-            order = np.argsort(
-                correlativa.iloc[positions]["ORIGINAL_INDEX"].to_numpy(copy=False),
-                kind="stable",
-            )
-            positions = positions[order]
-        if len(positions) != resultado.compact_rows:
-            raise RuntimeError(
-                f"No se puede expandir '{name}': correlativa={len(positions):,}, "
-                f"representantes DuckDB={resultado.compact_rows:,}."
-            )
-        codes = pd.read_parquet(resultado.expansion_map_path, columns=["compact_record_id"])[
-            "compact_record_id"
-        ].to_numpy(dtype=np.int64, copy=False)
-        if len(codes) != resultado.input_rows:
-            raise RuntimeError(
-                f"Mapa de expansión de '{name}' incompleto: {len(codes):,} de "
-                f"{resultado.input_rows:,} filas."
-            )
-        if len(codes) and (codes.min() < 0 or codes.max() >= len(positions)):
-            raise RuntimeError(f"Mapa de expansión de '{name}' fuera de rango.")
-        take_by_source.append(positions[codes])
-
-    if not take_by_source:
-        return correlativa.iloc[0:0].copy()
-    take = np.concatenate(take_by_source)
-    expanded = correlativa.iloc[take].reset_index(drop=True).copy()
-    expanded["ORIGINAL_INDEX"] = np.arange(len(expanded), dtype=np.int64)
-    return expanded
-
-
 def _con_ruta(spec: SourceSpec, ruta: Path) -> SourceSpec:
     """Devuelve una copia del contrato apuntando a otra ruta (spec es inmutable)."""
     from dataclasses import replace
@@ -1494,48 +1754,6 @@ def _validar_parametros_json(config: ConfigCruce) -> None:
     )
 
 
-def _fsync_directorio(ruta: Path) -> None:
-    """Persiste el rename del directorio cuando la plataforma lo soporta."""
-
-    try:
-        descriptor = os.open(ruta, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(descriptor)
-    except OSError:
-        # Windows no permite fsync de directorios; el archivo y el replace sí
-        # se sincronizan, que es la garantía disponible en esa plataforma.
-        pass
-    finally:
-        os.close(descriptor)
-
-
-def _escribir_json_atomico(ruta: Path, payload: Mapping[str, Any]) -> Path:
-    """Escribe JSON estricto mediante pending + fsync + replace atómico."""
-
-    normalizado = _normalizar_json(payload)
-    contenido = json.dumps(
-        normalizado,
-        indent=2,
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    pending = ruta.with_name(f".{ruta.name}.{uuid.uuid4().hex}.pending")
-    try:
-        with pending.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(contenido)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(pending, ruta)
-        _fsync_directorio(ruta.parent)
-    finally:
-        pending.unlink(missing_ok=True)
-    return ruta
-
-
 def _columnas_de_motor(config: ConfigCruce) -> set[str]:
     """Columnas canónicas que el motor SÍ usa para decidir."""
     columnas = {"NIT", "RAZON_SOCIAL"}
@@ -1645,7 +1863,7 @@ class ColumnaOmitida:
     fuente: str | None = None
 
     def como_manifiesto(self) -> dict[str, str | None]:
-        """Forma serializable para ``metadatos_corrida.json``."""
+        """Forma serializable para el manifiesto (``corrida.cruce``)."""
         return {"columna": self.columna, "fuente": self.fuente, "motivo": self.motivo}
 
 
@@ -1689,7 +1907,7 @@ class ReporteColumnasArrastre:
     omitidas: tuple[ColumnaOmitida, ...] = ()
 
     def como_manifiesto(self) -> dict[str, Any]:
-        """Forma serializable para ``metadatos_corrida.json``."""
+        """Forma serializable para el manifiesto (``corrida.cruce``)."""
         return {
             "adjuntadas": list(self.adjuntadas),
             "omitidas": [omitida.como_manifiesto() for omitida in self.omitidas],
@@ -1876,73 +2094,34 @@ def _registrar_reporte_arrastre(reporte: ReporteColumnasArrastre, log: Any) -> N
         )
 
 
-def _verificar_invariantes(correlativa: pd.DataFrame, golden: pd.DataFrame, esperadas: int) -> None:
-    """Falla ruidosamente si el resultado viola una garantía estructural."""
-    if len(correlativa) != esperadas:
-        raise RuntimeError(
+def _exigir_corrida_anterior_con_pandas(motor_ingesta: str, corrida_anterior: Path | str) -> None:
+    """``corrida_anterior`` (F2.4) solo tiene sentido con el motor pandas (F2.18).
+
+    Con DuckDB ``linkage()`` corre sobre representantes y la expansión
+    (``resultados_disco.expandir_en_disco``) recalcula los ``ENT-`` por
+    contenido de las filas publicadas, cuyos ``ID_REGISTRO`` no son los que
+    vio el motor: lo heredado se perdería y los retiros no llegarían al
+    crosswalk. Decirlo al recibir el parámetro vale más que una corrida larga
+    que publica ids nuevos en silencio.
+
+    Raises:
+        CorridaAnteriorError: si ``motor_ingesta`` es ``'duckdb'`` (mensaje
+            accionable). Es la excepción de F2.4 (ADR-0012) para todo fallo de
+            carga o uso de ``corrida_anterior``, no un ``ValueError`` genérico.
+    """
+    if motor_ingesta == "duckdb":
+        raise CorridaAnteriorError(
             mensaje_accionable(
-                f"la correlativa trae {len(correlativa):,} filas y entraron {esperadas:,}.",
-                "el cruce debe conservar TODAS las filas de entrada.",
-                "no use este resultado; reporte el caso.",
+                f"corrida_anterior={str(corrida_anterior)!r} con motor_ingesta='duckdb'.",
+                "la expansión DuckDB recalcula los ENT- por contenido de las filas "
+                "publicadas (los representantes del motor no son las filas) y la herencia de "
+                "ID_ENTIDAD no sobreviviría: se publicarían ids nuevos y sin retiros, en "
+                "silencio.",
+                "use motor_ingesta='pandas' (modo dataframe) con corrida_anterior, o quite "
+                "corrida_anterior; una generación del modo disco sí sirve como corrida "
+                "anterior de una corrida pandas posterior.",
             )
         )
-    if correlativa["ID_GRUPO"].isna().any():
-        raise RuntimeError("Hay filas sin ID_GRUPO: resultado inutilizable.")
-    grupos_correlativa = set(correlativa["ID_GRUPO"].unique())
-    grupos_golden = set(golden["ID_GRUPO"].unique()) if "ID_GRUPO" in golden.columns else set()
-    if grupos_golden and grupos_golden != grupos_correlativa:
-        raise RuntimeError(
-            f"Golden y correlativa describen entidades distintas "
-            f"({len(grupos_golden):,} vs {len(grupos_correlativa):,})."
-        )
-    # v0.21.0 — El entregable del cruce incluye la identidad que adoptó cada
-    # grupo. Hasta 0.20.0 esta comprobación no existía: la correlativa podía
-    # salir sin NIT_FINAL ni RAZON_SOCIAL_FINAL y el flujo la daba por buena.
-    ausentes = faltantes(correlativa)
-    if ausentes:
-        raise RuntimeError(
-            mensaje_accionable(
-                f"la correlativa salió sin {list(ausentes)}.",
-                POR_QUE_IMPORTA_SIN_IDENTIDAD,
-                "no use este resultado; revise el registro de la fase L5, donde la "
-                "reconstrucción desde el golden debió haber ocurrido.",
-            )
-        )
-
-
-def _exportar(config: ConfigCruce, resultado: dict[str, pd.DataFrame], log: Any) -> dict[str, Path]:
-    """Escribe Parquet siempre y Excel solo cuando el tamaño lo justifica."""
-    rutas: dict[str, Path] = {}
-    for nombre, df in resultado.items():
-        destino = config.ruta_workspace / f"{nombre}.parquet"
-        df.to_parquet(destino, index=False)
-        rutas[f"{nombre}_parquet"] = destino
-        log.info(f"   💾 {destino.name} ({len(df):,} filas)")
-    if config.exportar_excel:
-        rutas.update(_exportar_excel(config, resultado, log))
-    return rutas
-
-
-def _exportar_excel(
-    config: ConfigCruce, resultado: Mapping[str, pd.DataFrame], log: Any
-) -> dict[str, Path]:
-    """Exporta sólo tablas materializadas y de tamaño razonable."""
-
-    rutas: dict[str, Path] = {}
-    for nombre, df in resultado.items():
-        if len(df) > _LIMITE_EXCEL:
-            log.warning(
-                f"   ⚠️ {nombre}: {len(df):,} filas superan el límite práctico de "
-                f"Excel ({_LIMITE_EXCEL:,}); quedó solo en Parquet."
-            )
-            continue
-        from ..exporters._spreadsheet import prepare_spreadsheet_data
-
-        destino = config.ruta_workspace / f"{nombre}.xlsx"
-        prepare_spreadsheet_data(df).to_excel(destino, index=False)
-        rutas[f"{nombre}_excel"] = destino
-        log.info(f"   💾 {destino.name}")
-    return rutas
 
 
 def resolver_motor(config: ConfigCruce, log: Any = None) -> ConfigCruce:
@@ -2013,6 +2192,9 @@ def resolver_motor(config: ConfigCruce, log: Any = None) -> ConfigCruce:
         if log:
             log.info(f"      · {estimacion.fuente}: {estimacion.detalle}")
 
+    if elegido == "duckdb" and config.corrida_anterior is not None:
+        # Antes de cargar nada: la herencia no sobreviviría a la expansión.
+        _exigir_corrida_anterior_con_pandas(elegido, config.corrida_anterior)
     config.motor_ingesta = elegido
     if elegido == "duckdb":
         if config.dir_procesados is not None:
@@ -2033,18 +2215,25 @@ def resolver_motor(config: ConfigCruce, log: Any = None) -> ConfigCruce:
 
 
 def ejecutar_cruce(config: ConfigCruce) -> ResultadoCruce | ResultadoCruceDisco:
-    """Ejecuta el cruce completo con validación, smoke test y exportes.
+    """Ejecuta el cruce completo con validación, smoke test y la carpeta del estándar.
 
     Args:
         config: parámetros de la corrida, ya validados.
 
     Returns:
-        ResultadoCruce con golden, correlativa, métricas y rutas escritas.
+        En modo dataframe, :class:`ResultadoCruce` (un ``ResultadoLinkage``
+        con golden, correlativa, métricas, manifiesto y ``rutas`` de la carpeta
+        del estándar escrita). En modo disco, :class:`ResultadoCruceDisco`
+        (referencias Parquet a la generación publicada, que tiene la forma del
+        estándar; ``.leer()`` la materializa).
 
     Raises:
         FileNotFoundError: si alguna fuente no existe (preflight).
         PermissionError: si el workspace no es escribible (preflight).
-        RuntimeError: si el resultado viola una invariante estructural.
+        ContratoSalidaError: si el resultado incumple el contrato de salida o
+            no conserva las filas de entrada (``_validar_cruce``).
+        EscrituraSalidaError: si la carpeta del estándar no se puede publicar
+            (p. ej. ya existe una con el mismo nombre en el mismo minuto).
         ColumnasArrastreError: si las columnas de arrastre no se pudieron
             re-adjuntar a la correlativa (F1.8: nunca se omiten en silencio).
     """
@@ -2178,6 +2367,9 @@ def _ejecutar_cruce_medido(
                 collapse_exact_duplicates=(
                     config.colapsar_duplicados_exactos and not compactaciones
                 ),
+                # La herencia sobre filas_smoke cuesta milisegundos y un crosswalk
+                # que tropiece en _heredar falla aquí, no tras la corrida completa.
+                corrida_anterior=config.corrida_anterior,
             )
         log.info(f"   🔬 Smoke test OK ({time.time() - inicio:.1f}s) — se procede al total")
 
@@ -2197,6 +2389,7 @@ def _ejecutar_cruce_medido(
             skip_reporting=True,
             collapse_exact_duplicates=(config.colapsar_duplicados_exactos and not compactaciones),
             consume_sources=True,
+            corrida_anterior=config.corrida_anterior,
         )
     segundos_link = time.time() - inicio_link
     # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
@@ -2205,77 +2398,84 @@ def _ejecutar_cruce_medido(
     golden_compacta = _golden_de(salida)
     correlativa_compacta = salida.correlativa
     conflictos_identificador = _conflictos_identificador_de(salida)
-    publicacion: PublicacionResultadosDisco | None = None
-    golden: pd.DataFrame | TablaParquet
-    correlativa: pd.DataFrame | TablaParquet
+
+    def metricas_de(filas_correlativa: int, entidades: int) -> dict[str, Any]:
+        return _metricas_cruce(
+            cronometro,
+            filas_entrada=filas_entrada,
+            filas_correlativa=filas_correlativa,
+            entidades=entidades,
+            conflictos_identificador=conflictos_identificador,
+            segundos_linkage=segundos_link,
+            por_fuente=por_fuente_entrada,
+        )
+
     if compactaciones:
         # La expansión y el re-adjunte de columnas de arrastre ocurren dentro
-        # de DuckDB. Sólo el modo de compatibilidad vuelve a materializar las
-        # tablas después de que las invariantes SQL ya fueron verificadas.
-        with cronometro.fase("exportes"):
-            publicacion = publicar_resultados_duckdb(
+        # de DuckDB (``preservar_payload``). F1.8 — ``expandir_en_disco``
+        # adjunta el payload por nombre y descarta el que choca con una columna
+        # del motor: el manifiesto se deriva de la correlativa publicada.
+        payload_esperado = list(
+            dict.fromkeys(
+                c for nombre in source_order for c in compactaciones[nombre].payload_columns
+            )
+        )
+        omitidas_payload = omitidas_ingesta + _omitidas_por_payload_no_publicado(
+            source_order, compactaciones
+        )
+        insumos = _insumos_reales(salida.manifiesto.get("entradas") or {}, compactaciones)
+
+        def arrastre_de(expansion: ExpansionDisco) -> ReporteColumnasArrastre:
+            reporte = _reporte_arrastre_observado(
+                expansion.correlativa.columns,
+                payload_esperado,
+                correlativa_compacta.columns,
+                omitidas_payload,
+            )
+            _registrar_reporte_arrastre(reporte, log)
+            return reporte
+
+        if config.modo_resultado == "disco":
+            return _publicar_en_disco(
+                config,
+                salida,
+                golden_compacta,
+                compactaciones=compactaciones,
+                source_order=source_order,
+                insumos=insumos,
+                arrastre_de=arrastre_de,
+                metricas_de=metricas_de,
+                reportes_carga=reportes_carga,
+                dir_corrida=dir_corrida,
+                cronometro=cronometro,
+                log=log,
+            )
+
+        # Motor DuckDB en modo dataframe: la expansión queda en _trabajo/
+        # (borrable) y la carpeta del estándar la escribe el escritor único,
+        # igual que por el camino pandas.
+        dir_expansion = dir_corrida / "expansion"
+        dir_expansion.mkdir(parents=True, exist_ok=True)
+        with cronometro.fase("expansión"):
+            expansion = expandir_en_disco(
                 golden_compacta,
                 correlativa_compacta,
                 source_order=source_order,
                 compactaciones=compactaciones,
-                output_directory=config.ruta_workspace,
+                carpeta=dir_expansion,
                 settings=config.duckdb_settings,
             )
-            # v0.21.0 — El camino en disco debe entregar el mismo contrato
-            # que el de memoria. La comprobación va AQUÍ y no dentro de
-            # `publicar_resultados_duckdb`: esa función publica lo que le den
-            # y es legítimo usarla con tablas que no vienen de un cruce. El
-            # contrato de negocio pertenece al flujo, que sí sabe que lo que
-            # acaba de publicar es el resultado de un cruce.
-            ausentes_disco = faltantes_en(publicacion.correlativa.columns)
-            if ausentes_disco:
-                raise RuntimeError(
-                    mensaje_accionable(
-                        f"la correlativa publicada no trae {list(ausentes_disco)}.",
-                        POR_QUE_IMPORTA_SIN_IDENTIDAD,
-                        "no use este resultado; revise el registro de la fase L5.",
-                    )
-                )
-            # F1.8 — ``publicar_resultados_duckdb`` adjunta el payload por
-            # nombre y descarta sin aviso el que choca con una columna del motor:
-            # el manifiesto se deriva de la correlativa publicada, no de la intención.
-            payload_esperado = list(
-                dict.fromkeys(
-                    c for nombre in source_order for c in compactaciones[nombre].payload_columns
-                )
-            )
-            reporte_arrastre = _reporte_arrastre_observado(
-                publicacion.correlativa.columns,
-                payload_esperado,
-                correlativa_compacta.columns,
-                omitidas_ingesta + _omitidas_por_payload_no_publicado(source_order, compactaciones),
-            )
-            _registrar_reporte_arrastre(reporte_arrastre, log)
-            rutas = {
-                "golden_parquet": publicacion.golden.path,
-                "correlativa_parquet": publicacion.correlativa.path,
-            }
-            if config.modo_resultado == "dataframe":
-                golden = publicacion.golden.to_pandas()
-                correlativa = publicacion.correlativa.to_pandas()
-                if config.exportar_excel:
-                    rutas.update(
-                        _exportar_excel(
-                            config,
-                            {"golden": golden, "correlativa": correlativa},
-                            log,
-                        )
-                    )
-            else:
-                golden = publicacion.golden
-                correlativa = publicacion.correlativa
+        reporte_arrastre = arrastre_de(expansion)
+        res = _resultado_cruce(
+            salida,
+            expansion.correlativa.to_pandas(),
+            expansion.golden.to_pandas(),
+            reporte_arrastre,
+            reportes_carga=reportes_carga,
+            insumos=insumos,
+        )
     else:
-        golden = golden_compacta
         correlativa = correlativa_compacta
-        assert isinstance(golden, pd.DataFrame)
-        assert isinstance(correlativa, pd.DataFrame)
-        with cronometro.fase("invariantes"):
-            _verificar_invariantes(correlativa, golden, filas_entrada)
         if config.separar_columnas_extra:
             with cronometro.fase("re-adjuntar columnas"):
                 correlativa, reporte_arrastre = _adjuntar_columnas_extra(
@@ -2298,97 +2498,110 @@ def _ejecutar_cruce_medido(
                 omitidas_ingesta,
             )
             _registrar_reporte_arrastre(reporte_arrastre, log)
-        with cronometro.fase("exportes"):
-            rutas = _exportar(config, {"golden": golden, "correlativa": correlativa}, log)
+        res = _resultado_cruce(
+            salida,
+            correlativa,
+            golden_compacta,
+            reporte_arrastre,
+            reportes_carga=reportes_carga,
+            # Motor pandas: la correlativa es la que el motor identificó, así que
+            # el crosswalk de linkage() (REGISTROS + retiros) es el del entregable.
+            entidades_ids=salida.entidades_ids,
+        )
 
+    # Invariantes: el contrato (validar) más el cruce de filas del flujo, ANTES
+    # de escribir nada.
+    with cronometro.fase("invariantes"):
+        _validar_cruce(res, filas_entrada=filas_entrada)
+    metricas = metricas_de(len(res.correlativa), int(res.correlativa["ID_GRUPO"].nunique()))
+    res.metricas.update(metricas)
+    res.manifiesto["cruce"] = _bloque_cruce(config, reporte_arrastre, metricas, reportes_carga)
+    with cronometro.fase("exportes"):
+        manifiesto = escribir_resultado(
+            res, config.ruta_workspace, config.nombre, excel=config.exportar_excel
+        )
     # F1: las columnas técnicas (NIT_BASE, NIT_VALID…) salieron del entregable
     # y quedan en el checkpoint de L5 de esta carpeta; el resultado la señala
     # para que `salida.tecnicas.adjuntar_tecnicas` las recupere sin adivinar.
-    rutas["dir_trabajo"] = dir_corrida
-
-    if publicacion is not None:
-        filas_correlativa = publicacion.correlativa.rows
-        entidades = publicacion.entities
-    else:
-        assert isinstance(correlativa, pd.DataFrame)
-        filas_correlativa = len(correlativa)
-        entidades = int(correlativa["ID_GRUPO"].nunique())
-    metricas = {
-        "filas_entrada": filas_entrada,
-        "filas_correlativa": filas_correlativa,
-        "entidades": entidades,
-        "conflictos_identificador": int(conflictos_identificador),
-        "segundos_linkage": round(segundos_link, 2),
-        "segundos_total": round(cronometro.total, 2),
-        "segundos_por_fase": {k: round(v, 2) for k, v in cronometro.fases.items()},
-        "pico_rss_mib_por_fase": {k: round(v, 1) for k, v in cronometro.rss_mib.items()},
-        "por_fuente": por_fuente_entrada,
-    }
-    metadatos = {
-        "parametros": {
-            "perfil": config.perfil,
-            "confiables": sorted(config.confiables),
-            "col_nit": config.col_nit,
-            "col_nombre": config.col_nombre,
-            "col_ciudad": config.col_ciudad,
-            "variables_extra": config.variables_extra,
-            "filas_smoke": config.filas_smoke,
-            "exportar_excel": config.exportar_excel,
-            "reusar_checkpoints": config.reusar_checkpoints,
-            "forzar_relectura": config.forzar_relectura,
-            "dir_trabajo": str(config.ruta_trabajo),
-            "colapsar_duplicados_exactos": config.colapsar_duplicados_exactos,
-            "limite_filas": config.limite_filas,
-            "columnas_arrastre": reporte_arrastre.como_manifiesto(),
-            "ajustes_perfil": config.ajustes_perfil,
-            "perfil_multicampo": _serializar_perfil_multicampo(config.perfil_multicampo),
-            "motor_ingesta": config.motor_ingesta,
-            "modo_resultado": config.modo_resultado,
-            "preservar_payload": config.preservar_payload,
-            "duckdb_settings": (
-                asdict(config.duckdb_settings) if config.duckdb_settings is not None else None
-            ),
-            "fuentes": [
-                {"nombre": f.name, "ruta": str(f.path), "mapeo": dict(f.column_mapping)}
-                for f in config.fuentes
-            ],
-            "source_specs": [_serializar_source_spec(f) for f in config.fuentes],
-        },
-        "metricas": metricas,
-        "ingesta": reportes_carga,
-    }
-    metadatos_normalizados = _normalizar_json(metadatos)
-    if publicacion is not None:
-        ruta_meta = publicacion.publicar_metadatos(metadatos_normalizados)
-        rutas["manifest"] = publicacion.manifest_path
-        rutas["generation_dir"] = publicacion.generation_dir
-    else:
-        ruta_meta = _escribir_json_atomico(
-            config.ruta_workspace / "metadatos_corrida.json",
-            metadatos_normalizados,
-        )
-    rutas["metadatos"] = ruta_meta
-
+    res.carpeta = manifiesto.carpeta
+    res.rutas = _rutas_de(manifiesto, dir_corrida)
+    _cerrar_tiempos(metricas, cronometro)
+    res.metricas.update(metricas)
+    res.manifiesto["cruce"]["metricas"] = _normalizar_json(metricas)
     log.info(f"🏁 Listo en {metricas['segundos_total']:.1f}s · {metricas['entidades']:,} entidades")
+    log.info(f"   📁 {manifiesto.carpeta}")
     log.info("═" * 62)
-    if config.modo_resultado == "disco":
-        assert publicacion is not None
-        assert isinstance(golden, TablaParquet)
-        assert isinstance(correlativa, TablaParquet)
-        return ResultadoCruceDisco(
-            golden=golden,
-            correlativa=correlativa,
-            reportes_carga=reportes_carga,
-            metricas=metricas,
-            rutas=rutas,
-            _publicacion=publicacion,
+    return res
+
+
+def _publicar_en_disco(
+    config: ConfigCruce,
+    salida: ResultadoLinkage,
+    golden_compacta: pd.DataFrame,
+    *,
+    compactaciones: dict[str, DuckDBCompactionResult],
+    source_order: list[str],
+    insumos: Mapping[str, Any],
+    arrastre_de: Callable[[ExpansionDisco], ReporteColumnasArrastre],
+    metricas_de: Callable[[int, int], dict[str, Any]],
+    reportes_carga: dict[str, Any],
+    dir_corrida: Path,
+    cronometro: _Cronometro,
+    log: Any,
+) -> ResultadoCruceDisco:
+    """Modo disco: una generación nueva con la forma del estándar, sin materializar.
+
+    ``publicar_resultados_duckdb`` expande y verifica en SQL; ``completar``
+    escribe el resto del estándar dentro de la generación pendiente, con el
+    manifiesto del cruce ya en ``salida.manifiesto['cruce']``, y solo entonces
+    se publica (``rename`` + ``resultados.manifest.json``).
+    """
+    capturado: dict[str, Any] = {}
+
+    def completar(_pendiente: Path, definitiva: Path, expansion: ExpansionDisco) -> dict[str, str]:
+        reporte_arrastre = arrastre_de(expansion)
+        metricas = metricas_de(expansion.correlativa.rows, expansion.n_grupos)
+        salida.manifiesto["funcion"] = "ejecutar_cruce"
+        salida.manifiesto["cruce"] = _bloque_cruce(
+            config, reporte_arrastre, metricas, reportes_carga
         )
-    assert isinstance(golden, pd.DataFrame)
-    assert isinstance(correlativa, pd.DataFrame)
-    return ResultadoCruce(
-        golden=golden,
-        correlativa=correlativa,
+        manifiesto = escribir_estandar_de_expansion(
+            salida,
+            expansion,
+            nombre=config.nombre,
+            definitiva=definitiva,
+            insumos=insumos,
+            columnas_fuente=reporte_arrastre.adjuntadas,
+        )
+        capturado.update(manifiesto=manifiesto, metricas=metricas)
+        return {"manifest": NOMBRE_MANIFEST}
+
+    with cronometro.fase("exportes"):
+        publicacion = publicar_resultados_duckdb(
+            golden_compacta,
+            salida.correlativa,
+            source_order=source_order,
+            compactaciones=compactaciones,
+            output_directory=config.ruta_workspace,
+            settings=config.duckdb_settings,
+            completar=completar,
+        )
+    manifiesto: Manifiesto = capturado["manifiesto"]
+    metricas: dict[str, Any] = capturado["metricas"]
+    rutas = _rutas_de(manifiesto, dir_corrida, con_carpeta=False)
+    rutas["generation_dir"] = publicacion.generation_dir
+    rutas["manifest_generaciones"] = publicacion.manifest_path
+    _cerrar_tiempos(metricas, cronometro)
+    salida.manifiesto["cruce"]["metricas"] = _normalizar_json(metricas)
+    log.info(f"🏁 Listo en {metricas['segundos_total']:.1f}s · {metricas['entidades']:,} entidades")
+    log.info(f"   📁 {publicacion.generation_dir}")
+    log.info("═" * 62)
+    return ResultadoCruceDisco(
+        golden=publicacion.golden,
+        correlativa=publicacion.correlativa,
         reportes_carga=reportes_carga,
         metricas=metricas,
         rutas=rutas,
+        carpeta=publicacion.generation_dir,
+        _publicacion=publicacion,
     )

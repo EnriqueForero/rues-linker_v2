@@ -35,6 +35,7 @@ from .cruce import (
 )
 from .diagnostico import DiagnosticoIdentificador, diagnosticar_identificadores
 from .importadores import (
+    COLUMNAS_PROPIAS,
     ConfigImportadores,
     PaisesSinClasificar,
     ResultadoImportadores,
@@ -42,6 +43,9 @@ from .importadores import (
     construir_entregables,
     decisiones_con_nombres,
     deduplicar_importadores,
+    diccionario_importadores,
+    ensamblar_resultado,
+    escribir_importadores,
     exigir_cobertura_paises,
     grafias_aisladas,
     metricas,
@@ -49,6 +53,7 @@ from .importadores import (
     preparar,
     recall_del_bloqueo,
     registrar_locale,
+    renombres_por_colision,
     sensibilidad_umbral,
     similitud_nombre_desde_score,
     verificar_invariantes,
@@ -58,6 +63,7 @@ from .reportes import reportar_composicion
 from .resultados_disco import PublicacionResultadosDisco, TablaParquet
 
 __all__ = [
+    "COLUMNAS_PROPIAS",
     "ConfigCruce",
     "ConfigImportadores",
     "ControlCalidad",
@@ -73,7 +79,10 @@ __all__ = [
     "decisiones_con_nombres",
     "deduplicar_importadores",
     "diagnosticar_identificadores",
+    "diccionario_importadores",
     "ejecutar_cruce",
+    "ensamblar_resultado",
+    "escribir_importadores",
     "exigir_cobertura_paises",
     "exportar_sin_pareja",
     "filas_en_cache",
@@ -85,6 +94,7 @@ __all__ = [
     "preparar_insumo_local",
     "recall_del_bloqueo",
     "registrar_locale",
+    "renombres_por_colision",
     "reportar_composicion",
     "resolver_motor",
     "sensibilidad_umbral",

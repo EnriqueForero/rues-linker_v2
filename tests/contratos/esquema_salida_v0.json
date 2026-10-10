@@ -284,7 +284,8 @@
         ],
         "meta": [
           "duration",
-          "peak_rss_mib"
+          "peak_rss_mib",
+          "cobertura_sin_identificador"
         ]
       },
       "L6_reporting": {

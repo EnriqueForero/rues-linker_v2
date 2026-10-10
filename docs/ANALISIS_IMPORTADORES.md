@@ -129,7 +129,7 @@ asignaciones (`MUESTRA_REVISION`) está lista para etiquetar.
 | pares candidatos | 14.055.460 (0.22.4) · 14,1 M | 14.058.508 |
 | tiempo de emparejamiento | 216 s (0.22.4) · 226 s | **396 s** |
 | RSS pico | **1,65 GiB** (0.22.4, por lotes) · 2,6 GiB (0.22.3) | — |
-| invariantes | 10/10 OK | **9/9 OK** (0.22.2; la décima se añadió en 0.22.3) |
+| invariantes | 10/10 OK (desde F2.12 son 11: la de `CONFIANZA`) | **9/9 OK** (0.22.2; la décima se añadió en 0.22.3) |
 
 El resultado coincidió en las dos (99.898 con 0.22.2), y eso era en parte **suerte**:
 la normalización de sufijos dependía de la semilla de hash del proceso y la
@@ -185,6 +185,14 @@ se perdía en silencio.
 Las nueve pasan: una fila de salida por fila de entrada, ningún grupo cruza
 dos países, toda asignación cumple el umbral declarado, cada grupo tiene
 exactamente un nombre final, el FOB se conserva (diferencia relativa 1,5·10⁻¹⁶).
+
+**`CONFIANZA` (F2.12).** `GOLDEN` y `CORRELATIVA` llevan la columna
+`CONFIANZA` del estándar de salida, calculada con la regla única
+`golden.metricas.confianza_de_grupo` sobre `NIT_VARIATIONS = 0`,
+`SOURCES_COUNT = 1` y `RECORD_COUNT = N_FILAS_ORIGEN`: MEDIA hasta 5 filas,
+BAJA después (nunca ALTA: no hay identificador que dos fuentes confirmen). La
+correlativa lleva la de su grupo. La undécima invariante comprueba que esté en
+el vocabulario del contrato y que coincida con la del golden.
 
 ---
 

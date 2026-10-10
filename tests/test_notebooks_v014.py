@@ -23,7 +23,8 @@ PLANTILLA = "06_ejemplo_rues_x_exportaciones.ipynb"
 ORQUESTADOR = "06_orquestador_configurable.ipynb"
 IMPORTADORES = "07_deduplicar_importadores_razon_social_pais.ipynb"
 PUBLICACION = "08_PUBLICAR_GITHUB.ipynb"
-NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION)
+OPTIMIZACION = "12_optimizar_parametros_con_optuna.ipynb"
+NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION, OPTIMIZACION)
 #: Notebooks que INSTALAN y consumen la librería. El 08 publica el paquete: su
 #: primera celda instala herramientas de build, no rues-linker, así que los
 #: contratos de la celda de entorno no le aplican.
@@ -38,6 +39,7 @@ TODOS = (
     ORQUESTADOR,
     IMPORTADORES,
     PUBLICACION,
+    OPTIMIZACION,
 )
 
 
@@ -809,3 +811,19 @@ def test_importadores_no_mantiene_una_lista_propia_de_centinelas() -> None:
     assert "from record_linkage.matching.normalizadores import PLACEHOLDERS" in codigo
     assert "CENTINELAS_SIN_NOMBRE: frozenset[str] = PLACEHOLDERS" in codigo
     assert '"NO REGISTRA", "CONFIDENCIAL"' not in codigo, "la copia a mano tiene que desaparecer"
+
+
+def test_importadores_arma_el_resultado_con_la_libreria() -> None:
+    """F2.6 ronda 2: la celda 3 del 07 corre las etapas una a una para
+    cronometrarlas, pero el ``ResultadoImportadores`` lo arma
+    ``flujo.ensamblar_resultado`` (una regla). Armarlo a mano en la celda dejó
+    la hoja ``REVISION`` vacía y sin manifiesto (CONSUMIDORES 3.8.i.5)."""
+    nb = _cargar(IMPORTADORES)
+    codigo = "\n".join(_codigo(nb))
+    assert "ensamblar_resultado(" in codigo
+    sin_comentarios = "\n".join(
+        linea for linea in codigo.splitlines() if not linea.lstrip().startswith("#")
+    )
+    assert "ResultadoImportadores(" not in sin_comentarios, "el resultado se arma en la librería"
+    prosa = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "markdown")
+    assert "REVISION_PARES" in prosa, "la referencia explica la hoja nueva"

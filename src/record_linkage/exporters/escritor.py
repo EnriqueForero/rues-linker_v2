@@ -9,11 +9,12 @@ forma exacta del estándar de salida (``ESTANDAR_SALIDA``)::
     ├── correlativa.parquet        una fila por registro de entrada (LA tabla)
     ├── golden.parquet             una fila por entidad (se omite si res.golden es None)
     ├── enlaces.parquet            solo vinculación (si res.enlaces no es None)
-    ├── entidades_ids.parquet      crosswalk ID_ENTIDAD ↔ ID_GRUPO de esta corrida
+    ├── entidades_ids.parquet      crosswalk ID_ENTIDAD ↔ ID_GRUPO (+ REGISTROS y retiros, F2.4)
     ├── revision.csv               pares por decidir (forma del archivo de decisiones)
     ├── diccionario.csv            tabla · columna · tipo · significado · origen · alias_es
     ├── manifest.json              contrato, versión, huellas, parámetros, conteos, métricas…
-    ├── excel/                     correlativa.xlsx, golden.xlsx (o *_LEEME.xlsx si no caben)
+    ├── excel/                     correlativa.xlsx, golden.xlsx (o *_LEEME.xlsx si no caben),
+    │                              cada uno con su hoja DICCIONARIO (F2.16)
     ├── figuras/                   las PNG que se le pasen
     └── _trabajo/                  L1…L5, si linkage() lo dejó aquí (borrable)
 
@@ -63,6 +64,13 @@ Reglas
   ``omitidos`` con su motivo. La regla y la escritura en flujo (xlsxwriter,
   ``constant_memory``) viven en ``exporters.excel`` (F1.11); los alias de v1
   de L6 usan la misma función: nunca más la muestra recortada de v1.
+* **Cada Excel se explica solo (F2.16).** Los libros de ``excel/`` (también
+  el ``_LEEME.xlsx``) llevan una segunda hoja ``DICCIONARIO`` con las filas
+  de ``diccionario.csv`` de ESA tabla (columna · alias_es · significado ·
+  origen): los equipos que abren el Excel no leen el csv. Los nombres de
+  columna de la hoja de datos no cambian; la selección de filas es
+  ``exporters.excel.hoja_diccionario`` y ``exportar_vistas`` la usa igual
+  cuando recibe ``diccionario=``. Los alias de v1 no la llevan.
 * **Un solo punto de escritura.** Es el ÚNICO módulo que escribe la carpeta
   del estándar; ``tests/test_escritor.py`` lo verifica sobre ``src/``. L6
   (``reporting/strategies.py``) escribe sus alias de v1 a través de las
@@ -81,6 +89,12 @@ Reglas
   (``candidates.db``, ``scored.db``, ``_trabajo/manifest.json``) y ``version``
   es la del paquete (``importlib.metadata``). ``config_auditoria.json`` queda
   en ``_trabajo/L6_reporting/`` como alias que remite aquí.
+
+``exportar_vistas`` es la función libre para las VISTAS derivadas que un
+notebook agrega al lado de la carpeta (``vistas/``): un ``.xlsx`` por vista
+—o un libro con una hoja por vista— si cabe, ``.csv.gz`` si no; la misma
+neutralización y el mismo límite que el estándar, escritos una vez. Hasta
+F2.11 vivía copiada en cuatro notebooks y como ``PipelineResult.to_excel``.
 
 ``leer_resultado`` hace el camino inverso: verifica las huellas del
 manifiesto (falla con mensaje accionable si un artefacto cambió o falta),
@@ -103,23 +117,28 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from .. import contrato
 from ..config.auditoria import ParametrosMotor
 from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
-from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
+from ..identidad.estable import COLUMNA_REGISTROS, crosswalk_de_corrida
+from ..pipeline.errores import ContratoSalidaError, EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
-from ._spreadsheet import prepare_spreadsheet_data, validate_leaf_name
+from . import excel
+from ._spreadsheet import prepare_spreadsheet_data, safe_sheet_name, validate_leaf_name
 from .excel import (
+    HOJA_DICCIONARIO,
     LIMITE_FILAS_EXCEL,
     escribir_excel_o_leeme,
     hoja_de_lineas,
+    hoja_diccionario,
     leeme_no_cabe,
     miles,
     motivo_no_cabe,
@@ -138,6 +157,8 @@ __all__ = [
     "escribir_parquet",
     "escribir_resultado",
     "escribir_xlsx",
+    "exportar_vistas",
+    "hoja_diccionario",
     "leeme_alias_v1",
     "leeme_no_cabe",
     "leer_resultado",
@@ -206,7 +227,10 @@ class Manifiesto:
             en disco: ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
             ``grupos_multifuente``, ``confianza_media``/``mediana``,
             ``segundos_total``, ``rss_pico_mib``), más los escalares de
-            ``res.metricas`` (``n_registros``, ``n_fuentes``…).
+            ``res.metricas`` (``n_registros``, ``n_fuentes``…) y, si
+            ``linkage()`` postprocesó (matcher y/o colapso exacto), el bloque
+            ``preprocessing`` (``exact_duplicate_collapse`` por fuente e
+            ``id_grupo_tras_postprocesado``, F2.3).
         tiempos_por_fase: segundos por fase L1…L6 desde ``_trabajo/manifest.json``.
         rss_por_fase: pico de RSS (MiB) por fase, misma fuente.
         omitidos: ``[{"artefacto", "motivo"}]``: lo que no se escribió y por qué.
@@ -479,11 +503,213 @@ def escribir_xlsx(
     """
     if df is None and leeme is None:
         raise ValueError("escribir_xlsx: hace falta df, leeme o ambos.")
+    _escribir_libro([] if df is None else [(hoja, df)], ruta, leeme=leeme)
+
+
+def _escribir_libro(
+    hojas: Sequence[tuple[str, pd.DataFrame]], ruta: Path, *, leeme: pd.DataFrame | None = None
+) -> None:
+    """Punto ÚNICO de escritura openpyxl: ``hojas`` neutralizadas, ``LEEME`` primero si viene."""
     with pd.ExcelWriter(ruta, engine="openpyxl") as escritor:
         if leeme is not None:
             leeme.to_excel(escritor, sheet_name="LEEME", index=False, header=False)
-        if df is not None:
+        for hoja, df in hojas:
             prepare_spreadsheet_data(df).to_excel(escritor, sheet_name=hoja, index=False)
+
+
+#: Formatos de ``exportar_vistas``: ``auto`` = xlsx si cabe, csv.gz si no; ``csv`` = csv plano.
+FormatoVista = Literal["auto", "csv"]
+
+
+def _vistas_validadas(tablas: Mapping[str, pd.DataFrame]) -> list[tuple[str, pd.DataFrame]]:
+    """Las vistas en orden, o la excepción accionable ANTES de tocar el disco."""
+    if not tablas:
+        raise ValueError(
+            mensaje_accionable(
+                "exportar_vistas no recibió ninguna vista.",
+                "Sin tablas no hay nada que escribir y una carpeta vacía parece una "
+                "corrida que terminó bien.",
+                "Pase un dict {nombre_de_vista: DataFrame} con al menos una vista.",
+            )
+        )
+    vistas: list[tuple[str, pd.DataFrame]] = []
+    for vista, tabla in tablas.items():
+        if not isinstance(tabla, pd.DataFrame):
+            raise TypeError(
+                mensaje_accionable(
+                    f"La vista {vista!r} no es un DataFrame: es {type(tabla).__name__}.",
+                    "Una vista es una tabla que se abre en hoja de cálculo; otra cosa "
+                    "no tiene filas ni columnas que escribir.",
+                    "Pase solo DataFrames (las métricas escalares van en el manifiesto).",
+                )
+            )
+        vistas.append((str(vista), tabla))
+    return vistas
+
+
+def exportar_vistas(
+    tablas: Mapping[str, pd.DataFrame],
+    carpeta: str | Path,
+    nombre: str | None = None,
+    *,
+    libro: bool = False,
+    formato: FormatoVista = "auto",
+    limite: int | None = None,
+    diccionario: pd.DataFrame | None = None,
+) -> list[Path]:
+    """Escribe las VISTAS derivadas (``tablas``) en ``carpeta``; devuelve las rutas escritas.
+
+    Es la función libre del estándar para lo que un notebook agrega al lado de
+    la carpeta de ``escribir_resultado`` (``vistas/``: DUPLICADOS, RESUMEN,
+    PARES_CRUZADOS…) y para los entregables de los flujos que aún no escriben
+    la carpeta (07 importadores, 09 vinculación). El manifiesto no las lista y
+    ``leer_resultado`` las ignora: no son parte del contrato.
+
+    Cómo escribe (las reglas del estándar, escritas una vez):
+
+    * ``formato="auto"`` (por defecto): cada vista va a
+      ``<carpeta>/<nombre>__<vista>.xlsx`` (hoja = vista) si cabe en Excel
+      (``limite`` filas de datos; ``None`` = ``LIMITE_FILAS_EXCEL``) y a
+      ``<nombre>__<vista>.csv.gz`` COMPLETA si no cabe —nunca un recorte—.
+    * ``libro=True``: UN ``<carpeta>/<nombre>.xlsx`` con una hoja por vista
+      (nombres saneados y únicos, ``safe_sheet_name``); la vista que no cabe
+      va a ``<nombre>__<vista>.csv.gz`` al lado, y si ninguna cabe no hay libro.
+    * ``formato="csv"``: un ``<nombre>__<vista>.csv`` plano por vista, sin
+      límite (no admite ``libro``).
+    * Sin ``nombre`` el archivo se llama ``<vista>.<ext>``; con ``libro`` hace falta.
+    * Todo lo que se abre en hoja de cálculo pasa por ``prepare_spreadsheet_data``
+      (apóstrofo ante ``=``, ``+``, ``-``, ``@``; sin caracteres de control; un
+      dict/list en una celda como texto) y NUNCA muta la tabla de entrada.
+    * Una vista vacía se escribe con su encabezado: «0 duplicados» es
+      información, no silencio.
+    * ``diccionario=`` (F2.16; el mismo DataFrame que ``diccionario.csv``:
+      ``res.diccionario`` o ``contrato.diccionario(...)``): cada ``.xlsx``
+      lleva la hoja ``DICCIONARIO`` de su vista —las filas de la tabla
+      homónima del diccionario o, si no la hay, las de sus columnas
+      (``exporters.excel.hoja_diccionario``)—; en un libro, UNA hoja al final
+      con la columna ``hoja`` delante. Una vista sin ninguna columna explicada
+      no deja hoja vacía. ``formato="csv"`` no lo admite (un CSV no tiene hojas).
+
+    Fail-fast, antes de tocar el disco: sin vistas (``ValueError``), un valor
+    que no es DataFrame (``TypeError``), un ``nombre`` o una vista que nombra
+    un archivo con separadores de ruta o caracteres de control (``ValueError``,
+    ``validate_leaf_name``), ``libro`` sin ``nombre`` o con ``formato="csv"``,
+    ``diccionario`` con ``formato="csv"`` o sin las columnas del estándar.
+
+    Hasta F2.11 vivía copiada en los notebooks 01–04 y como
+    ``PipelineResult.to_excel``/``to_csv`` (hoy alias de esta función).
+    """
+    if formato not in ("auto", "csv"):
+        raise ValueError(
+            mensaje_accionable(
+                f"exportar_vistas: formato {formato!r} desconocido.",
+                "Un formato que no se conoce no se ignora en silencio.",
+                'Use formato="auto" (xlsx si cabe, csv.gz si no) o formato="csv".',
+            )
+        )
+    if libro and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: libro=True no se combina con formato="csv".',
+                "Un libro es un .xlsx con una hoja por vista; un CSV no tiene hojas.",
+                'Quite libro=True para un .csv por vista, o use formato="auto".',
+            )
+        )
+    if libro and nombre is None:
+        raise ValueError(
+            mensaje_accionable(
+                "exportar_vistas: libro=True necesita nombre.",
+                "El libro se llama <carpeta>/<nombre>.xlsx; sin nombre no hay archivo.",
+                "Pase nombre='<tronco del archivo>' (sin extensión ni rutas).",
+            )
+        )
+    if diccionario is not None and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: diccionario= no se combina con formato="csv".',
+                "La hoja DICCIONARIO va dentro de cada .xlsx; un CSV no tiene hojas.",
+                'Quite diccionario= para csv, o use formato="auto" y recibirá la hoja.',
+            )
+        )
+    if nombre is not None:
+        validate_leaf_name(nombre, "nombre")
+    vistas = _vistas_validadas(tablas)
+    # La hoja DICCIONARIO de cada vista se selecciona ANTES de escribir: un
+    # diccionario con otra forma falla aquí, sin dejar archivos a medias.
+    diccionarios: dict[str, pd.DataFrame] = {}
+    if diccionario is not None:
+        diccionarios = {v: hoja_diccionario(diccionario, v, list(t.columns)) for v, t in vistas}
+    prefijo = "" if nombre is None else f"{nombre}__"
+    tope = excel._limite(limite)
+    # Se valida TODO antes de escribir: una vista mal nombrada no deja a medias
+    # las anteriores. En un libro la vista solo nombra una hoja (saneada), salvo
+    # que no quepa y tenga que nombrar su .csv.gz.
+    sueltas = [v for v, t in vistas if not libro or len(t) > tope]
+    for vista in sueltas:
+        validate_leaf_name(vista, "vista")
+
+    carpeta = Path(carpeta)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    escritas: list[Path] = []
+    if formato == "csv":
+        for vista, tabla in vistas:
+            ruta = carpeta / f"{prefijo}{vista}.csv"
+            prepare_spreadsheet_data(tabla).to_csv(ruta, index=False)
+            escritas.append(ruta)
+        logger.info("exportar_vistas: %d vistas en %s (csv)", len(escritas), carpeta)
+        return escritas
+
+    def _csv_gz(vista: str, tabla: pd.DataFrame) -> Path:
+        ruta = carpeta / f"{prefijo}{vista}.csv.gz"
+        escribir_csv_gz(tabla, ruta)
+        logger.info(
+            "exportar_vistas: la vista %r no cabe en Excel (%s > %s filas); va completa a %s",
+            vista,
+            miles(len(tabla)),
+            miles(tope),
+            ruta.name,
+        )
+        return ruta
+
+    if libro:
+        # Primero el libro (lo que cabe), después los .csv.gz de lo que no cabe.
+        usados: set[str] = set()
+        caben = [(v, t) for v, t in vistas if len(t) <= tope]
+        hojas = [(safe_sheet_name(v, usados), t) for v, t in caben]
+        if hojas:
+            # Una sola hoja DICCIONARIO al final, con la PESTAÑA (``hoja``)
+            # delante: el nombre saneado con que se escribió, no el de la vista
+            # cruda (31 caracteres, desambiguado), para que quien lee encuentre
+            # la pestaña. Su propio nombre se sanea DESPUÉS de las vistas: una
+            # vista llamada DICCIONARIO conserva el suyo.
+            con_hoja = [
+                diccionarios[v].assign(hoja=pestana)
+                for (v, _), (pestana, _) in zip(caben, hojas, strict=True)
+                if v in diccionarios and not diccionarios[v].empty
+            ]
+            if con_hoja:
+                union = pd.concat(con_hoja, ignore_index=True)
+                union = union[["hoja", *(c for c in union.columns if c != "hoja")]]
+                hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), union))
+            ruta = carpeta / f"{nombre}.xlsx"
+            _escribir_libro(hojas, ruta)
+            escritas.append(ruta)
+        escritas += [_csv_gz(v, t) for v, t in vistas if len(t) > tope]
+    else:
+        # Un archivo por vista, en el orden en que llegaron.
+        for vista, tabla in vistas:
+            if len(tabla) <= tope:
+                ruta = carpeta / f"{prefijo}{vista}.xlsx"
+                usados = set()
+                hojas = [(safe_sheet_name(vista, usados), tabla)]
+                if vista in diccionarios and not diccionarios[vista].empty:
+                    hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), diccionarios[vista]))
+                _escribir_libro(hojas, ruta)
+                escritas.append(ruta)
+            else:
+                escritas.append(_csv_gz(vista, tabla))
+    logger.info("exportar_vistas: %d archivos en %s", len(escritas), carpeta)
+    return escritas
 
 
 def leeme_alias_v1(archivo_nuevo: str) -> pd.DataFrame:
@@ -589,21 +815,17 @@ def _relativizar_rutas(valor: Any, base: Path) -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _entidades_ids(correl: pd.DataFrame) -> pd.DataFrame:
-    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (``RETIRADO_EN`` vacío)."""
-    grupos = (
-        correl.groupby("ID_GRUPO", sort=True)
-        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
-        .reset_index()
-    )
-    return pd.DataFrame(
-        {
-            "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
-            "ID_GRUPO": grupos["ID_GRUPO"].astype("int64"),
-            "N_REGISTROS": grupos["N_REGISTROS"].astype("int64"),
-            "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
-        }
-    )
+def _entidades_ids(res: ResultadoLinkage) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (F2.4).
+
+    El que calculó ``identidad.estable`` (con ``REGISTROS`` y los retiros) si
+    el resultado lo trae; si no (resultado construido a mano o leído de una
+    carpeta sin él), se deriva de la correlativa con la misma función, sin
+    retiros. Una regla, un sitio.
+    """
+    if res.entidades_ids is not None:
+        return res.entidades_ids
+    return crosswalk_de_corrida(res.correlativa)
 
 
 def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
@@ -629,6 +851,73 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
     return conteos
 
 
+def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde la tabla por grupo del modo disco.
+
+    Es ``_entidades_ids`` cuando la correlativa no pasa por pandas: ``grupos``
+    trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD``, ``N_REGISTROS`` y
+    ``REGISTROS`` —la lista ORDENADA de ``ID_REGISTRO`` del grupo, que
+    ``resultados_disco.expandir_en_disco`` calcula en SQL
+    (``list(ID_REGISTRO ORDER BY ID_REGISTRO)``)—. No reescribe la regla: la
+    tabla se despliega a (``ID_GRUPO``, ``ID_REGISTRO``, ``ID_ENTIDAD``) con
+    Arrow (``list_flatten``/``list_parent_indices``, sin bucles) y se llama a
+    la MISMA función que el modo dataframe,
+    ``identidad.estable.crosswalk_de_corrida`` (F2.4 + F2.18): mismas
+    columnas (con ``REGISTROS``), tipos, orden y ``RETIRADO_EN`` nulo, porque
+    el modo disco no recibe ``corrida_anterior`` (``ConfigCruce`` lo rechaza
+    con error accionable). ``tests/test_escritor.py`` lo fija contra
+    ``crosswalk_de_corrida(res.correlativa)``.
+
+    El despliegue cuesta lo que el crosswalk mismo (``REGISTROS`` ya lleva
+    todos los ``ID_REGISTRO``): no materializa la correlativa.
+
+    Raises:
+        ContratoSalidaError: ``grupos`` no trae ``REGISTROS``, o una lista no
+            cubre ``N_REGISTROS`` (un crosswalk incompleto partiría mal la
+            herencia de la corrida siguiente).
+    """
+    if COLUMNA_REGISTROS not in grupos.columns:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"la tabla por grupo no trae {COLUMNA_REGISTROS} (columnas: "
+                    f"{list(grupos.columns)}).",
+                    "sin los ID_REGISTRO de cada grupo el crosswalk no puede llevar "
+                    f"{COLUMNA_REGISTROS} y la corrida siguiente no podría heredar.",
+                    "calcule la tabla con expandir_en_disco (list(ID_REGISTRO ORDER BY "
+                    "ID_REGISTRO) por grupo) o pase la correlativa a _entidades_ids.",
+                )
+            ]
+        )
+    listas = pa.array(grupos[COLUMNA_REGISTROS])
+    if not pa.types.is_list(listas.type) and not pa.types.is_large_list(listas.type):
+        listas = listas.cast(pa.list_(pa.string()))
+    largos = pc.list_value_length(listas).to_numpy(zero_copy_only=False)
+    n_registros = grupos["N_REGISTROS"].to_numpy(dtype="int64")
+    incompletos = int((largos != n_registros).sum())
+    if incompletos:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"{incompletos} grupo(s) cuya lista {COLUMNA_REGISTROS} no cubre N_REGISTROS.",
+                    "el crosswalk declararía menos registros de los que tiene la entidad y "
+                    "la corrida siguiente heredaría mal.",
+                    "calcule la tabla por grupo con expandir_en_disco (list() sobre la "
+                    "correlativa publicada, sin ID_REGISTRO nulos).",
+                )
+            ]
+        )
+    padres = pc.list_parent_indices(listas).to_numpy(zero_copy_only=False)
+    desplegado = pd.DataFrame(
+        {
+            "ID_GRUPO": grupos["ID_GRUPO"].to_numpy()[padres],
+            "ID_REGISTRO": pd.array(pc.list_flatten(listas), dtype="string"),
+            "ID_ENTIDAD": grupos["ID_ENTIDAD"].to_numpy()[padres],
+        }
+    )
+    return crosswalk_de_corrida(desplegado)
+
+
 def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[str, Any]:
     """``parametros`` del manifiesto: la llamada más los efectivos del motor.
 
@@ -643,11 +932,12 @@ def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[s
             {
                 "artefacto": "parametros.perfil",
                 "motivo": "el resultado no trae la configuración efectiva del motor "
-                "(res.manifiesto['configuracion']: esta ruta no pasa por el "
-                "Orchestrator). Sin ella la corrida no se reproduce desde el "
-                "manifiesto. Use linkage(carpeta_salida=...) o deje "
+                "(res.manifiesto['configuracion']): esta ruta (p. ej. dedupe()) no pasa "
+                "por el Orchestrator y los perfiles por régimen están en "
+                "parametros.llamada. Sin ella la corrida no se reproduce desde las claves "
+                "del motor del manifiesto. Si construye el resultado a mano, deje "
                 "res.manifiesto['configuracion'] = parametros_motor(config).a_dict() "
-                "antes de escribir; F2 unifica los caminos.",
+                "antes de escribir.",
             }
         )
     return {_CLAVE_LLAMADA: dict(res.manifiesto.get("parametros") or {})} | {
@@ -671,6 +961,12 @@ def _metricas(
     for clave, valor in res.metricas.items():
         if clave not in metricas and (valor is None or isinstance(valor, (bool, int, float, str))):
             metricas[clave] = valor
+    # ``preprocessing`` (F2.3, ronda 3): el colapso exacto por fuente y la
+    # recodificación de ID_GRUPO tras el postprocesado de linkage() son
+    # declaraciones de la corrida (dicts de escalares); sin ellas quien audita
+    # desde el disco no ve que la regla se aplicó antes de L6.
+    if isinstance(res.metricas.get("preprocessing"), Mapping):
+        metricas["preprocessing"] = dict(res.metricas["preprocessing"])
     return metricas
 
 
@@ -759,7 +1055,10 @@ def _excel(
     excel: bool,
     artefactos: list[dict[str, Any]],
     omitidos: list[dict[str, str]],
+    diccionario: pd.DataFrame | None = None,
 ) -> None:
+    """``excel/<tabla>.xlsx`` (o ``_LEEME``) por tabla; con ``diccionario`` (el de
+    ``diccionario.csv``) cada libro lleva su hoja DICCIONARIO (F2.16)."""
     tablas: list[tuple[str, pd.DataFrame | None]] = [
         ("correlativa", res.correlativa),
         ("golden", res.golden),
@@ -787,6 +1086,7 @@ def _excel(
                 limite=LIMITE_FILAS_EXCEL,
                 hoja=tabla,
                 ruta_parquet=f"../{tabla}.parquet",
+                diccionario=None if diccionario is None else hoja_diccionario(diccionario, tabla),
             )
         except EscrituraSalidaError as exc:
             # El Excel es opcional: un valor que xlsxwriter rechaza (celda > 32.767
@@ -881,7 +1181,7 @@ def _escribir_en(
         _escribir_parquet(res.enlaces, ruta, contrato.ENLACES)
         _registrar(artefactos, carpeta, ruta)
 
-    entidades_ids = _entidades_ids(res.correlativa)
+    entidades_ids = _entidades_ids(res)
     ruta = carpeta / "entidades_ids.parquet"
     _escribir_parquet(entidades_ids, ruta, contrato.ENTIDADES_IDS)
     _registrar(artefactos, carpeta, ruta)
@@ -891,10 +1191,11 @@ def _escribir_en(
     _registrar(artefactos, carpeta, ruta)
 
     ruta = carpeta / "diccionario.csv"
-    escribir_csv(_diccionario_completo(res, entidades_ids), ruta)
+    diccionario = _diccionario_completo(res, entidades_ids)
+    escribir_csv(diccionario, ruta)
     _registrar(artefactos, carpeta, ruta)
 
-    _excel(res, carpeta, excel, artefactos, omitidos)
+    _excel(res, carpeta, excel, artefactos, omitidos, diccionario)
 
     if figuras:
         dir_figuras = carpeta / "figuras"
@@ -908,6 +1209,49 @@ def _escribir_en(
             shutil.copy2(origen, destino)
             _registrar(artefactos, carpeta, destino)
 
+    manifiesto = _manifiesto_de(
+        res,
+        nombre=nombre,
+        marca_tiempo=marca_tiempo,
+        definitiva=definitiva,
+        artefactos=artefactos,
+        omitidos=omitidos,
+        # _trabajo/ vive en la pendiente: ninguna ruta absoluta a ella entra
+        # al JSON (dir_trabajo → "_trabajo", quedan_en, origen de SCORE_PAR…).
+        relativizar_a=carpeta if dir_trabajo_relativo else None,
+    )
+    manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
+    return manifiesto
+
+
+def _manifiesto_de(
+    res: ResultadoLinkage,
+    *,
+    nombre: str,
+    marca_tiempo: datetime,
+    definitiva: Path,
+    artefactos: list[dict[str, Any]],
+    omitidos: list[dict[str, str]],
+    relativizar_a: Path | None = None,
+    insumos: Mapping[str, Any] | None = None,
+    conteos: Mapping[str, Any] | None = None,
+    metricas_extra: Mapping[str, Any] | None = None,
+    invariantes_extra: Mapping[str, Any] | None = None,
+) -> Manifiesto:
+    """El ``Manifiesto`` de una carpeta del estándar a partir de ``res`` y de lo ya escrito.
+
+    Es la cola de ``_escribir_en`` y la comparte el modo disco de
+    ``flujo.cruce`` (``resultados_disco.escribir_estandar_de_expansion``), que
+    no materializa la correlativa: lo que depende de la tabla publicada entra
+    por parámetro cuando se calculó en SQL —``insumos`` (por defecto
+    ``res.manifiesto['entradas']``), ``conteos`` (por defecto ``_conteos``),
+    ``metricas_extra`` (pisan las del motor: ``n_registros``…) e
+    ``invariantes_extra`` (se añaden a ``ok``/``fallos`` de ``validar()``)— y
+    lo que no (``corrida``, ``parametros``, tiempos y RSS por fase, los
+    ``omitidos`` que ``res`` ya traía) sale de ``res`` aquí, una vez.
+    ``omitidos`` se extiende en el lugar. Con ``relativizar_a`` ninguna ruta
+    absoluta bajo esa carpeta entra al bloque ``corrida``.
+    """
     for omitido in res.manifiesto.get("omitidos") or ():
         if isinstance(omitido, dict):
             omitidos.append({str(k): str(v) for k, v in omitido.items()})
@@ -919,10 +1263,8 @@ def _escribir_en(
         if k not in ("entradas", "parametros", "configuracion", "omitidos")
     }
     corrida["dir_trabajo"] = str(res.dir_trabajo) if res.dir_trabajo is not None else None
-    if dir_trabajo_relativo:
-        # _trabajo/ vive en la pendiente: ninguna ruta absoluta a ella entra
-        # al JSON (dir_trabajo → "_trabajo", quedan_en, origen de SCORE_PAR…).
-        corrida = _relativizar_rutas(corrida, carpeta)
+    if relativizar_a is not None:
+        corrida = _relativizar_rutas(corrida, relativizar_a)
     tiempos, rss, motivo = _tiempos_y_rss(res.dir_trabajo)
     if motivo is not None:
         logger.warning("tiempos_por_fase y rss_por_fase quedan vacíos: %s", motivo)
@@ -930,26 +1272,35 @@ def _escribir_en(
         omitidos.append({"artefacto": "rss_por_fase", "motivo": motivo})
     reporte = res.validar()
     parametros = _parametros(res, omitidos)
-    manifiesto = Manifiesto(
+    metricas = _metricas(res, tiempos, rss)
+    if relativizar_a is not None:
+        # F2.7: dedupe() deja ``metricas['output_dir']`` (una cadena escalar que
+        # _metricas copia) apuntando a _trabajo/ de la pendiente; en el JSON va
+        # relativa, como las rutas de ``corrida``.
+        metricas = _relativizar_rutas(metricas, relativizar_a)
+    if metricas_extra:
+        metricas.update(metricas_extra)
+    invariantes: dict[str, Any] = {"ok": reporte.ok, "fallos": list(reporte.fallos)}
+    if invariantes_extra:
+        invariantes.update(invariantes_extra)
+    return Manifiesto(
         contrato=contrato.VERSION_CONTRATO,
         version=_version_paquete(),
         nombre=nombre,
         marca_tiempo=marca_tiempo.isoformat(timespec="seconds"),
         carpeta=definitiva,
-        insumos=dict(res.manifiesto.get("entradas") or {}),
+        insumos=dict(insumos if insumos is not None else res.manifiesto.get("entradas") or {}),
         artefactos=artefactos,
         parametros=parametros,
-        conteos=_conteos(res),
-        invariantes={"ok": reporte.ok, "fallos": list(reporte.fallos)},
-        metricas=_metricas(res, tiempos, rss),
+        conteos=dict(conteos) if conteos is not None else _conteos(res),
+        invariantes=invariantes,
+        metricas=metricas,
         tiempos_por_fase=tiempos,
         rss_por_fase=rss,
         omitidos=omitidos,
         renombres=dict(completar.get("renombres") or {}),
         corrida=corrida,
     )
-    manifiesto.guardar(carpeta / NOMBRE_MANIFEST)
-    return manifiesto
 
 
 def _limpiar_pendiente(pendiente: Path, *, conservar_trabajo: bool) -> None:
@@ -990,8 +1341,10 @@ def escribir_resultado(
         carpeta_salida: carpeta padre; se crea si no existe.
         nombre: nombre simple (sin separadores) que cierra el nombre de la
             carpeta ``<AAAA-MM-DD_HHMM>_<nombre>``.
-        marca_tiempo: marca de la carpeta; por defecto ``datetime.now()``
-            (hora local, como los nombres de carpeta de v1).
+        marca_tiempo: marca de la carpeta; por defecto
+            ``contrato.marca_de_corrida()`` (UTC con zona: la misma regla de
+            reloj que ``CREATED_AT`` y que ``flujo.importadores``; hasta el
+            pulido de F2 era la hora local naive).
         excel: si False no se escribe ``excel/`` y el manifiesto lo declara.
         figuras: rutas de PNG que se copian a ``figuras/``.
 
@@ -1012,8 +1365,9 @@ def escribir_resultado(
             mismo minuto chocan; la segunda falla sin tocar la primera y, si
             ``_trabajo/`` estaba en la pendiente, lo conserva para reanudar);
             o si la pendiente trae un ``_trabajo/`` que no es el de ``res``
-            (una corrida interrumpida de ``linkage(carpeta_salida=...)``): no
-            se publica como si fuera de esta corrida ni se borra.
+            (una corrida interrumpida de ``linkage()``/``link()``/``dedupe()``
+            con ``carpeta_salida=``): no se publica como si fuera de esta
+            corrida ni se borra.
         ValueError: si ``nombre`` no es un nombre simple.
 
     Dos corridas simultáneas con el mismo ``nombre`` en la misma
@@ -1022,7 +1376,7 @@ def escribir_resultado(
     carpeta_salida = Path(carpeta_salida)
     pendiente = carpeta_pendiente(carpeta_salida, nombre)
     res.validar(estricto=True)
-    marca = marca_tiempo if marca_tiempo is not None else datetime.now()
+    marca = marca_tiempo if marca_tiempo is not None else contrato.marca_de_corrida()
     definitiva = carpeta_salida / _nombre_carpeta(nombre, marca)
     if definitiva.exists():
         raise EscrituraSalidaError(
@@ -1049,12 +1403,13 @@ def escribir_resultado(
             mensaje_accionable(
                 f"hay un {NOMBRE_TRABAJO}/ de otra corrida en {pendiente} y el resultado "
                 f"que se quiere publicar {donde}.",
-                "es de una corrida interrumpida de linkage(carpeta_salida=...); publicarlo "
-                "con este resultado dejaría una carpeta cuyo manifiesto no describe los "
-                "checkpoints que contiene.",
-                f"reanude esa corrida con linkage(carpeta_salida={str(carpeta_salida)!r}, "
-                f"nombre={nombre!r}) o borre {trabajo_pendiente} a mano; si el resultado "
-                f"sí es de esa corrida, su dir_trabajo debe ser {trabajo_pendiente}.",
+                "es de una corrida interrumpida de linkage()/link()/dedupe() con "
+                "carpeta_salida=; publicarlo con este resultado dejaría una carpeta cuyo "
+                "manifiesto no describe los checkpoints que contiene.",
+                f"reanude esa corrida con la misma función, carpeta_salida="
+                f"{str(carpeta_salida)!r} y nombre={nombre!r}, o borre {trabajo_pendiente} "
+                f"a mano; si el resultado sí es de esa corrida, su dir_trabajo debe ser "
+                f"{trabajo_pendiente}.",
             )
         )
     # Restos de una escritura anterior interrumpida a la fuerza (kill): se
@@ -1095,6 +1450,41 @@ def _aplicar_alias(df: pd.DataFrame, diccionario: pd.DataFrame, tabla: str, alia
     }
     if mapa:
         df.rename(columns=mapa, inplace=True)
+
+
+def _leer_entidades_ids(ruta: Path) -> pd.DataFrame:
+    """Lee el crosswalk con ``ID_GRUPO`` como ``Int64`` (nulo donde no aplica).
+
+    ``pd.read_parquet`` devuelve ``float64`` si la columna trae algún nulo e
+    ``int64`` si no: el mismo archivo cambiaría de tipo según su contenido.
+    Mismo tipo que ``identidad.estable.cargar_corrida_anterior``.
+    """
+    ids = pd.read_parquet(ruta)
+    if "ID_GRUPO" in ids.columns:
+        ids["ID_GRUPO"] = ids["ID_GRUPO"].astype("Int64")
+    return ids
+
+
+def _enteros_nulos_del_contrato(
+    df: pd.DataFrame, columnas: Sequence[contrato.ColumnaContrato]
+) -> pd.DataFrame:
+    """Devuelve a entero nulable (``Int64``) las columnas enteras del contrato
+    que pandas leyó como ``float64`` por traer nulos (F2.6).
+
+    El parquet las escribió ``int64`` (el escritor fija el esquema del
+    contrato) y así las declara el contrato; es ``pd.read_parquet`` quien las
+    convierte a flotante cuando hay nulos (p. ej. ``NIT_DISTANCE`` en una
+    corrida de importadores, donde la base no trae identificador). No es una
+    reparación: es la lectura fiel del tipo escrito.
+    """
+    for col in columnas:
+        if (
+            col.nombre in df.columns
+            and contrato.familia_tipo(col.tipo) == "entero"
+            and pd.api.types.is_float_dtype(df[col.nombre])
+        ):
+            df[col.nombre] = df[col.nombre].astype("Int64")
+    return df
 
 
 def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
@@ -1139,14 +1529,16 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
                 "escribir_resultado() o linkage(carpeta_salida=...).",
             )
         )
-    correlativa = pd.read_parquet(carpeta / "correlativa.parquet")
+    correlativa = _enteros_nulos_del_contrato(
+        pd.read_parquet(carpeta / "correlativa.parquet"), contrato.CORRELATIVA
+    )
     golden = (
-        pd.read_parquet(carpeta / "golden.parquet")
+        _enteros_nulos_del_contrato(pd.read_parquet(carpeta / "golden.parquet"), contrato.GOLDEN)
         if (carpeta / "golden.parquet").is_file()
         else None
     )
     enlaces = (
-        pd.read_parquet(carpeta / "enlaces.parquet")
+        _enteros_nulos_del_contrato(pd.read_parquet(carpeta / "enlaces.parquet"), contrato.ENLACES)
         if (carpeta / "enlaces.parquet").is_file()
         else None
     )
@@ -1183,6 +1575,8 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         **man.metricas,
         **man.conteos,
     }
+    ruta_ids = carpeta / "entidades_ids.parquet"
+    entidades_ids = _leer_entidades_ids(ruta_ids) if ruta_ids.is_file() else None
     return ResultadoLinkage(
         correlativa=correlativa,
         golden=golden,
@@ -1192,4 +1586,5 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         revision=revision,
         diccionario=diccionario,
         dir_trabajo=dir_trabajo,
+        entidades_ids=entidades_ids,
     )

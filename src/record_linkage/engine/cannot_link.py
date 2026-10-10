@@ -33,7 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-__all__ = ["ReporteCannotLink", "aplicar_cannot_link_identificador"]
+__all__ = ["ReporteCannotLink", "aplicar_cannot_link_identificador", "identificadores_validos"]
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,59 @@ def _mascara_valida(serie: pd.Series) -> np.ndarray:
         return serie.fillna(0).astype(float).to_numpy() == 1.0
     texto = serie.astype("string").fillna("").str.strip().str.lower()
     return texto.isin(["1", "true", "t", "si", "sí", "yes", "y"]).to_numpy(dtype=bool)
+
+
+def identificadores_validos(
+    df: pd.DataFrame,
+    *,
+    columna_id: str = "NIT_BASE",
+    columna_valido: str | None = "NIT_VALID",
+    canonicalizar_dv: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Identificador canónico por fila y máscara de los que cuentan como válidos.
+
+    Es la única definición de «esta fila trae identificador válido» para lo
+    que se decide sobre la partición en L5: el cannot-link (v0.14.0) y la
+    cobertura por estrellas de los grupos sin identificador (F2.1,
+    ``engine.cobertura``) la comparten para que nunca discrepen.
+
+    Args:
+        df: correlativa clusterizada.
+        columna_id: identificador canónico (base sin dígito de verificación).
+        columna_valido: columna de validez; None = válido todo no vacío.
+        canonicalizar_dv: v0.19.0 — compara en forma base, quitando el dígito
+            de verificación que valida por módulo 11.
+
+    Returns:
+        ``(identificadores, valido)``: arreglo ``object`` con el identificador
+        canónico (cadena vacía si no hay) y máscara booleana alineada.
+
+    Raises:
+        KeyError: si falta ``columna_id``.
+    """
+    if columna_id not in df.columns:
+        raise KeyError(
+            f"identificadores_validos requiere la columna '{columna_id}'. "
+            f"Columnas disponibles: {sorted(df.columns)[:12]}"
+        )
+    ident = df[columna_id].astype("string").fillna("").str.strip()
+    # v0.19.0 — El mismo identificador escrito con y sin dígito de
+    # verificación NO son dos identificadores, y partir un grupo por esa
+    # diferencia deshace justo lo que el scorer acababa de unir. Se compara en
+    # forma canónica; la reducción solo quita dígitos que VALIDAN por módulo 11
+    # (ver `matching.identificadores`), así que nunca junta números ajenos.
+    if canonicalizar_dv:
+        from ..matching.identificadores import bases_canonicas
+
+        ident = pd.Series(bases_canonicas(ident.to_numpy()), index=df.index).astype("string")
+    # Una sola conversión a numpy. Con Arrow detrás NO es barata, y el
+    # cannot-link indexa una vez por grupo en conflicto: convertir ahí dentro
+    # costaba el 53 % del tiempo de la función (medido con cProfile).
+    identificadores = np.asarray(ident.to_numpy(), dtype=object)
+    valido = ident.ne("").to_numpy()
+    if columna_valido is not None and columna_valido in df.columns:
+        valido &= _mascara_valida(df[columna_valido])
+    return identificadores, valido
 
 
 def aplicar_cannot_link_identificador(
@@ -155,23 +208,12 @@ def aplicar_cannot_link_identificador(
                 f"Columnas disponibles: {sorted(df.columns)[:12]}"
             )
 
-    ident = df[columna_id].astype("string").fillna("").str.strip()
-    # v0.19.0 — El mismo identificador escrito con y sin dígito de
-    # verificación NO son dos identificadores, y partir un grupo por esa
-    # diferencia deshace justo lo que el scorer acababa de unir. Se compara en
-    # forma canónica; la reducción solo quita dígitos que VALIDAN por módulo 11
-    # (ver `matching.identificadores`), así que nunca junta números ajenos.
-    if canonicalizar_dv:
-        from ..matching.identificadores import bases_canonicas
-
-        ident = pd.Series(bases_canonicas(ident.to_numpy()), index=df.index).astype("string")
-    # Una sola conversión a numpy. Con Arrow detrás NO es barata, y más abajo
-    # se indexa una vez por grupo en conflicto: convertir ahí dentro costaba
-    # el 53 % del tiempo de la función (medido con cProfile).
-    identificadores = np.asarray(ident.to_numpy(), dtype=object)
-    valido = ident.ne("").to_numpy()
-    if columna_valido is not None and columna_valido in df.columns:
-        valido &= _mascara_valida(df[columna_valido])
+    identificadores, valido = identificadores_validos(
+        df,
+        columna_id=columna_id,
+        columna_valido=columna_valido,
+        canonicalizar_dv=canonicalizar_dv,
+    )
 
     grupos = df[columna_grupo].to_numpy()
     # Identificadores distintos por grupo, contados solo sobre filas válidas.

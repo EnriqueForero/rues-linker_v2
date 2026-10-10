@@ -98,6 +98,14 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -154,6 +162,17 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # ── F2.1 (ADR-0011): cobertura por estrellas en grupos sin identificador
+        # válido. Cambio DECLARADO en este perfil: medido en el banco 30.486,
+        # macro-F1 0,892 → 0,880 y FP sobre negativos 287 → 246; en el
+        # sintético de 139k precisión 0,34 → 0,98 y grupo mayor 630 → 13.
+        # `activa: False` reproduce la huella 1e365ba8 de 0.22.4. Similitud
+        # mínima firmada = 2·umbral − 1 (engine.cobertura).
+        "cobertura_sin_identificador": {
+            "activa": True,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -220,6 +239,14 @@ PERFILES_BASE = {
         "use_categorical_dtypes": False,
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 2,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -305,6 +332,14 @@ PERFILES_BASE = {
         "use_categorical_dtypes": False,
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -362,6 +397,14 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -427,6 +470,14 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -488,6 +539,14 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),
@@ -562,6 +621,14 @@ PERFILES_BASE = {
         # 2-3 NIT válidos distintos (empresas distintas fusionadas).
         "veto_nit_base_distinto": True,
         "cannot_link_identificador": True,
+        # F2.1: cobertura por estrellas en grupos sin identificador válido. Se
+        # declara apagada: solo `produccion_estandar` está medido (ADR-0011).
+        # Para activarla: {"activa": True, "umbral": 0.80, "regla_lider": "cobertura"}.
+        "cobertura_sin_identificador": {
+            "activa": False,
+            "umbral": 0.80,
+            "regla_lider": "cobertura",
+        },
         "tolerancia_digitacion_identificador": 0,
         "dv_es_mismo_identificador": True,
         "llaves_bloqueo": (),

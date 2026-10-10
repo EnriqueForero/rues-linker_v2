@@ -2,27 +2,43 @@
 
 La lógica que antes vivía en celdas de notebook (preflight, copia anti-Drive,
 smoke test, invariantes, exportes, metadatos) ahora es código con pruebas.
+
+F2.5: ``ejecutar_cruce`` devuelve un ``ResultadoLinkage`` (``ResultadoCruce``
+lo extiende con el QA del cruce) y escribe la carpeta del estándar con
+``escribir_resultado``; las invariantes del cruce son ``validar()`` más la
+comprobación de filas de entrada del flujo; el modo disco conserva las
+generaciones, cada una con la forma del estándar.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from apoyo_cruce import LogNulo, config_cruce
 
-from record_linkage import ColumnType, SourceSpec
+from record_linkage import ColumnType, SourceSpec, contrato
+from record_linkage.exporters import escritor
+from record_linkage.exporters.escritor import leer_resultado
 from record_linkage.flujo import (
     ConfigCruce,
+    ResultadoCruce,
+    ResultadoCruceDisco,
     ejecutar_cruce,
     preparar_insumo_local,
     reportar_composicion,
 )
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
+from record_linkage.flujo.resultados_disco import DIVERGENCIA_METODO_UNION
 from record_linkage.ingestion import DuckDBIngestionSettings
-from record_linkage.pipeline.errores import ContratoSalidaError
+from record_linkage.pipeline.errores import (
+    ContratoSalidaError,
+    CorridaAnteriorError,
+    EscrituraSalidaError,
+)
 from record_linkage.resultado import ResultadoLinkage
 from record_linkage.salida.completar import bases_del_motor, grupos_con_bases_distintas
 
@@ -211,40 +227,35 @@ def test_preflight_falla_antes_de_procesar_si_falta_una_fuente(fuentes_csv, tmp_
 
 
 @pytest.mark.parametrize(
-    ("nombre_destino", "exportar_excel"),
-    [
-        ("golden.parquet", False),
-        ("correlativa.parquet", False),
-        ("metadatos_corrida.json", False),
-        ("golden.xlsx", True),
-        ("correlativa.xlsx", True),
-    ],
+    "ruta_relativa",
+    [".cruce.pendiente/correlativa.parquet", ".cruce.pendiente/_trabajo/manifest.json"],
 )
-def test_preflight_pandas_rechaza_fuente_que_seria_sobrescrita(
-    fuentes_csv,
-    tmp_path: Path,
-    nombre_destino: str,
-    exportar_excel: bool,
+def test_preflight_pandas_rechaza_fuente_en_la_carpeta_pendiente(
+    fuentes_csv, tmp_path: Path, ruta_relativa: str
 ) -> None:
+    """F2.5: el escritor del estándar limpia ``<workspace>/.<nombre>.pendiente/``
+    antes de escribir y la renombra al final; una fuente ahí se perdería. La
+    carpeta definitiva (``<AAAA-MM-DD_HHMM>_<nombre>``) no se reserva: si ya
+    existe, el escritor falla sin tocarla (nunca sobrescribe)."""
     from dataclasses import replace
 
-    destino = tmp_path / "salida" / nombre_destino
+    destino = tmp_path / "salida" / Path(ruta_relativa)
     destino.parent.mkdir(parents=True)
     contenido_original = b"fuente que debe conservarse"
     destino.write_bytes(contenido_original)
     fuentes = [replace(fuentes_csv[0], path=destino), fuentes_csv[1]]
 
-    with pytest.raises(ValueError, match="colisiona"):
-        ejecutar_cruce(
-            config_cruce(
-                fuentes,
-                tmp_path,
-                exportar_excel=exportar_excel,
-                motor_ingesta="pandas",
-            )
-        )
+    with pytest.raises(ValueError, match="solapa"):
+        ejecutar_cruce(config_cruce(fuentes, tmp_path, motor_ingesta="pandas"))
 
     assert destino.read_bytes() == contenido_original
+
+
+def test_config_rechaza_nombre_con_separadores(fuentes_csv, tmp_path: Path) -> None:
+    """El ``nombre`` cierra el nombre de la carpeta del estándar: se valida al
+    construir la configuración, no después de L1…L5."""
+    with pytest.raises(ValueError, match="nombre"):
+        config_cruce(fuentes_csv, tmp_path, nombre="a/b")
 
 
 @pytest.mark.parametrize(
@@ -282,6 +293,94 @@ def test_preflight_disco_rechaza_fuentes_en_controles_de_publicacion(
 
 
 # ── Corrida completa ──────────────────────────────────────────────────
+
+
+#: Lo que toda carpeta del estándar trae sin Excel ni figuras.
+ARTEFACTOS_ESTANDAR = {
+    "correlativa.parquet",
+    "golden.parquet",
+    "entidades_ids.parquet",
+    "revision.csv",
+    "diccionario.csv",
+    "manifest.json",
+}
+
+
+def _archivos(carpeta: Path) -> set[str]:
+    return {p.relative_to(carpeta).as_posix() for p in carpeta.rglob("*") if p.is_file()}
+
+
+def test_cruce_devuelve_resultado_linkage_y_escribe_el_estandar(
+    fuentes_csv, tmp_path: Path
+) -> None:
+    """F2.5: en modo dataframe ``ejecutar_cruce`` devuelve el ``ResultadoLinkage``
+    del contrato (ampliado con el QA del cruce) y deja UNA carpeta con la forma
+    del estándar, escrita por ``escribir_resultado``."""
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+
+    assert isinstance(resultado, ResultadoLinkage)
+    assert isinstance(resultado, ResultadoCruce)
+    assert resultado.validar().ok
+    assert list(resultado.correlativa.columns[:12]) == list(contrato.COLUMNAS_CORRELATIVA)
+    carpeta = resultado.carpeta
+    assert carpeta == resultado.rutas["carpeta"]
+    assert carpeta.parent == tmp_path / "salida" and carpeta.name.endswith("_cruce")
+    assert _archivos(carpeta) == ARTEFACTOS_ESTANDAR
+    assert not (tmp_path / "salida" / ".cruce.pendiente").exists()
+    assert resultado.rutas["manifest"] == carpeta / "manifest.json"
+    assert resultado.rutas["correlativa_parquet"] == carpeta / "correlativa.parquet"
+    assert resultado.rutas["golden_parquet"] == carpeta / "golden.parquet"
+    assert resultado.rutas["entidades_ids_parquet"] == carpeta / "entidades_ids.parquet"
+    assert resultado.rutas["dir_trabajo"] == resultado.dir_trabajo
+    assert resultado.dir_trabajo == tmp_path / "trabajo" / "corrida"
+    assert resultado.manifiesto["carpeta_salida"] == str(carpeta)
+    # Lo escrito es lo devuelto, y se lee de vuelta como un resultado válido.
+    leido = leer_resultado(carpeta)
+    assert leido.validar().ok
+    pd.testing.assert_frame_equal(
+        leido.correlativa.reset_index(drop=True),
+        resultado.correlativa.reset_index(drop=True),
+        check_dtype=False,
+    )
+    # _trabajo/ está fuera del workspace: la carpeta no lo trae, el manifiesto lo declara.
+    assert leido.dir_trabajo is None
+    assert leido.manifiesto["manifest"]["corrida"]["dir_trabajo"] == str(resultado.dir_trabajo)
+    # El diccionario cubre las columnas de arrastre re-adjuntadas.
+    dic = resultado.diccionario
+    assert set(resultado.correlativa.columns) <= set(
+        dic.loc[dic["tabla"] == "correlativa", "columna"]
+    )
+
+
+def test_cruce_con_excel_lo_escribe_el_escritor(fuentes_csv, tmp_path: Path) -> None:
+    resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, exportar_excel=True))
+    carpeta = resultado.carpeta
+    esperados = ARTEFACTOS_ESTANDAR | {"excel/correlativa.xlsx", "excel/golden.xlsx"}
+    assert _archivos(carpeta) == esperados
+    assert resultado.rutas["correlativa_excel"] == carpeta / "excel" / "correlativa.xlsx"
+    assert resultado.rutas["golden_excel"] == carpeta / "excel" / "golden.xlsx"
+
+
+def test_dos_corridas_en_el_mismo_minuto_exigen_otro_nombre(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """El escritor nunca sobrescribe una corrida publicada (resolución de minuto).
+
+    El reloj se fija: con ``datetime.now()`` real, una corrida en HH:MM:59 y la
+    siguiente en HH:MM+1:00 no chocan y la prueba fallaría al azar."""
+
+    class Reloj(datetime):
+        @classmethod
+        def now(cls, tz=None):  # firma de datetime.now
+            return cls(2026, 10, 6, 12, 0)
+
+    monkeypatch.setattr(escritor, "datetime", Reloj)
+    ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+    with pytest.raises(EscrituraSalidaError, match="ya existe"):
+        ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+    segunda = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, nombre="segunda"))
+    assert segunda.carpeta.name.endswith("_segunda")
+    assert len([p for p in (tmp_path / "salida").iterdir() if p.is_dir()]) == 2
 
 
 def test_cruce_completo_enlaza_y_conserva_todas_las_filas(fuentes_csv, tmp_path: Path) -> None:
@@ -415,12 +514,25 @@ def test_cruce_falla_claro_si_linkage_no_trae_golden(
         ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
 
+def _manifiesto_cruce(resultado) -> dict:
+    """El bloque del cruce dentro de ``manifest.json`` (un solo manifiesto, F1.12)."""
+    manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+    return manifest["corrida"]["cruce"]
+
+
 def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Path) -> None:
     resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
 
     assert resultado.rutas["golden_parquet"].exists()
     assert resultado.rutas["correlativa_parquet"].exists()
-    metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
+    manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+    assert manifest["contrato"] == contrato.VERSION_CONTRATO
+    assert manifest["invariantes"]["ok"] is True
+    assert manifest["corrida"]["funcion"] == "ejecutar_cruce"
+    assert manifest["corrida"]["dir_trabajo"] == str(tmp_path / "trabajo" / "corrida")
+    assert manifest["conteos"]["filas"] == 5 and manifest["conteos"]["grupos"] == 4
+    assert manifest["parametros"]["perfil"] == "produccion_estandar"
+    metadatos = manifest["corrida"]["cruce"]
     parametros = metadatos["parametros"]
     assert parametros["confiables"] == ["PADRON"]
     assert parametros["filas_smoke"] == 0
@@ -433,6 +545,7 @@ def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Pat
     assert (resultado.rutas["dir_trabajo"] / "L5_golden" / "correlative.parquet").is_file()
     assert parametros["perfil_multicampo"] is None
     assert metadatos["metricas"]["filas_entrada"] == 5
+    assert set(metadatos["ingesta"]) == {"PADRON", "CLIENTES"}
     assert {f["nombre"] for f in parametros["fuentes"]} == {"PADRON", "CLIENTES"}
     contratos = {spec["name"]: spec for spec in parametros["source_specs"]}
     assert contratos["PADRON"]["column_mapping"] == {
@@ -442,7 +555,7 @@ def test_cruce_escribe_parquet_y_metadatos_auditables(fuentes_csv, tmp_path: Pat
     assert contratos["PADRON"]["column_types"] == {"NIT": "identifier"}
     assert contratos["PADRON"]["format"] == "auto"
     assert contratos["PADRON"]["temp_dir"] is None
-    assert not list((tmp_path / "salida").glob(".metadatos_corrida.json.*.pending"))
+    assert not list((tmp_path / "salida").glob(".*"))
 
 
 def test_normalizador_json_cubre_tipos_conocidos_y_matching_profile(tmp_path: Path) -> None:
@@ -487,24 +600,21 @@ def test_config_rechaza_metadato_opaco_antes_de_la_corrida(fuentes_csv, tmp_path
         )
 
 
-def test_metadata_pandas_preserva_version_anterior_si_falla_replace(
-    tmp_path: Path, monkeypatch
+def test_fallo_al_escribir_no_deja_carpeta_ni_pendiente(
+    fuentes_csv, tmp_path: Path, monkeypatch
 ) -> None:
-    import record_linkage.flujo.cruce as modulo
+    """La atomicidad es la del escritor único: si falla a mitad, ni carpeta
+    definitiva ni pendiente; los checkpoints de ``_trabajo`` (fuera del
+    workspace) sobreviven para reanudar."""
 
-    destino = tmp_path / "metadatos_corrida.json"
-    destino.write_text('{"version": "anterior"}\n', encoding="utf-8")
-    original = destino.read_bytes()
+    def fallar(*_a, **_k):
+        raise OSError("disco lleno simulado")
 
-    def fallar_replace(_origen: Path, _destino: Path) -> None:
-        raise OSError("fallo de commit simulado")
-
-    monkeypatch.setattr(modulo.os, "replace", fallar_replace)
-    with pytest.raises(OSError, match="fallo de commit simulado"):
-        modulo._escribir_json_atomico(destino, {"version": "nueva"})
-
-    assert destino.read_bytes() == original
-    assert not list(tmp_path.glob(".metadatos_corrida.json.*.pending"))
+    monkeypatch.setattr(escritor, "_escribir_parquet", fallar)
+    with pytest.raises(OSError, match="disco lleno simulado"):
+        ejecutar_cruce(config_cruce(fuentes_csv, tmp_path))
+    assert not list((tmp_path / "salida").iterdir())
+    assert (tmp_path / "trabajo" / "corrida" / "manifest.json").is_file()
 
 
 def test_cruce_con_smoke_test_previo(fuentes_csv, tmp_path: Path) -> None:
@@ -527,33 +637,18 @@ def test_smoke_propaga_multicampo_y_limpia_ambos_checkpoints(
         marcadores.append(marcador)
 
     llamadas = []
+    linkage_real = modulo.linkage
 
-    def linkage_falso(sources, **kwargs):
+    def linkage_espia(sources, **kwargs):
+        # F2.5 — el flujo valida el contrato completo y escribe el estándar: un
+        # doble a medias ya no pasa. El espía registra la llamada, comprueba la
+        # limpieza y delega en el linkage real (ADR-0008: un doble infiel no
+        # sirve para debilitar una invariante).
         llamadas.append(kwargs)
         assert not any(marcador.exists() for marcador in marcadores)
-        correlativa = pd.concat(sources.values(), ignore_index=True).copy()
-        correlativa["ID_GRUPO"] = range(len(correlativa))
-        # v0.21.0 — El `linkage` real SIEMPRE devuelve las cuatro columnas del
-        # contrato de salida (ADR-0008). Un doble que no las devuelve no es un
-        # doble fiel: la invariante del flujo lo destapó, y se corrige aquí en
-        # vez de debilitar la invariante.
-        correlativa["NIT_FINAL"] = correlativa.get("NIT", pd.Series("", index=correlativa.index))
-        correlativa["RAZON_SOCIAL_FINAL"] = correlativa.get(
-            "RAZON_SOCIAL", pd.Series("", index=correlativa.index)
-        )
-        correlativa["NAME_SIMILARITY_SCORE"] = 1.0
-        correlativa["NIT_DISTANCE"] = 0
-        # F1.9 — y devuelve ResultadoLinkage, no el dict viejo: el flujo lee
-        # los campos nuevos (``.golden``/``.correlativa``) sin pasar por el shim.
-        return ResultadoLinkage(
-            correlativa=correlativa,
-            golden=correlativa.copy(),
-            # r3 — el flujo toma el conteo de conflictos del manifiesto del
-            # contrato (una regla, la del motor), así que el doble lo trae.
-            manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 0}}},
-        )
+        return linkage_real(sources, **kwargs)
 
-    monkeypatch.setattr(modulo, "linkage", linkage_falso)
+    monkeypatch.setattr(modulo, "linkage", linkage_espia)
     resultado = ejecutar_cruce(
         config_cruce(
             fuentes_csv,
@@ -595,30 +690,52 @@ def test_error_al_limpiar_checkpoint_no_se_oculta(fuentes_csv, tmp_path: Path, m
         ejecutar_cruce(config)
 
 
-def test_excel_se_omite_por_encima_del_limite(fuentes_csv, tmp_path: Path, monkeypatch) -> None:
-    """Un Excel de millones de filas no se intenta escribir: se avisa."""
-    import record_linkage.flujo.cruce as modulo
-
-    monkeypatch.setattr(modulo, "_LIMITE_EXCEL", 2)
+def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """La regla es la del escritor (F1.11): completo hasta el límite o un
+    ``<tabla>_LEEME.xlsx`` que dice cómo abrir el parquet; nunca un recorte."""
+    monkeypatch.setattr(escritor, "LIMITE_FILAS_EXCEL", 2)
     resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, exportar_excel=True))
     assert "correlativa_excel" not in resultado.rutas
+    assert resultado.rutas["correlativa_leeme_excel"].name == "correlativa_LEEME.xlsx"
     assert resultado.rutas["correlativa_parquet"].exists()
+    manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+    assert any(o["artefacto"] == "excel/correlativa.xlsx" for o in manifest["omitidos"])
 
 
-def test_invariante_detecta_perdida_de_filas(fuentes_csv, tmp_path: Path) -> None:
-    from record_linkage.flujo.cruce import _verificar_invariantes
+def _resultado_minimo(
+    correlativa: pd.DataFrame, golden: pd.DataFrame, filas: int
+) -> ResultadoLinkage:
+    return ResultadoLinkage(
+        correlativa=correlativa,
+        golden=golden,
+        manifiesto={"entradas": {"A": {"filas": filas}}},
+    )
+
+
+def test_invariante_detecta_perdida_de_filas() -> None:
+    """F2.5: la invariante «una fila por registro de entrada» es ``validar()``;
+    el flujo la cruza además con las filas que ÉL contó al cargar."""
+    from record_linkage.flujo.cruce import _validar_cruce
 
     correlativa = pd.DataFrame({"ID_GRUPO": [1, 2]})
-    with pytest.raises(RuntimeError, match="conservar TODAS"):
-        _verificar_invariantes(correlativa, pd.DataFrame({"ID_GRUPO": [1, 2]}), esperadas=3)
+    res = _resultado_minimo(correlativa, pd.DataFrame({"ID_GRUPO": [1, 2]}), filas=3)
+    fallos = res.validar().fallos
+    assert any("una fila por registro de entrada" in f for f in fallos)
+    with pytest.raises(ContratoSalidaError, match="una fila por registro de entrada"):
+        _validar_cruce(res, filas_entrada=3)
+    # Manifiesto cuadrado pero el conteo del flujo no: también falla.
+    res_cuadrado = _resultado_minimo(correlativa, pd.DataFrame({"ID_GRUPO": [1, 2]}), filas=2)
+    with pytest.raises(ContratoSalidaError, match=r"entraron 3"):
+        _validar_cruce(res_cuadrado, filas_entrada=3)
 
 
 def test_invariante_detecta_grupo_nulo() -> None:
-    from record_linkage.flujo.cruce import _verificar_invariantes
-
     correlativa = pd.DataFrame({"ID_GRUPO": [1, None]})
-    with pytest.raises(RuntimeError, match="sin ID_GRUPO"):
-        _verificar_invariantes(correlativa, pd.DataFrame({"ID_GRUPO": [1]}), esperadas=2)
+    res = _resultado_minimo(correlativa, pd.DataFrame({"ID_GRUPO": [1]}), filas=2)
+    fallos = res.validar().fallos
+    assert any("ID_GRUPO" in f and "nulo" in f for f in fallos)
 
 
 # ── Insumos: copia anti-Drive ─────────────────────────────────────────
@@ -781,8 +898,7 @@ def test_limite_filas_recorta_y_queda_registrado(fuentes_csv, tmp_path: Path) ->
     resultado = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path, limite_filas={"PADRON": 2}))
     assert resultado.metricas["filas_entrada"] == 4  # 2 de PADRON + 2 de CLIENTES
     assert len(resultado.correlativa) == 4
-    metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
-    assert metadatos["parametros"]["limite_filas"] == {"PADRON": 2}
+    assert _manifiesto_cruce(resultado)["parametros"]["limite_filas"] == {"PADRON": 2}
 
 
 def test_limite_filas_rechaza_fuente_inexistente(fuentes_csv, tmp_path: Path) -> None:
@@ -819,18 +935,116 @@ def test_duckdb_limita_en_ingesta_y_expande_todas_las_filas(fuentes_csv, tmp_pat
     assert len(resultado.correlativa) == 4
     assert resultado.reportes_carga["PADRON"]["engine"] == "duckdb"
     assert resultado.reportes_carga["PADRON"]["rows"] == 2
-    metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
+    # F2.5: motor DuckDB en modo dataframe → la misma carpeta del estándar
+    # que el camino pandas (la expansión queda en _trabajo/, borrable).
+    assert isinstance(resultado, ResultadoCruce)
+    assert resultado.validar().ok
+    assert _archivos(resultado.carpeta) == ARTEFACTOS_ESTANDAR
+    assert "generation_dir" not in resultado.rutas
+    assert (tmp_path / "trabajo" / "corrida" / "expansion" / "correlativa.parquet").is_file()
+    metadatos = _manifiesto_cruce(resultado)
     assert metadatos["parametros"]["motor_ingesta"] == "duckdb"
     assert metadatos["parametros"]["duckdb_settings"]["memory_limit"] == "256MB"
-    assert resultado.rutas["manifest"].is_file()
-    assert resultado.rutas["generation_dir"].is_dir()
-    assert resultado.rutas["metadatos"].parent == resultado.rutas["generation_dir"]
     manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
-    assert manifest["generation"] == resultado.rutas["generation_dir"].name
-    assert (
-        tmp_path / "salida" / Path(manifest["artifacts"]["metadata"])
-        == resultado.rutas["metadatos"]
+    # Los insumos del manifiesto son las filas reales, no los representantes.
+    assert manifest["insumos"]["PADRON"]["filas"] == 2
+    assert manifest["insumos"]["PADRON"]["representantes"] == 2
+    assert manifest["conteos"]["filas"] == 4
+
+
+def test_modo_disco_conserva_generaciones_con_la_forma_del_estandar(
+    fuentes_csv, tmp_path: Path
+) -> None:
+    """F2.5: en modo disco nada se materializa, pero la generación publicada es
+    una carpeta del estándar (los mismos nombres y el mismo manifest.json) y
+    ``leer_resultado`` la lee como cualquier otra."""
+    config = config_cruce(
+        fuentes_csv,
+        tmp_path,
+        motor_ingesta="duckdb",
+        modo_resultado="disco",
+        duckdb_settings=DuckDBIngestionSettings(
+            memory_limit="256MB", threads=2, temp_directory=tmp_path / "spill"
+        ),
     )
+    resultado = ejecutar_cruce(config)
+
+    assert isinstance(resultado, ResultadoCruceDisco)
+    generacion = resultado.carpeta
+    assert generacion == resultado.rutas["generation_dir"]
+    assert generacion.parent == tmp_path / "salida" / "resultados.generations"
+    assert _archivos(generacion) == ARTEFACTOS_ESTANDAR
+    assert resultado.rutas["manifest"] == generacion / "manifest.json"
+    assert resultado.rutas["correlativa_parquet"] == resultado.correlativa.path
+    assert resultado.rutas["entidades_ids_parquet"].is_file()
+    puntero = json.loads(resultado.rutas["manifest_generaciones"].read_text(encoding="utf-8"))
+    assert puntero["generation"] == generacion.name
+    assert tmp_path / "salida" / puntero["artifacts"]["manifest"] == generacion / "manifest.json"
+    assert "metadata" not in puntero["artifacts"]
+    assert not (generacion / "metadatos_corrida.json").exists()
+
+    manifest = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+    assert manifest["contrato"] == contrato.VERSION_CONTRATO
+    assert manifest["invariantes"]["ok"] is True
+    # Lo que el modo disco calcula distinto del dataframe se declara, no se calla.
+    assert manifest["invariantes"]["divergencia_declarada"] == DIVERGENCIA_METODO_UNION
+    assert manifest["conteos"]["filas"] == 5 and manifest["conteos"]["grupos"] == 4
+    assert manifest["insumos"]["PADRON"]["filas"] == 3
+    assert manifest["corrida"]["cruce"]["parametros"]["modo_resultado"] == "disco"
+    assert any(o["artefacto"] == "excel/correlativa.xlsx" for o in manifest["omitidos"])
+
+    leido = resultado.leer()
+    assert isinstance(leido, ResultadoLinkage)
+    assert leido.validar().ok, leido.validar().fallos
+    assert len(leido.correlativa) == 5
+    assert leido.correlativa["ID_REGISTRO"].is_unique
+    assert leido.dir_trabajo == resultado.rutas["dir_trabajo"]
+    dic = leido.diccionario
+    assert set(leido.correlativa.columns) <= set(dic.loc[dic["tabla"] == "correlativa", "columna"])
+    assert (leido.golden["INPUT_ROW_COUNT"] >= 1).all()
+
+
+def _particion(correlativa: pd.DataFrame) -> set[frozenset[str]]:
+    return {frozenset(g["ID_REGISTRO"]) for _, g in correlativa.groupby("ID_GRUPO")}
+
+
+def _entidad_por_grupo(correlativa: pd.DataFrame) -> dict[frozenset[str], str]:
+    """``{registros del grupo: ID_ENTIDAD}``: compara la identidad sin depender del ID_GRUPO."""
+    return {
+        frozenset(g["ID_REGISTRO"]): str(g["ID_ENTIDAD"].iloc[0])
+        for _, g in correlativa.groupby("ID_GRUPO")
+    }
+
+
+def test_los_dos_motores_entregan_la_misma_correlativa(fuentes_csv, tmp_path: Path) -> None:
+    """ID_REGISTRO, la partición en grupos y METODO_UNION son los mismos por
+    pandas y por DuckDB (en DuckDB el ``<SRC>-F<fila>`` se reconstruye en SQL
+    tras expandir, y un representante ``sin_pareja`` cuyas copias exactas lo
+    acompañan pasa a ``identificador``/``nombre`` como en pandas)."""
+    # Copias exactas: con NIT (grupo de 3 → identificador) y sin NIT (2 → nombre).
+    with Path(fuentes_csv[0].path).open("a", encoding="utf-8") as f:
+        f.write("900111222,ACME COLOMBIA SAS\n,SIN IDENTIFICADOR SAS\n,SIN IDENTIFICADOR SAS\n")
+    pandas_ = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p"))
+    disco = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "d", motor_ingesta="duckdb", modo_resultado="disco")
+    ).leer()
+    a = pandas_.correlativa.sort_values("ID_REGISTRO").reset_index(drop=True)
+    b = disco.correlativa.sort_values("ID_REGISTRO").reset_index(drop=True)
+    assert list(a["ID_REGISTRO"]) == list(b["ID_REGISTRO"])
+    assert list(a["ORIGINAL_INDEX"]) == list(b["ORIGINAL_INDEX"])
+    for col in ("SRC", "NIT_FINAL", "RAZON_SOCIAL_FINAL", "METODO_UNION", "CONFIANZA"):
+        assert list(a[col].astype(str)) == list(b[col].astype(str)), col
+    assert len(b) == 8
+    acme = b[b["RAZON_SOCIAL"].str.startswith("ACME")]
+    assert len(acme) == 3 and set(acme["METODO_UNION"]) == {"identificador"}
+    sin_nit = b[b["RAZON_SOCIAL"].str.startswith("SIN IDENTIFICADOR")]
+    assert len(sin_nit) == 2 and set(sin_nit["METODO_UNION"]) == {"nombre"}
+    assert sin_nit["ID_GRUPO"].nunique() == 1
+    # Misma partición (los ID_GRUPO pueden numerarse distinto; F2.3 los fija)
+    # y el MISMO ID_ENTIDAD por grupo, también los ENT-: el hash es el de los
+    # ID_REGISTRO publicados, no el de los representantes que vio el motor.
+    assert _particion(a) == _particion(b)
+    assert _entidad_por_grupo(a) == _entidad_por_grupo(b)
 
 
 # ── Flexibilidad: ajustes de perfil, tiempos y deduplicación (v0.14.0) ──
@@ -844,7 +1058,7 @@ def test_ajustes_de_perfil_llegan_al_motor(fuentes_csv, tmp_path: Path) -> None:
             ajustes_perfil={"lsh_permutations": 64, "score_threshold": 0.5},
         )
     )
-    metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
+    metadatos = _manifiesto_cruce(resultado)
     assert metadatos["parametros"]["ajustes_perfil"]["lsh_permutations"] == 64
 
 
@@ -903,7 +1117,7 @@ def test_columnas_de_arrastre_no_entran_al_motor_pero_vuelven(
     assert fila_delta["DEPARTAMENTO"] == "BOGOTA"
     # Cruzada: TELEFONO de la fila de CLIENTES es NA (no existe en esa fuente).
     assert pd.isna(fila_delta["TELEFONO"])
-    metadatos = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
+    metadatos = _manifiesto_cruce(resultado)
     # F1.8: el manifiesto declara lo que REALMENTE se adjuntó, no la unión planificada.
     arrastre = metadatos["parametros"]["columnas_arrastre"]
     assert set(arrastre["adjuntadas"]) == {"TELEFONO", "EMAIL", "DEPARTAMENTO"}
@@ -984,3 +1198,155 @@ def test_golden_de_y_conflictos_identificador_de_exigen_el_contrato() -> None:
         manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 2}}},
     )
     assert _conflictos_identificador_de(con_qa) == 2
+
+
+# ── F2.18: el crosswalk de F2.4 en los dos motores ─────────────────────
+
+
+def _con_filas_sin_nit(fuentes_csv) -> None:
+    """Dos copias exactas sin identificador en PADRON: un grupo ``ENT-…`` de 2."""
+    with Path(fuentes_csv[0].path).open("a", encoding="utf-8") as f:
+        f.write(",SIN IDENTIFICADOR SAS\n,SIN IDENTIFICADOR SAS\n")
+
+
+def test_corrida_anterior_exige_el_motor_pandas_y_lo_dice(fuentes_csv, tmp_path: Path) -> None:
+    """Con DuckDB la expansión recalcula los ``ENT-`` por contenido de las filas
+    publicadas (los representantes del motor no son las filas), así que una
+    herencia desde ``corrida_anterior`` no sobreviviría: en vez de perderse en
+    silencio, ``ConfigCruce`` la rechaza al recibirla (modo disco y modo
+    dataframe) y ``motor_ingesta='auto'`` la rechaza al resolverse a DuckDB,
+    antes de cargar nada."""
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    for modo in ("disco", "dataframe"):
+        # CorridaAnteriorError (ADR-0012), no un ValueError genérico: quien
+        # capture ese error para tratar el parámetro ve también este caso
+        # (pulido F2, hallazgo 31 de F2.18).
+        with pytest.raises(
+            CorridaAnteriorError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"
+        ):
+            config_cruce(
+                fuentes_csv,
+                tmp_path / modo,
+                motor_ingesta="duckdb",
+                modo_resultado=modo,
+                corrida_anterior=primera.carpeta,
+            )
+    auto = config_cruce(
+        fuentes_csv,
+        tmp_path / "auto",
+        motor_ingesta="auto",
+        umbral_filas_disco=1,  # fuerza DuckDB al resolver
+        corrida_anterior=primera.carpeta,
+    )
+    with pytest.raises(CorridaAnteriorError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
+        ejecutar_cruce(auto)
+    assert not (tmp_path / "auto" / "trabajo").exists() or not any(
+        (tmp_path / "auto" / "trabajo").rglob("*.parquet")
+    )
+
+
+def test_cruce_pandas_publica_el_crosswalk_con_sus_retiros(fuentes_csv, tmp_path: Path) -> None:
+    """El crosswalk que ``identidad.estable`` calculó dentro de ``linkage()``
+    (con ``REGISTROS`` y los retiros) es el que el cruce entrega y escribe; no
+    se rederiva de la correlativa perdiendo las entidades retiradas."""
+    from record_linkage.exporters.escritor import escribir_parquet
+    from record_linkage.identidad.estable import COLUMNA_REGISTROS, NOMBRE_CROSSWALK
+
+    _con_filas_sin_nit(fuentes_csv)
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    x1 = pd.read_parquet(primera.carpeta / NOMBRE_CROSSWALK)
+    ent = x1[x1["ID_ENTIDAD"].str.startswith("ENT-") & (x1["N_REGISTROS"] == 2)]
+    assert len(ent) == 1, x1
+    r1, r2 = str(ent[COLUMNA_REGISTROS].iloc[0]).split("|")
+    # Corrida anterior «a mano»: ese grupo era DOS entidades. En la segunda
+    # corrida se fusionan → una hereda y la otra se retira hacia ella.
+    partida = pd.concat(
+        [
+            x1[~x1.index.isin(ent.index)],
+            pd.DataFrame(
+                {
+                    "ID_ENTIDAD": pd.Series(["ENT-aaaaaaaaaaaaaaaa", "ENT-bbbbbbbbbbbbbbbb"]),
+                    "ID_GRUPO": pd.Series([900, 901], dtype="Int64"),
+                    "N_REGISTROS": pd.Series([1, 1], dtype="int64"),
+                    "RETIRADO_EN": pd.Series([pd.NA, pd.NA], dtype="string"),
+                    COLUMNA_REGISTROS: pd.Series([r1, r2], dtype="string"),
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    anterior = tmp_path / "anterior"
+    anterior.mkdir()
+    escribir_parquet(partida, anterior / NOMBRE_CROSSWALK, contrato.ENTIDADES_IDS)
+
+    segunda = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "p2", nombre="segunda", corrida_anterior=anterior)
+    )
+    assert segunda.validar().ok, segunda.validar().fallos
+    assert segunda.entidades_ids is not None
+    retiradas = segunda.entidades_ids[segunda.entidades_ids["RETIRADO_EN"].notna()]
+    assert len(retiradas) == 1, segunda.entidades_ids
+    assert retiradas["RETIRADO_EN"].iloc[0] in set(segunda.correlativa["ID_ENTIDAD"])
+    herencia = segunda.manifiesto["completar"]["id_entidad"]["herencia"]
+    assert herencia["heredadas"] == 1 and herencia["retiradas"] == 1
+    assert segunda.manifiesto["cruce"]["parametros"]["corrida_anterior"] == str(anterior)
+    leido = leer_resultado(segunda.carpeta)
+    # leer_resultado devuelve texto con nan (parquet → pandas); el contenido es el mismo.
+    pd.testing.assert_frame_equal(leido.entidades_ids, segunda.entidades_ids, check_dtype=False)
+    assert leido.validar().ok, leido.validar().fallos
+
+
+def test_el_smoke_test_tambien_recibe_corrida_anterior(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """Pulido F2 (hallazgo 14 de F2.4): el smoke existe para fallar temprano con una
+    muestra; si solo la corrida total heredaba, un crosswalk que tropieza en
+    ``_heredar`` se descubría tras la corrida completa. Las DOS llamadas a
+    ``linkage()`` reciben ``corrida_anterior`` cuando ``ConfigCruce`` lo trae."""
+    import record_linkage.flujo.cruce as modulo
+
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    llamadas: list[dict] = []
+    linkage_real = modulo.linkage
+
+    def linkage_espia(sources, **kwargs):
+        llamadas.append(kwargs)
+        return linkage_real(sources, **kwargs)
+
+    monkeypatch.setattr(modulo, "linkage", linkage_espia)
+    segunda = ejecutar_cruce(
+        config_cruce(
+            fuentes_csv,
+            tmp_path / "p2",
+            nombre="segunda",
+            filas_smoke=1,
+            corrida_anterior=primera.carpeta,
+        )
+    )
+    assert segunda.validar().ok, segunda.validar().fallos
+    assert len(llamadas) == 2
+    assert [k["corrida_anterior"] for k in llamadas] == [primera.carpeta, primera.carpeta]
+    assert llamadas[0]["work_dir"].endswith("_smoke")
+
+
+def test_una_generacion_de_disco_sirve_como_corrida_anterior(fuentes_csv, tmp_path: Path) -> None:
+    """La generación del modo disco lleva ``REGISTROS`` (la misma regla que en
+    pandas), así que una corrida posterior con motor pandas hereda de ella."""
+    from record_linkage.identidad.estable import COLUMNA_REGISTROS, NOMBRE_CROSSWALK
+
+    _con_filas_sin_nit(fuentes_csv)
+    disco = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "d", motor_ingesta="duckdb", modo_resultado="disco")
+    )
+    x = pd.read_parquet(disco.carpeta / NOMBRE_CROSSWALK)
+    assert list(x.columns) == list(contrato.COLUMNAS_ENTIDADES_IDS)
+    assert x[COLUMNA_REGISTROS].notna().all() and x["RETIRADO_EN"].isna().all()
+    assert x.loc[x["ID_ENTIDAD"].str.startswith("ENT-"), "N_REGISTROS"].tolist() == [2]
+
+    despues = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "p", nombre="despues", corrida_anterior=disco.carpeta)
+    )
+    herencia = despues.manifiesto["completar"]["id_entidad"]["herencia"]
+    assert herencia["corrida_anterior"] == str(disco.carpeta / NOMBRE_CROSSWALK)
+    assert herencia["heredadas"] == 1 and herencia["retiradas"] == 0
+    assert set(despues.correlativa["ID_ENTIDAD"]) == set(disco.leer().correlativa["ID_ENTIDAD"])

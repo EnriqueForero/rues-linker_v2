@@ -20,6 +20,11 @@ dos fuentes) y una corrida de ``linkage()`` sin L6:
   definitiva ni pendiente;
 * ``leer_resultado`` devuelve un ``ResultadoLinkage`` que ``validar()``
   acepta, aplica los alias en español y detecta un artefacto alterado;
+* cada libro de ``excel/`` (``correlativa.xlsx``, ``golden.xlsx`` y el
+  ``<tabla>_LEEME.xlsx`` cuando no cabe) lleva una segunda hoja ``DICCIONARIO``
+  con las filas de ``diccionario.csv`` de ESA tabla (columna · alias_es ·
+  significado · origen), neutralizada como los datos; los alias de v1 no la
+  llevan (F2.16);
 * ``revision.csv`` y ``diccionario.csv`` son FIELES a los datos (sin la
   neutralización de hoja de cálculo): lo que se escribe es lo que
   ``leer_resultado`` devuelve, también con nombres que empiezan por
@@ -61,12 +66,13 @@ import hashlib
 import json
 import logging
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
+from apoyo_excel import hojas_del_libro
 from openpyxl import load_workbook
 from test_contrato_salida import _correr_linkage, _silencio, conjunto_sintetico
 
@@ -80,6 +86,7 @@ from record_linkage.exporters.escritor import (
     escribir_resultado,
     leer_resultado,
 )
+from record_linkage.identidad.estable import crosswalk_de_corrida
 from record_linkage.pipeline.errores import ContratoSalidaError, EscrituraSalidaError
 from record_linkage.resultado import ResultadoLinkage
 
@@ -219,16 +226,307 @@ def test_manifest_lista_cada_artefacto_con_sha256_y_bytes_reales(
     assert isinstance(Manifiesto.desde_dict(texto), Manifiesto)
 
 
+def test_leer_resultado_devuelve_id_grupo_del_crosswalk_como_int64(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """El lector devuelve ``ID_GRUPO`` como ``Int64`` (el tipo de
+    ``cargar_corrida_anterior``) sea cual sea el contenido: con un nulo,
+    ``pd.read_parquet`` daría ``float64``; sin nulos, ``int64``. Un crosswalk
+    con ``ID_GRUPO`` nulo viola el contrato (ADR-0012 §3) y ``validar()`` lo
+    rechaza antes de escribir, así que el caso con nulo se prueba sobre el
+    lector del archivo (``_leer_entidades_ids``), no publicándolo."""
+    from record_linkage.exporters.escritor import _leer_entidades_ids, escribir_parquet
+
+    assert res.entidades_ids is not None
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert pd.read_parquet(man.carpeta / "entidades_ids.parquet")["ID_GRUPO"].dtype == "int64"
+    leido = leer_resultado(man.carpeta)
+    assert leido.entidades_ids is not None
+    assert leido.entidades_ids["ID_GRUPO"].dtype == "Int64"
+    assert len(leido.entidades_ids) == len(res.entidades_ids)
+
+    retirada = pd.DataFrame(
+        {
+            "ID_ENTIDAD": pd.Series(["ENT-ffffffffffffffff"], dtype="string"),
+            "ID_GRUPO": pd.Series([pd.NA], dtype="Int64"),
+            "N_REGISTROS": pd.Series([0], dtype="int64"),
+            "RETIRADO_EN": pd.Series(
+                [str(res.entidades_ids["ID_ENTIDAD"].iloc[0])], dtype="string"
+            ),
+            "REGISTROS": pd.Series([pd.NA], dtype="string"),
+        }
+    )
+    con_nulo = pd.concat([res.entidades_ids, retirada], ignore_index=True)
+    # Escrito como lo escribe el estándar (esquema del contrato, sin metadatos
+    # de pandas): con un nulo, pd.read_parquet lo devuelve como float64.
+    crudo = tmp_path / "crudo.parquet"
+    escribir_parquet(con_nulo, crudo, contrato.ENTIDADES_IDS)
+    assert pd.read_parquet(crudo)["ID_GRUPO"].dtype == "float64"
+    ids = _leer_entidades_ids(crudo)
+    assert ids["ID_GRUPO"].dtype == "Int64" and ids["ID_GRUPO"].isna().sum() == 1
+    # Publicarlo ya no es posible: validar() lo rechaza antes de escribir nada.
+    with pytest.raises(ContratoSalidaError, match="entidades_ids: ID_GRUPO tiene 1 nulo"):
+        escribir_resultado(
+            _con(res, entidades_ids=con_nulo), tmp_path, "nulo", marca_tiempo=MARCA, excel=False
+        )
+    assert not any(p.name.endswith("_nulo") for p in tmp_path.iterdir())
+
+
 def test_entidades_ids_es_el_crosswalk_de_la_corrida(res: ResultadoLinkage, tmp_path: Path) -> None:
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
     ids = pd.read_parquet(man.carpeta / "entidades_ids.parquet")
-    assert list(ids.columns) == ["ID_ENTIDAD", "ID_GRUPO", "N_REGISTROS", "RETIRADO_EN"]
+    assert list(ids.columns) == [
+        "ID_ENTIDAD",
+        "ID_GRUPO",
+        "N_REGISTROS",
+        "RETIRADO_EN",
+        "REGISTROS",
+    ]
     assert len(ids) == res.correlativa["ID_GRUPO"].nunique()
     assert ids["ID_ENTIDAD"].is_unique and ids["ID_GRUPO"].is_unique
     assert ids["RETIRADO_EN"].isna().all()
+    # F2.4: los ID_REGISTRO de cada entidad, ordenados, para que la corrida
+    # siguiente herede por solapamiento (corrida_anterior=).
+    registros = res.correlativa.groupby("ID_GRUPO")["ID_REGISTRO"].agg(
+        lambda s: "|".join(sorted(s))
+    )
+    assert ids.set_index("ID_GRUPO")["REGISTROS"].sort_index().tolist() == registros.tolist()
     assert int(ids["N_REGISTROS"].sum()) == len(res.correlativa)
     esperado = res.correlativa.groupby("ID_GRUPO").size()
     assert ids.set_index("ID_GRUPO")["N_REGISTROS"].sort_index().tolist() == esperado.tolist()
+
+
+def _filas_diccionario(carpeta: Path, tabla: str) -> list[list[object]]:
+    """Encabezado + filas de ``diccionario.csv`` de ``tabla`` con la forma de la hoja DICCIONARIO."""
+    dicc = pd.read_csv(carpeta / "diccionario.csv", dtype="string", keep_default_na=False)
+    filas = dicc[dicc["tabla"] == tabla][["columna", "alias_es", "significado", "origen"]]
+    return [list(filas.columns), *filas.to_numpy(dtype=object).tolist()]
+
+
+def test_cada_excel_lleva_la_hoja_diccionario_de_su_tabla(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """F2.16: quien abre el Excel entiende cada columna sin salir del libro. La hoja
+    se arma desde el mismo diccionario que ``diccionario.csv`` (nada a mano): las
+    filas de ESA tabla —contrato, fuente y adicionales— con columna · alias_es ·
+    significado · origen; los nombres de columna de los datos no cambian."""
+    man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
+    for tabla, df in (("correlativa", res.correlativa), ("golden", res.golden)):
+        hojas = hojas_del_libro(man.carpeta / "excel" / f"{tabla}.xlsx")
+        assert list(hojas) == [tabla, "DICCIONARIO"], tabla
+        assert hojas[tabla][0] == list(df.columns)  # los nombres canónicos, sin alias
+        assert hojas["DICCIONARIO"] == _filas_diccionario(man.carpeta, tabla), tabla
+        # Toda columna de la hoja de datos está explicada.
+        explicadas = {fila[0] for fila in hojas["DICCIONARIO"][1:]}
+        assert set(df.columns) <= explicadas, tabla
+    correl = hojas_del_libro(man.carpeta / "excel" / "correlativa.xlsx")["DICCIONARIO"]
+    por_columna = {fila[0]: fila for fila in correl[1:]}
+    assert por_columna["CIUDAD"][3] == "fuente"  # columna de la fuente, con su origen
+    assert por_columna["ID_REGISTRO_FUENTE"][3] == "fuente"  # renombrada por colisión
+    assert por_columna["SRC"][1] == "FUENTE"  # alias en español, solo en el diccionario
+    golden = hojas_del_libro(man.carpeta / "excel" / "golden.xlsx")["DICCIONARIO"]
+    assert {fila[0]: fila[1] for fila in golden[1:]}["PRIMARY_SOURCE"] == "FUENTE_PRINCIPAL"
+    # El manifiesto no cambia de forma: el Excel sigue siendo un artefacto, sin omitidos.
+    assert {a["ruta"] for a in man.artefactos} >= {"excel/correlativa.xlsx", "excel/golden.xlsx"}
+    assert [o["artefacto"] for o in man.omitidos] == []
+
+
+def test_hoja_diccionario_se_neutraliza_como_los_datos(tmp_path: Path) -> None:
+    """Un nombre de columna que empieza por ``=`` entra al diccionario tal cual (es
+    fiel) y a la hoja DICCIONARIO con el apóstrofo, como a la hoja de datos."""
+    df = pd.DataFrame({"=COL": [1, 2], "B": ["x", "y"]})
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["correlativa", "correlativa"],
+            "columna": ["=COL", "B"],
+            "tipo": ["int64", "string"],
+            "significado": ["Columna de la fuente, sin cambios.", "=otra"],
+            "origen": ["fuente", "fuente"],
+            "alias_es": ["=COL", "B"],
+        }
+    )
+    ruta = tmp_path / "correlativa.xlsx"
+    escrito = escritor.escribir_excel_o_leeme(
+        df, ruta, hoja="correlativa", diccionario=escritor.hoja_diccionario(dicc, "correlativa")
+    )
+    assert escrito == ruta
+    hojas = hojas_del_libro(ruta)
+    assert list(hojas) == ["correlativa", "DICCIONARIO"]
+    assert hojas["correlativa"][0] == ["'=COL", "B"]
+    assert hojas["DICCIONARIO"] == [
+        ["columna", "alias_es", "significado", "origen"],
+        ["'=COL", "'=COL", "Columna de la fuente, sin cambios.", "fuente"],
+        ["B", "B", "'=otra", "fuente"],
+    ]
+    # Sin diccionario (los alias de v1 de L6) el libro no cambia: una sola hoja.
+    ruta2 = tmp_path / "sin.xlsx"
+    escritor.escribir_excel_o_leeme(df, ruta2, hoja="datos")
+    assert list(hojas_del_libro(ruta2)) == ["datos"]
+    # Un diccionario vacío tampoco deja una hoja sin filas.
+    ruta3 = tmp_path / "vacio.xlsx"
+    escritor.escribir_excel_o_leeme(
+        df, ruta3, hoja="datos", diccionario=escritor.hoja_diccionario(dicc, "golden")
+    )
+    assert list(hojas_del_libro(ruta3)) == ["datos"]
+
+
+def test_una_sola_regla_de_reloj_para_la_carpeta_el_manifiesto_y_created_at(
+    res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pulido F2 (hallazgo 25 de F2.6): el escritor usaba ``datetime.now()`` local y
+    ``flujo.importadores``/``salida.completar`` UTC: dos relojes para el mismo nombre
+    de carpeta. Ahora los tres leen ``contrato.marca_de_corrida()`` (UTC con zona)."""
+    from record_linkage.flujo import importadores
+    from record_linkage.salida import completar
+
+    real = contrato.marca_de_corrida()
+    assert real.tzinfo is not None and real.utcoffset() == timezone.utc.utcoffset(None)
+
+    fija = datetime(2026, 10, 10, 21, 30, 59, tzinfo=timezone.utc)
+    monkeypatch.setattr(contrato, "marca_de_corrida", lambda: fija)
+    man = escribir_resultado(res, tmp_path, "reloj", excel=False)
+    assert man.carpeta.name == "2026-10-10_2130_reloj"
+    assert man.marca_tiempo == "2026-10-10T21:30:59+00:00"
+    assert importadores._marca_de_corrida() == "2026-10-10 21:30:59"
+    # Ninguno de los tres lee el reloj por su cuenta.
+    for modulo in (escritor, importadores, completar):
+        fuente = Path(modulo.__file__).read_text(encoding="utf-8")
+        assert "datetime.now(" not in fuente, modulo.__name__
+        assert "contrato.marca_de_corrida()" in fuente, modulo.__name__
+
+
+def test_escribir_excel_o_leeme_rechaza_una_hoja_de_datos_llamada_diccionario(
+    tmp_path: Path,
+) -> None:
+    """Pulido F2 (hallazgo 2 de F2.16): con ``diccionario`` la hoja ``DICCIONARIO`` va
+    al final; si la hoja de datos se llama igual, xlsxwriter lanzaba un
+    ``DuplicateWorksheetName`` crudo. Ahora falla antes de abrir el libro, con qué
+    hacer, y no deja archivo."""
+    df = pd.DataFrame({"A": [1]})
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["x"],
+            "columna": ["A"],
+            "significado": ["Una columna."],
+            "origen": ["fuente"],
+            "alias_es": ["A"],
+        }
+    )
+    ruta = tmp_path / "x.xlsx"
+    with pytest.raises(ValueError, match=r"(?s)DICCIONARIO.*Qué hacer"):
+        escritor.escribir_excel_o_leeme(
+            df, ruta, hoja="diccionario", diccionario=escritor.hoja_diccionario(dicc, "x")
+        )
+    assert not ruta.exists()
+    # Sin diccionario (o vacío) ese nombre de hoja sigue siendo válido.
+    escritor.escribir_excel_o_leeme(df, ruta, hoja="DICCIONARIO")
+    assert list(hojas_del_libro(ruta)) == ["DICCIONARIO"]
+
+
+def test_hoja_diccionario_selecciona_por_tabla_o_por_columnas() -> None:
+    """La única regla de selección (``exporters.excel.hoja_diccionario``): las filas
+    de la tabla (sin distinguir mayúsculas); si la tabla no está en el diccionario,
+    las filas de las columnas que se pasan, una por columna y en su orden."""
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["correlativa", "correlativa", "golden"],
+            "columna": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+            "tipo": ["int64", "string", "int64"],
+            "significado": ["grupo (correl)", "nombre", "grupo (golden)"],
+            "origen": ["motor", "fuente", "motor"],
+            "alias_es": ["ID_GRUPO", "RAZON_SOCIAL", "ID_GRUPO"],
+        }
+    )
+    columnas = ["columna", "alias_es", "significado", "origen"]
+    por_tabla = escritor.hoja_diccionario(dicc, "CORRELATIVA")
+    assert list(por_tabla.columns) == columnas
+    assert por_tabla["columna"].tolist() == ["ID_GRUPO", "RAZON_SOCIAL"]
+    por_columnas = escritor.hoja_diccionario(dicc, "DUPLICADOS", ["RAZON_SOCIAL", "ID_GRUPO", "X"])
+    assert por_columnas["columna"].tolist() == ["RAZON_SOCIAL", "ID_GRUPO"]
+    assert por_columnas["significado"].tolist() == ["nombre", "grupo (correl)"]  # la primera
+    assert escritor.hoja_diccionario(dicc, "RESUMEN", ["metrica"]).empty
+    assert escritor.hoja_diccionario(dicc, "RESUMEN").empty
+    with pytest.raises(ValueError, match=r"diccionario.*columna"):
+        escritor.hoja_diccionario(pd.DataFrame({"tabla": ["a"], "columna": ["b"]}), "a")
+
+
+def test_entidades_ids_de_grupos_es_la_misma_regla(res: ResultadoLinkage) -> None:
+    """La regla del crosswalk se escribe una vez (F2.4 + F2.18): ``_entidades_ids``
+    (desde la correlativa en pandas, ``identidad.estable.crosswalk_de_corrida``)
+    y ``_entidades_ids_de_grupos`` (desde la tabla por grupo que el modo disco
+    calcula en SQL: ``ID_GRUPO``, ``ID_ENTIDAD``, ``N_REGISTROS`` y ``REGISTROS``
+    = ``list(ID_REGISTRO ORDER BY ID_REGISTRO)``) dan EXACTAMENTE lo mismo,
+    con ``REGISTROS`` y ``RETIRADO_EN`` nulo (no hay corrida anterior)."""
+    c = res.correlativa
+    grupos = (
+        c.sort_values("ID_REGISTRO")
+        .groupby("ID_GRUPO", sort=False)
+        .agg(
+            ID_ENTIDAD=("ID_ENTIDAD", "first"),
+            N_REGISTROS=("ID_ENTIDAD", "size"),
+            REGISTROS=("ID_REGISTRO", list),
+        )
+        .reset_index()
+        .sample(frac=1, random_state=7)  # el orden de entrada no importa
+    )
+    desde_grupos = escritor._entidades_ids_de_grupos(grupos)
+    esperado = crosswalk_de_corrida(c)
+    pd.testing.assert_frame_equal(desde_grupos, esperado)
+    pd.testing.assert_frame_equal(desde_grupos, escritor._entidades_ids(res))
+    assert list(desde_grupos.columns) == list(contrato.COLUMNAS_ENTIDADES_IDS)
+    assert desde_grupos["REGISTROS"].notna().all() and desde_grupos["RETIRADO_EN"].isna().all()
+    # Una lista incompleta (REGISTROS no cubre N_REGISTROS) no pasa en silencio.
+    rotos = grupos.copy()
+    i = rotos.index[rotos["N_REGISTROS"] > 1][0]
+    rotos.at[i, "REGISTROS"] = list(rotos.at[i, "REGISTROS"])[:-1]
+    with pytest.raises(ContratoSalidaError, match="REGISTROS"):
+        escritor._entidades_ids_de_grupos(rotos)
+
+
+def test_manifiesto_de_admite_lo_que_el_modo_disco_calcula_en_sql(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """``_manifiesto_de`` es la cola de ``_escribir_en`` y la usa también el modo
+    disco: lo que ahí se calcula en SQL (insumos, conteos, métricas de la tabla
+    publicada, invariantes verificadas en SQL) entra por parámetro y lo demás
+    (corrida, parámetros, tiempos, omitidos del resultado) sale de ``res``."""
+    omitidos = [{"artefacto": "excel/golden.xlsx", "motivo": "modo disco"}]
+    man = escritor._manifiesto_de(
+        res,
+        nombre="prueba",
+        marca_tiempo=MARCA,
+        definitiva=tmp_path / CARPETA_ESPERADA,
+        artefactos=[],
+        omitidos=omitidos,
+        insumos={"CRM": {"filas": 99, "representantes": 90}},
+        conteos={"filas": 99, "grupos": 5},
+        metricas_extra={"n_registros": 99, "tasa_reduccion": 0.5},
+        invariantes_extra={"verificado_en_sql": ["ID_REGISTRO único"]},
+    )
+    assert isinstance(man, Manifiesto)
+    assert man.nombre == "prueba" and man.marca_tiempo == MARCA.isoformat(timespec="seconds")
+    assert man.insumos == {"CRM": {"filas": 99, "representantes": 90}}
+    assert man.conteos == {"filas": 99, "grupos": 5}
+    assert man.metricas["n_registros"] == 99 and man.metricas["tasa_reduccion"] == 0.5
+    assert man.invariantes["ok"] is True and man.invariantes["verificado_en_sql"] == [
+        "ID_REGISTRO único"
+    ]
+    assert man.omitidos[0] == omitidos[0]
+    assert man.parametros["llamada"] == res.manifiesto["parametros"]
+    assert man.corrida["funcion"] == res.manifiesto["funcion"]
+    assert "entradas" not in man.corrida and "configuracion" not in man.corrida
+    # Sin los extras, es exactamente lo que escribe escribir_resultado.
+    base = escritor._manifiesto_de(
+        res,
+        nombre="prueba",
+        marca_tiempo=MARCA,
+        definitiva=tmp_path / CARPETA_ESPERADA,
+        artefactos=[],
+        omitidos=[],
+    )
+    escrito = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA, excel=False)
+    assert base.conteos == escrito.conteos and base.insumos == escrito.insumos
+    assert base.metricas == escrito.metricas and base.parametros == escrito.parametros
 
 
 def test_sin_excel_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -257,7 +555,10 @@ def test_sin_configuracion_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_pat
     assert [o["artefacto"] for o in omitidos] == ["parametros.perfil"]
     motivo = omitidos[0]["motivo"]
     assert "no trae la configuración" in motivo
-    assert "linkage(carpeta_salida=" in motivo and "parametros_motor(config).a_dict()" in motivo
+    # Pulido F2 (hallazgo 23 de F2.7): dedupe()/link() publican por la misma
+    # pendiente; el remedio no puede ser «use linkage(carpeta_salida=...)».
+    assert "linkage(" not in motivo
+    assert "parametros.llamada" in motivo and "parametros_motor(config).a_dict()" in motivo
     # Lo mismo que se escribió se vuelve a leer.
     texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
     assert texto["parametros"]["perfil"] is None
@@ -279,10 +580,13 @@ def test_excel_que_no_cabe_deja_leeme_y_no_recorta(
     ]
     libro = load_workbook(excel / "correlativa_LEEME.xlsx", read_only=True)
     try:
-        assert libro.sheetnames == ["LEEME"]
+        # F2.16: el LEEME también lleva la hoja DICCIONARIO de su tabla.
+        assert libro.sheetnames == ["LEEME", "DICCIONARIO"]
         celdas = [str(c.value) for fila in libro["LEEME"].iter_rows() for c in fila if c.value]
+        filas_dicc = [list(f) for f in libro["DICCIONARIO"].iter_rows(values_only=True)]
     finally:
         libro.close()
+    assert filas_dicc == _filas_diccionario(man.carpeta, "correlativa")
     texto = "\n".join(celdas)
     assert f"{len(res.correlativa):,}".replace(",", ".") in texto
     assert "read_parquet" in texto and "duckdb" in texto.lower() and "Power Query" in texto
@@ -352,8 +656,6 @@ def test_columna_de_la_fuente_con_listas_se_publica_con_excel_como_texto(
     assert man.verificar() == []
     assert "excel/correlativa.xlsx" in {a["ruta"] for a in man.artefactos}
     assert [o["artefacto"] for o in man.omitidos] == []
-    from openpyxl import load_workbook
-
     libro = load_workbook(man.carpeta / "excel" / "correlativa.xlsx", read_only=True)
     try:
         hoja = libro["correlativa"]
@@ -648,6 +950,25 @@ def test_leer_resultado_devuelve_un_resultado_valido(res: ResultadoLinkage, tmp_
     assert leido.metricas["n_registros"] == len(res.correlativa)
     assert leido.manifiesto["manifest"]["nombre"] == "prueba"
     assert leido.dir_trabajo is None  # _trabajo/ no está dentro de esta carpeta
+
+
+def test_entero_del_contrato_todo_nulo_vuelve_como_int64(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Una correlativa con ``NIT_DISTANCE`` todo nulo (una base sin identificador,
+    como la de importadores) se escribe ``int64`` por el esquema del contrato;
+    ``pd.read_parquet`` la devolvería ``float64`` y ``leer_resultado`` la restituye
+    a entero nulable (``Int64``), con ``validar().ok`` (F2.6)."""
+    correl = res.correlativa.copy()
+    correl["NIT_DISTANCE"] = pd.array([pd.NA] * len(correl), dtype="Int64")
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "nulos", marca_tiempo=MARCA)
+    assert str(pd.read_parquet(man.carpeta / "correlativa.parquet")["NIT_DISTANCE"].dtype) != (
+        "Int64"
+    ), "la lectura cruda de pandas es la que pierde el tipo; si deja de hacerlo, simplifique"
+    leido = leer_resultado(man.carpeta)
+    assert str(leido.correlativa["NIT_DISTANCE"].dtype) == "Int64"
+    assert leido.correlativa["NIT_DISTANCE"].isna().all()
+    assert leido.validar().ok, leido.validar().resumen()
 
 
 def test_revision_csv_es_fiel_a_los_datos(res: ResultadoLinkage, tmp_path: Path) -> None:
@@ -975,25 +1296,25 @@ _ESCRITORES = {
 #: que F2 lleva al estándar, o herramientas que no producen el entregable.
 #: Lo que se encontró de más respecto a la lista de la especificación
 #: (``golden/generator.py`` y ``engine/`` NO escriben; ``reporting/suite.py``,
-#: ``flujo/``, ``deduplication/colab.py``, ``exporters/smart.py``,
-#: ``evaluation/``, ``optimization/`` y ``classifier/`` sí) se lista con su
-#: motivo. Quitar una entrada exige quitar primero la llamada.
+#: ``flujo/``, ``exporters/smart.py``, ``evaluation/banco.py`` y ``classifier/``
+#: sí) se lista con su motivo. Quitar una entrada exige quitar primero la
+#: llamada (F2.8 retiró ``deduplication/colab.py`` como escritor,
+#: ``evaluation/ground_truth.py`` y ``optimization/engine.py``; F2.14 restauró
+#: ``evaluation/ground_truth.py`` por decisión de Enrique).
 ESCRITORES_PERMITIDOS: dict[str, str] = {
     "exporters/escritor.py": "el escritor único del estándar (F1.10).",
     "exporters/excel.py": "la primitiva xlsx del escritor (F1.11): completo en flujo o LEEME.",
     "pipeline/orchestrator.py": "checkpoints L1…L5 en _trabajo/.",
     "pipeline/linkage_pipeline.py": "checkpoints del pipeline heredado en _trabajo/.",
-    "pipeline/result.py": "PipelineResult.to_excel/to_csv heredados (lo pide el usuario).",
     "reporting/suite.py": "reportes L6 de v1 (reporte_*.xlsx); pendiente unificarlos en "
     "informe_cruce.xlsx a través del escritor.",
     "exporters/smart.py": "SmartExporter: utilidad genérica de exportación, no el estándar.",
     "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",
     "flujo/insumos.py": "camino cruce: caché de insumos en parquet.",
     "flujo/resultados_disco.py": "camino cruce: resultados en disco; F2 lo lleva al estándar.",
-    "deduplication/colab.py": "camino dedupe por lotes en Colab; F2 lo lleva al estándar.",
     "evaluation/banco.py": "el banco (medición), no el entregable.",
-    "evaluation/ground_truth.py": "ground truth (medición), no el entregable.",
-    "optimization/engine.py": "reportes de Optuna, no el entregable.",
+    "evaluation/ground_truth.py": "archivo de pares para revisión humana (medición), no el "
+    "entregable (F2.14).",
     "classifier/data_loader.py": "datos de entrenamiento del clasificador.",
 }
 

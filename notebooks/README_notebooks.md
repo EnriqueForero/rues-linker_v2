@@ -35,6 +35,10 @@ orquestador declarativo: entorno, parámetros, preflight, ejecución y QA lazy.
   RUES × Exportaciones DANE ya cargado
   -> `06_orquestador_configurable.ipynb` (**la recomendada**; v0.16.0,
   con staging DuckDB, límite temprano y spill local).
+- Quiero **calibrar los parámetros del motor** contra pares que una persona
+  etiquetó (muestra estratificada, Optuna, `linkage(ajustes_perfil=...)`)
+  -> `12_optimizar_parametros_con_optuna.ipynb` (experto; F2.15, trae demo
+  autocontenida con empresas inventadas).
 
 ## Preparación en Colab Free
 
@@ -58,8 +62,9 @@ Su lógica no vive en las celdas sino en `record_linkage.flujo`, que se entrega
 con pruebas; los notebooks tienen además contratos en
 `tests/test_notebooks_v014.py`, `tests/test_notebook_orquestador_v016.py` y
 `tests/test_notebooks_contrato.py` (F1.15: ninguno usa la API anterior al
-contrato de salida y los siete 01–06 se ejecutan enteros con `nbclient` sobre
-`tests/data_sintetica/`, prueba marcada `slow`)
+contrato de salida y los siete 01–06, más el 12, se ejecutan enteros con
+`nbclient` sobre `tests/data_sintetica/`, prueba marcada `slow`; el 12 además
+tiene la compuerta de que no reimplementa el optimizador)
 (el primer nombre es histórico; el contrato actual es 0.16.0:
 el código compila, los nombres importados
 existen, la celda editable se mantiene corta y el trabajo nunca se configura
@@ -241,3 +246,24 @@ si la línea base es de esta sesión.
 > `rues-linker_v2`: renombrarla rompería `importlib.metadata.version(...)` en
 > `__init__.py`, en `verificar_coherencia_version.py` y en todos los notebooks que
 > verifican su versión.
+
+## 12 · Optimizar parámetros con Optuna (F2.15)
+
+Para cuando **su base** se comporta distinto de la de referencia y el perfil
+por defecto deja sin unir (o une de más). Seis pasos, una celda cada uno:
+cargar la base (o generar la de demostración, **empresas inventadas** con la
+verdad en `ENTIDAD`), construir la **muestra de pares para etiquetar** con
+`GroundTruthGenerator` (fáciles, difíciles, ambiguos, negativos), etiquetar
+(`IS_MATCH`; simulado en la demo, humano en la vida real), optimizar con
+`OrchestratorOptimizer` sobre un espacio declarado con `espacio_de_busqueda`
+(pocos trials, cada uno corre el motor completo), aplicar con
+`linkage(ajustes_perfil=optimizer.ajustes_perfil())` y comparar
+antes/después sobre los mismos pares, y guardar el estudio como JSON.
+
+Es **delgado a propósito**: la muestra, la métrica (`evaluar_pares_etiquetados`,
+solo sobre los pares etiquetados), el bucle de Optuna, las figuras y el JSON
+viven en la librería; el notebook configura y llama. La celda de entorno es la
+de los 01–04 con las extras `optimization` y `viz`. Medido sobre la demo (304
+registros, 160 pares): F1 0,9917 → 1,000 en 8 trials, ≈ 35 s enteros con
+`nbclient`. Cuándo optimizar, cómo construir la verdad y qué NO hace:
+[`docs/OPTIMIZACION.md`](../docs/OPTIMIZACION.md).

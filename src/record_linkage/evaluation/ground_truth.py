@@ -1,566 +1,474 @@
-"""
-evaluation.ground_truth — record_linkage_pipeline
+"""evaluation.ground_truth — muestra estratificada de pares para construir una verdad.
 
 Componentes:
-    - class GroundTruthGenerator  (origen: notebook celda [131])
-    - class GroundTruthEvaluator  (origen: notebook celda [165])
+    - ``ConfigGroundTruth``: qué proporción de cada clase, umbrales y columnas.
+    - ``GroundTruthGenerator``: muestrea pares fáciles, difíciles, ambiguos y
+      negativos para que una persona los revise (``IS_MATCH``) y produzca el
+      archivo que ``evaluation.quality.QualityEvaluator`` carga.
+    - ``GroundTruthEvaluator``: se RE-EXPORTA desde ``evaluador_verdad.py``,
+      que es su única implementación (regla 3: una regla se escribe una vez).
 
-NOTA: Lógica de negocio preservada exactamente como en el notebook
-fuente. Solo se agregan imports, docstring de módulo y se eliminan
-directivas de Jupyter (%%time, !pip, etc.). Ver MIGRATION_LOG.md.
+Historia. El generador nació en el notebook (celda [131]) y F2.8 lo retiró el
+6 de octubre de 2026 junto con el paquete ``optimization/`` porque solo tenía
+dos pruebas humo. Enrique decidió el 7 de octubre conservar la funcionalidad
+(«no porque no se use seguido se debe eliminar»), así que F2.14 lo restaura
+aquí. Lo que cambia respecto a 4dccfaf:
+
+* Ya no importa ``optimization/`` (``OptimizationEngine`` y ``ParameterSpace``
+  solo los usaba ``GroundTruthEvaluator.cross_validate``, que ahora vive UNA
+  vez en ``OrchestratorOptimizer.validacion_cruzada``). El «calculador de
+  similitud perezoso» era un ``token_set_ratio`` para nombres y una distancia
+  de Levenshtein normalizada para identificadores: aquí se usan el comparador
+  ``token_set_ratio`` ya registrado en ``matching.comparadores_extra`` y
+  ``rapidfuzz`` directo, sin volver a escribirlos.
+* Sin ``iterrows`` ni bucles por par (regla 2 del CLAUDE.md): los candidatos
+  difíciles y ambiguos salen de UNA matriz de similitud sobre una muestra de
+  tamaño acotado (``muestra_max``) y de máscaras numpy; el resto es
+  ``groupby``/``sample`` de pandas.
+* Reproducible: toda la aleatoriedad sale de ``ConfigGroundTruth.semilla``
+  (la versión original muestreaba los negativos sin semilla).
+* Los negativos «claros» se verifican (similitud de nombre por debajo del
+  umbral ambiguo y NIT canónico distinto o ausente); antes solo se suponía
+  que dos fuentes al azar no coincidían.
+
+Las columnas de salida (``ID_1``, ``ID_2``, ``IS_MATCH``, ``CASE_TYPE``…) se
+conservan en inglés porque son el contrato que ``QualityEvaluator`` lee.
 """
 
 from __future__ import annotations
 
-import tempfile
-from itertools import combinations
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz
-from rapidfuzz.distance import Levenshtein
 
 from ..exporters._spreadsheet import prepare_spreadsheet_data
-from ..optimization.engine import OptimizationEngine
-from ..optimization.parameters import ParameterSpace
+from ..matching.comparadores_extra import obtener as obtener_comparador
+from ..matching.comparators import _a_texto
 from ..utils.logger import CustomLogger
-from ..utils.performance import track_performance
+from .evaluador_verdad import GroundTruthEvaluator
+
+__all__ = [
+    "CLASES",
+    "COLUMNAS_SALIDA",
+    "ConfigGroundTruth",
+    "GroundTruthEvaluator",
+    "GroundTruthGenerator",
+]
+
+#: Las cuatro clases del muestreo, en el orden en que se generan.
+CLASES: tuple[str, ...] = ("easy_positive", "difficult_positive", "ambiguous", "easy_negative")
+
+#: Orden de columnas del archivo de revisión (contrato de ``QualityEvaluator``).
+COLUMNAS_SALIDA: tuple[str, ...] = (
+    "ID_1",
+    "ID_2",
+    "IS_MATCH",
+    "RAZON_SOCIAL_1",
+    "RAZON_SOCIAL_2",
+    "NIT_1",
+    "NIT_2",
+    "NAME_SIMILARITY",
+    "NIT_SIMILARITY",
+    "CASE_TYPE",
+    "SRC_1",
+    "SRC_2",
+    "CONFIDENCE",
+    "REVIEWER",
+    "REVIEW_DATE",
+    "NOTES",
+)
+
+_COLUMNAS_REVISION: tuple[str, ...] = ("IS_MATCH", "REVIEWER", "REVIEW_DATE", "CONFIDENCE", "NOTES")
+_COLUMNA_ID = "_ID_REGISTRO_INTERNO"
+
+
+def _proporciones_por_defecto() -> dict[str, float]:
+    return {
+        "easy_positive": 0.20,  # mismo identificador
+        "difficult_positive": 0.30,  # nombre casi igual, identificador distinto
+        "ambiguous": 0.30,  # nombre parecido a medias
+        "easy_negative": 0.20,  # nombres que no se parecen, fuentes distintas
+    }
+
+
+@dataclass(frozen=True)
+class ConfigGroundTruth:
+    """Configuración del muestreo. Cero números mágicos fuera de aquí.
+
+    Attributes:
+        semilla: única fuente de aleatoriedad (muestras, orden final).
+        proporciones: fracción de ``n_samples`` por clase; deben sumar 1 y
+            cubrir exactamente las cuatro ``CLASES``.
+        umbral_dificil: similitud de nombre mínima de un positivo difícil.
+        umbral_ambiguo: similitud mínima de un ambiguo (máxima exclusiva: el
+            umbral difícil) y máxima exclusiva de un negativo claro.
+        muestra_max: tamaño de la muestra sobre la que se calcula la matriz de
+            similitud de nombres. El costo es O(muestra_max²) en memoria
+            (``float32``: 3.000² ≈ 36 MB) y en tiempo; súbalo con cuidado.
+        tamano_grupo_max: los grupos por identificador más grandes que esto no
+            aportan positivos fáciles (suelen ser identificadores basura).
+        col_nombre, col_nit_canonico, col_nit, col_razon_social, col_fuente:
+            columnas del DataFrame preprocesado. ``col_nombre`` es obligatoria
+            (sin ella toda similitud sería 0 y solo saldrían negativos: el
+            generador falla en vez de muestrear a ciegas). Las demás, si
+            faltan, se tratan como vacías (sin identificador no hay positivos
+            fáciles; sin fuente los negativos salen de pares al azar).
+    """
+
+    semilla: int = 42
+    proporciones: Mapping[str, float] = field(default_factory=_proporciones_por_defecto)
+    umbral_dificil: float = 0.85
+    umbral_ambiguo: float = 0.60
+    muestra_max: int = 3000
+    tamano_grupo_max: int = 10
+    col_nombre: str = "NOMBRE_LIMPIO"
+    col_nit_canonico: str = "NIT_OK"
+    col_nit: str = "NIT"
+    col_razon_social: str = "RAZON_SOCIAL"
+    col_fuente: str = "SRC"
+
+    def __post_init__(self) -> None:
+        if set(self.proporciones) != set(CLASES) or abs(sum(self.proporciones.values()) - 1) > 1e-9:
+            raise ValueError(
+                f"proporciones debe cubrir exactamente {CLASES} y sumar 1; "
+                f"recibido {dict(self.proporciones)}. Sin eso el muestreo no "
+                "reparte n_samples entre las clases."
+            )
+        if not 0.0 <= self.umbral_ambiguo < self.umbral_dificil <= 1.0:
+            raise ValueError(
+                f"umbral_ambiguo ({self.umbral_ambiguo}) debe ser menor que "
+                f"umbral_dificil ({self.umbral_dificil}) y ambos estar en [0, 1]: "
+                "definen bandas disjuntas de similitud."
+            )
+        if self.muestra_max < 2 or self.tamano_grupo_max < 2:
+            raise ValueError("muestra_max y tamano_grupo_max deben ser >= 2.")
+        object.__setattr__(self, "proporciones", dict(self.proporciones))
 
 
 class GroundTruthGenerator:
-    """
-    Genera muestras estratificadas de pares para crear ground truth.
-    Implementa muestreo inteligente para cubrir casos fáciles, difíciles y ambiguos.
+    """Genera una muestra estratificada de pares para revisión humana.
+
+    Cubre casos fáciles, difíciles, ambiguos y negativos para que la verdad
+    resultante mida lo que importa (los pares donde el motor puede
+    equivocarse) y no solo lo trivial.
+
+    Uso::
+
+        generador = GroundTruthGenerator(ConfigGroundTruth(semilla=42))
+        pares = generador.create_intelligent_sample(df, n_samples=1000,
+                                                    output_path="verdad.xlsx")
+        # Una persona llena IS_MATCH (1/0) y QualityEvaluator carga el archivo.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
-        self.config = config or {}
+    def __init__(self, config: ConfigGroundTruth | None = None) -> None:
+        if config is not None and not isinstance(config, ConfigGroundTruth):
+            raise TypeError(
+                f"config debe ser ConfigGroundTruth, no {type(config).__name__}. "
+                "Un dict ya no se acepta: una clave mal escrita se ignoraba en silencio."
+            )
+        self.config = config or ConfigGroundTruth()
         self.logger = CustomLogger("GroundTruthGenerator")
-        self.similarity_calc = None  # Lazy loading
+        self._comparar_nombres = obtener_comparador("token_set_ratio")
+        if self._comparar_nombres is None:  # pragma: no cover - registro estático
+            raise RuntimeError("matching.comparadores_extra no registra 'token_set_ratio'.")
 
-    @property
-    def similarity_calculator(self):
-        """Obtener calculador de similitud (lazy loading)."""
-        if self.similarity_calc is None:
-            # Reutilizar el calculador de la sección 3
-            self.similarity_calc = {
-                "name": lambda x, y: fuzz.token_set_ratio(x, y) / 100.0,
-                "nit": lambda x, y: (
-                    1 - (Levenshtein.distance(x, y) / max(len(x), len(y))) if x and y else 0
-                ),
-            }
-        return self.similarity_calc
-
-    @track_performance("Generación de ground truth")
+    # ── API pública ───────────────────────────────────────────────────────
     def create_intelligent_sample(
-        self, df: pd.DataFrame, n_samples: int = 1000, output_path: str | None = None
+        self,
+        df: pd.DataFrame,
+        n_samples: int = 1000,
+        output_path: str | Path | None = None,
     ) -> pd.DataFrame:
-        """
-        Crear ground truth con casos representativos estratificados.
+        """Muestra estratificada de ``n_samples`` pares (menos si no hay oferta).
 
         Args:
-            df: DataFrame con datos preprocesados
-            n_samples: Número de pares a generar
-            output_path: Ruta para guardar el ground truth
+            df: DataFrame preprocesado (ver columnas en ``ConfigGroundTruth``).
+            n_samples: número de pares deseado; cada clase recibe
+                ``int(n_samples · proporción)``.
+            output_path: si se indica, se guarda con :meth:`guardar`.
 
         Returns:
-            DataFrame con pares para evaluación manual
+            DataFrame con ``COLUMNAS_SALIDA``, mezclado con la semilla, con las
+            columnas de revisión vacías.
+
+        Raises:
+            ValueError: si ``n_samples`` < 1, ``df`` está vacío o no trae la
+                columna ``config.col_nombre``.
         """
+        if n_samples < 1:
+            raise ValueError(f"n_samples debe ser >= 1; recibido {n_samples}.")
+        if df.empty:
+            raise ValueError("df está vacío: no hay registros de los que muestrear pares.")
+        if self.config.col_nombre not in df.columns:
+            raise ValueError(
+                f"df no trae la columna de nombre '{self.config.col_nombre}' (col_nombre). "
+                "Sin nombre toda similitud es 0 y solo saldrían negativos: la muestra no "
+                "serviría para revisar nada. Pase ConfigGroundTruth(col_nombre=...) con la "
+                "columna que sí tiene (p. ej. 'RAZON_SOCIAL') o preprocese antes "
+                f"(columnas disponibles: {list(df.columns)})."
+            )
+
+        marco = df.copy()
+        marco[_COLUMNA_ID] = marco.index
         self.logger.info(f"Generando {n_samples} pares para ground truth")
 
-        samples = []
+        muestra, matriz = self._muestra_con_matriz(marco)
+        partes: list[pd.DataFrame] = []
+        for clase in CLASES:
+            n_clase = int(n_samples * self.config.proporciones[clase])
+            if n_clase == 0:
+                continue
+            if clase == "easy_positive":
+                pares = self._positivos_faciles(marco, n_clase)
+            elif clase in ("difficult_positive", "ambiguous"):
+                pares = self._por_banda(muestra, matriz, n_clase, clase)
+            else:
+                pares = self._negativos_claros(marco, n_clase)
+            if len(pares) < n_clase:
+                self.logger.warning(
+                    f"Clase '{clase}': se pidieron {n_clase} pares y solo hay {len(pares)} "
+                    "en los datos (la muestra queda más corta en esa clase)."
+                )
+            partes.append(pares)
 
-        # Distribución de casos
-        distributions = {
-            "easy_positive": 0.20,  # Casos fáciles positivos (mismo NIT)
-            "difficult_positive": 0.30,  # Casos difíciles (alta similitud, NITs diferentes)
-            "ambiguous": 0.30,  # Casos ambiguos (similitud media)
-            "easy_negative": 0.20,  # Negativos claros (baja similitud)
-        }
-
-        # Generar cada tipo de casos
-        for case_type, proportion in distributions.items():
-            n_cases = int(n_samples * proportion)
-            self.logger.info(f"Generando {n_cases} casos tipo '{case_type}'")
-
-            if case_type == "easy_positive":
-                cases = self._generate_easy_positives(df, n_cases)
-            elif case_type == "difficult_positive":
-                cases = self._generate_difficult_positives(df, n_cases)
-            elif case_type == "ambiguous":
-                cases = self._generate_ambiguous_cases(df, n_cases)
-            else:  # easy_negative
-                cases = self._generate_easy_negatives(df, n_cases)
-
-            samples.append(cases)
-
-        # Combinar todos los casos
-        ground_truth = pd.concat(samples, ignore_index=True)
-
-        # Agregar columnas para revisión manual
-        ground_truth["IS_MATCH"] = None  # Para completar manualmente
-        ground_truth["REVIEWER"] = None
-        ground_truth["REVIEW_DATE"] = None
-        ground_truth["CONFIDENCE"] = None  # Alta/Media/Baja
-        ground_truth["NOTES"] = None
-
-        # Mezclar aleatoriamente para evitar sesgo en revisión
-        ground_truth = ground_truth.sample(frac=1, random_state=42).reset_index(drop=True)
-
-        # Guardar si se especifica ruta
-        if output_path:
-            self._save_ground_truth(ground_truth, output_path)
-
-        self.logger.info(f"Ground truth generado con {len(ground_truth)} pares")
-
-        return ground_truth
-
-    def _generate_easy_positives(self, df: pd.DataFrame, n_cases: int) -> pd.DataFrame:
-        """Generar casos fáciles positivos (mismo NIT)."""
-        # Encontrar grupos con mismo NIT
-        if "NIT_OK" not in df.columns:
-            return pd.DataFrame()
-
-        # Agrupar por NIT
-        nit_groups = (
-            df[df["NIT_OK"].notna()]
-            .groupby("NIT_OK")
-            .filter(
-                lambda x: len(x) >= 2 and len(x) <= 10  # Grupos manejables
+        # pd.concat([]) lanza «No objects to concatenate»: la lista vacía se
+        # resuelve antes, no después (la guarda posterior nunca corría).
+        no_vacias = [p for p in partes if not p.empty]
+        if not no_vacias:
+            self.logger.warning(
+                "Ninguna clase produjo pares: la muestra sale vacía. Revise que los "
+                "datos tengan nombres parecidos o identificadores repetidos, o suba n_samples."
             )
-        )
-
-        if len(nit_groups) == 0:
-            return pd.DataFrame()
-
-        # Generar pares
-        pairs = []
-        nit_values = nit_groups["NIT_OK"].value_counts().index[: n_cases * 2]
-
-        for nit in nit_values:
-            group = nit_groups[nit_groups["NIT_OK"] == nit]
-            if len(group) >= 2:
-                # Tomar 2 registros aleatorios
-                sample = group.sample(n=min(2, len(group)), random_state=42)
-                if len(sample) == 2:
-                    pair = self._create_pair_record(sample.iloc[0], sample.iloc[1], "easy_positive")
-                    pairs.append(pair)
-
-                    if len(pairs) >= n_cases:
-                        break
-
-        return pd.DataFrame(pairs)
-
-    def _generate_difficult_positives(self, df: pd.DataFrame, n_cases: int) -> pd.DataFrame:
-        """Generar casos difíciles (alta similitud de nombre, NITs diferentes)."""
-        # Muestrear registros para eficiencia
-        sample_size = min(10000, len(df))
-        df_sample = df.sample(n=sample_size, random_state=42)
-
-        pairs: list[dict[str, Any]] = []
-        processed: set[Any] = set()
-
-        # Buscar pares con alta similitud de nombre
-        for i, record1 in df_sample.iterrows():
-            if i in processed or len(pairs) >= n_cases:
-                break
-
-            # Calcular similitudes con otros registros
-            for j, record2 in df_sample.iterrows():
-                if i >= j or j in processed:
-                    continue
-
-                # Verificar que tengan NITs diferentes
-                if record1.get("NIT_OK") == record2.get("NIT_OK") and pd.notna(
-                    record1.get("NIT_OK")
-                ):
-                    continue
-
-                # Calcular similitud de nombre
-                name1 = record1.get("NOMBRE_LIMPIO", "")
-                name2 = record2.get("NOMBRE_LIMPIO", "")
-
-                if name1 and name2:
-                    similarity = self.similarity_calculator["name"](name1, name2)
-
-                    # Alta similitud (0.85+)
-                    if similarity >= 0.85:
-                        pair = self._create_pair_record(record1, record2, "difficult_positive")
-                        pairs.append(pair)
-                        processed.add(i)
-                        processed.add(j)
-
-                        if len(pairs) >= n_cases:
-                            break
-
-        return pd.DataFrame(pairs)
-
-    def _generate_ambiguous_cases(self, df: pd.DataFrame, n_cases: int) -> pd.DataFrame:
-        """Generar casos ambiguos (similitud media)."""
-        # Similar a difficult_positives pero con rango de similitud 0.60-0.85
-        sample_size = min(10000, len(df))
-        df_sample = df.sample(n=sample_size, random_state=42)
-
-        pairs: list[dict[str, Any]] = []
-        processed: set[Any] = set()
-
-        for i, record1 in df_sample.iterrows():
-            if i in processed or len(pairs) >= n_cases:
-                break
-
-            for j, record2 in df_sample.iterrows():
-                if i >= j or j in processed:
-                    continue
-
-                name1 = record1.get("NOMBRE_LIMPIO", "")
-                name2 = record2.get("NOMBRE_LIMPIO", "")
-
-                if name1 and name2:
-                    similarity = self.similarity_calculator["name"](name1, name2)
-
-                    # Similitud media (0.60-0.85)
-                    if 0.60 <= similarity < 0.85:
-                        pair = self._create_pair_record(record1, record2, "ambiguous")
-                        pairs.append(pair)
-                        processed.add(i)
-                        processed.add(j)
-
-                        if len(pairs) >= n_cases:
-                            break
-
-        return pd.DataFrame(pairs)
-
-    def _generate_easy_negatives(self, df: pd.DataFrame, n_cases: int) -> pd.DataFrame:
-        """Generar negativos claros (baja similitud)."""
-        # Tomar pares aleatorios que probablemente no matcheen
-        pairs = []
-
-        # Estrategia: tomar registros de diferentes fuentes con nombres muy diferentes
-        if "SRC" in df.columns:
-            sources = df["SRC"].unique()
-            if len(sources) >= 2:
-                source1, source2 = sources[:2]
-                df1 = df[df["SRC"] == source1].sample(n=min(n_cases, len(df[df["SRC"] == source1])))
-                df2 = df[df["SRC"] == source2].sample(n=min(n_cases, len(df[df["SRC"] == source2])))
-
-                for i in range(min(len(df1), len(df2), n_cases)):
-                    pair = self._create_pair_record(df1.iloc[i], df2.iloc[i], "easy_negative")
-                    pairs.append(pair)
-
-        # Si no hay suficientes, completar con pares aleatorios
-        while len(pairs) < n_cases:
-            idx1, idx2 = np.random.choice(len(df), 2, replace=False)
-            pair = self._create_pair_record(df.iloc[idx1], df.iloc[idx2], "easy_negative")
-            pairs.append(pair)
-
-        return pd.DataFrame(pairs[:n_cases])
-
-    def _create_pair_record(
-        self, record1: pd.Series, record2: pd.Series, case_type: str
-    ) -> dict[str, Any]:
-        """Crear registro de par para ground truth."""
-        # Calcular similitudes
-        name_sim = 0.0
-        if "NOMBRE_LIMPIO" in record1 and "NOMBRE_LIMPIO" in record2:
-            name1 = str(record1["NOMBRE_LIMPIO"])
-            name2 = str(record2["NOMBRE_LIMPIO"])
-            if name1 and name2:
-                name_sim = self.similarity_calculator["name"](name1, name2)
-
-        nit_sim = 0.0
-        if "NIT_OK" in record1 and "NIT_OK" in record2:
-            nit1 = str(record1["NIT_OK"])
-            nit2 = str(record2["NIT_OK"])
-            if nit1 and nit2 and nit1 != "nan" and nit2 != "nan":
-                nit_sim = self.similarity_calculator["nit"](nit1, nit2)
-
-        return {
-            "ID_1": record1.name,
-            "ID_2": record2.name,
-            "NIT_1": record1.get("NIT", ""),
-            "NIT_2": record2.get("NIT", ""),
-            "RAZON_SOCIAL_1": record1.get("RAZON_SOCIAL", ""),
-            "RAZON_SOCIAL_2": record2.get("RAZON_SOCIAL", ""),
-            "SRC_1": record1.get("SRC", ""),
-            "SRC_2": record2.get("SRC", ""),
-            "CASE_TYPE": case_type,
-            "NAME_SIMILARITY": round(name_sim, 4),
-            "NIT_SIMILARITY": round(nit_sim, 4),
-        }
-
-    def _save_ground_truth(self, ground_truth: pd.DataFrame, output_path: str):
-        """Guardar ground truth con formato adecuado para revisión."""
-        # Ordenar columnas para facilitar revisión
-        cols_order = [
-            "ID_1",
-            "ID_2",
-            "IS_MATCH",
-            "RAZON_SOCIAL_1",
-            "RAZON_SOCIAL_2",
-            "NIT_1",
-            "NIT_2",
-            "NAME_SIMILARITY",
-            "NIT_SIMILARITY",
-            "CASE_TYPE",
-            "SRC_1",
-            "SRC_2",
-            "CONFIDENCE",
-            "REVIEWER",
-            "REVIEW_DATE",
-            "NOTES",
-        ]
-
-        ground_truth = ground_truth[cols_order]
-        safe_ground_truth = prepare_spreadsheet_data(ground_truth)
-
-        # Guardar en Excel para facilitar revisión manual
-        if output_path.endswith(".xlsx"):
-            safe_ground_truth.to_excel(output_path, index=False)
+            salida = pd.DataFrame(columns=list(COLUMNAS_SALIDA))
         else:
-            safe_ground_truth.to_csv(output_path, index=False)
+            salida = pd.concat(no_vacias, ignore_index=True)
+            for columna in _COLUMNAS_REVISION:
+                salida[columna] = None
+            salida = salida.sample(frac=1, random_state=self.config.semilla).reset_index(drop=True)
+            salida = salida[list(COLUMNAS_SALIDA)]
 
-        self.logger.info(f"Ground truth guardado en: {output_path}")
+        if output_path is not None:
+            self.guardar(salida, output_path)
+        self.logger.info(f"Ground truth generado con {len(salida)} pares")
+        return salida
 
+    def guardar(self, ground_truth: pd.DataFrame, ruta: str | Path) -> Path:
+        """Escribe el archivo de revisión (``.xlsx`` o CSV) con las columnas en orden.
 
-class GroundTruthEvaluator:
-    """
-    Evalúa los resultados de deduplicación contra un ground truth.
-
-    Calcula métricas a nivel de pares de registros, que es la forma
-    estándar de evaluar algoritmos de entity resolution.
-    """
-
-    def __init__(self):
-        self.last_evaluation = {}
-
-    def evaluate(
-        self,
-        predicted_df: pd.DataFrame,
-        ground_truth_df: pd.DataFrame,
-        group_col: str = "ID_GRUPO",
-        truth_col: str = "ID_GRUPO_ESPERADO",
-    ) -> dict[str, float]:
+        Raises:
+            ValueError: si faltan columnas de ``COLUMNAS_SALIDA`` (antes salía
+                el ``KeyError`` crudo de pandas).
         """
-        Evalúa las predicciones contra el ground truth.
-
-        Args:
-            predicted_df: DataFrame con los grupos predichos
-            ground_truth_df: DataFrame con la verdad absoluta
-            group_col: Columna con los grupos predichos
-            truth_col: Columna con los grupos reales (ID_GRUPO_ESPERADO)
-
-        Returns:
-            Diccionario con métricas de evaluación
-        """
-        # Crear ground truth basado en ID_GRUPO_ESPERADO
-        # Dos registros son del mismo grupo si tienen el mismo ID_GRUPO_ESPERADO
-        ground_truth_groups: dict[str, list[Any]] = {}
-        for idx, row in ground_truth_df.iterrows():
-            truth_val = str(row[truth_col]).strip() if pd.notna(row[truth_col]) else None
-            if truth_val:
-                if truth_val not in ground_truth_groups:
-                    ground_truth_groups[truth_val] = []
-                ground_truth_groups[truth_val].append(idx)
-
-        # Calcular métricas a nivel de pares
-        metrics = self._calculate_pairwise_metrics(
-            predicted_df[group_col].to_dict(), ground_truth_groups
-        )
-
-        # Calcular métricas adicionales
-        metrics.update(
-            self._calculate_clustering_metrics(predicted_df, ground_truth_groups, group_col)
-        )
-
-        self.last_evaluation = metrics
-        return metrics
-
-    def _calculate_pairwise_metrics(
-        self, predicted_groups: dict[Any, Any], ground_truth_groups: dict[str, list[Any]]
-    ) -> dict[str, float]:
-        """
-        Calcula precision, recall y F1 a nivel de pares.
-        """
-        # Convertir ground truth a formato de índices
-        true_pairs: set[tuple[Any, Any]] = set()
-        for group_indices in ground_truth_groups.values():
-            if len(group_indices) > 1:
-                for pair in combinations(sorted(group_indices), 2):
-                    true_pairs.add(pair)
-
-        # Extraer pares predichos
-        pred_pairs: set[tuple[Any, Any]] = set()
-        groups_by_id: dict[Any, list[Any]] = {}
-        for idx, group_id in predicted_groups.items():
-            if group_id not in groups_by_id:
-                groups_by_id[group_id] = []
-            groups_by_id[group_id].append(idx)
-
-        for group_indices in groups_by_id.values():
-            if len(group_indices) > 1:
-                for pair in combinations(sorted(group_indices), 2):
-                    pred_pairs.add(pair)
-
-        # Calcular métricas
-        tp = len(true_pairs & pred_pairs)  # True positives
-        fp = len(pred_pairs - true_pairs)  # False positives
-        fn = len(true_pairs - pred_pairs)  # False negatives
-
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        return {
-            "precision": precision,
-            "recall": recall,
-            "f1_score": f1,
-            "true_positives": tp,
-            "false_positives": fp,
-            "false_negatives": fn,
-            "total_true_pairs": len(true_pairs),
-            "total_pred_pairs": len(pred_pairs),
-        }
-
-    def _calculate_clustering_metrics(
-        self, predicted_df: pd.DataFrame, ground_truth_groups: dict[str, list[Any]], group_col: str
-    ) -> dict[str, float]:
-        """
-        Calcula métricas adicionales sobre la calidad del clustering.
-        """
-        # Número de grupos
-        n_true_groups = len(ground_truth_groups)
-        n_pred_groups = predicted_df[group_col].nunique()
-
-        # Tamaño promedio de grupos
-        pred_group_sizes = predicted_df[group_col].value_counts()
-        avg_pred_size = pred_group_sizes.mean()
-
-        true_group_sizes = [len(indices) for indices in ground_truth_groups.values()]
-        avg_true_size = np.mean(true_group_sizes) if true_group_sizes else 0
-
-        # Distribución de tamaños
-        pred_singles = (pred_group_sizes == 1).sum()
-        true_singles = sum(1 for size in true_group_sizes if size == 1)
-
-        return {
-            "n_true_groups": float(n_true_groups),
-            "n_pred_groups": float(n_pred_groups),
-            "avg_true_group_size": float(avg_true_size),
-            "avg_pred_group_size": float(avg_pred_size),
-            "pred_singleton_groups": float(pred_singles),
-            "true_singleton_groups": float(true_singles),
-            "group_count_ratio": float(n_pred_groups / n_true_groups if n_true_groups > 0 else 0),
-        }
-
-    def analyze_errors(
-        self,
-        predicted_df: pd.DataFrame,
-        ground_truth_df: pd.DataFrame,
-        group_col: str = "ID_GRUPO",
-        truth_col: str = "ID_GRUPO_ESPERADO",
-        n_examples: int = 5,
-    ) -> dict[str, pd.DataFrame]:
-        """
-        Analiza los errores de predicción y devuelve ejemplos.
-        """
-        # Preparar datos
-        analysis_df = ground_truth_df.copy()
-        analysis_df["PREDICTED_GROUP"] = predicted_df[group_col]
-
-        # Crear grupos verdaderos.
-        # Vectorización: notna + astype(str).str.strip() en lugar de apply
-        # (equivalencia validada en test_vectorization_equivalence::test_true_group_*)
-        _truth_series = analysis_df[truth_col]
-        _mask_notna = _truth_series.notna()
-        analysis_df["TRUE_GROUP"] = "UNKNOWN"
-        if _mask_notna.any():
-            analysis_df.loc[_mask_notna, "TRUE_GROUP"] = (
-                _truth_series.loc[_mask_notna].astype(str).str.strip()
+        ruta = Path(ruta)
+        faltan = set(COLUMNAS_SALIDA) - set(ground_truth.columns)
+        if faltan:
+            raise ValueError(
+                f"Faltan columnas {sorted(faltan)}: guardar espera la salida de "
+                "create_intelligent_sample (COLUMNAS_SALIDA); no recorte columnas antes "
+                "de guardar."
             )
+        seguro = prepare_spreadsheet_data(ground_truth[list(COLUMNAS_SALIDA)])
+        if ruta.suffix.lower() == ".xlsx":
+            seguro.to_excel(ruta, index=False)
+        else:
+            seguro.to_csv(ruta, index=False)
+        self.logger.info(f"Ground truth guardado en: {ruta}")
+        return ruta
 
-        errors: dict[str, list[pd.DataFrame]] = {
-            "false_positives": [],
-            "false_negatives": [],
-        }
+    # ── Clases del muestreo ───────────────────────────────────────────────
+    def _positivos_faciles(self, marco: pd.DataFrame, n: int) -> pd.DataFrame:
+        """Un par por identificador compartido (grupos de 2..tamano_grupo_max)."""
+        col = self.config.col_nit_canonico
+        if col not in marco.columns:
+            return pd.DataFrame()
+        nit = _a_texto(marco[col].to_numpy()).str.strip()
+        con_nit = marco.loc[(nit != "").to_numpy()].assign(**{col: nit[nit != ""].to_numpy()})
+        if con_nit.empty:
+            return pd.DataFrame()
+        tamano = con_nit.groupby(col)[col].transform("size")
+        elegibles = con_nit.loc[(tamano >= 2) & (tamano <= self.config.tamano_grupo_max)]
+        if elegibles.empty:
+            return pd.DataFrame()
+        # Dos registros al azar por grupo, con semilla; luego n grupos al azar.
+        barajado = elegibles.sample(frac=1, random_state=self.config.semilla)
+        grupos = barajado.groupby(col, sort=False)
+        izq = grupos.nth(0).set_index(col, drop=False)
+        der = grupos.nth(1).set_index(col, drop=False)
+        claves = izq.index.intersection(der.index)
+        rng = np.random.default_rng(self.config.semilla)
+        claves = claves[rng.permutation(len(claves))[:n]]
+        return self._construir_pares(izq.loc[claves], der.loc[claves], "easy_positive")
 
-        # Buscar falsos positivos (unidos incorrectamente)
-        for _pred_group, group_df in analysis_df.groupby("PREDICTED_GROUP"):
-            true_groups = group_df["TRUE_GROUP"].unique()
-            if len(true_groups) > 1:
-                # Este grupo predicho contiene registros de múltiples grupos reales
-                errors["false_positives"].append(group_df)
+    def _muestra_con_matriz(self, marco: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+        """Muestra acotada y su matriz de similitud de nombres (0..1, ``float32``).
 
-        # Buscar falsos negativos (no unidos cuando deberían)
-        for true_group, group_df in analysis_df.groupby("TRUE_GROUP"):
-            pred_groups = group_df["PREDICTED_GROUP"].unique()
-            if len(pred_groups) > 1 and true_group != "UNKNOWN":
-                # Este grupo real está dividido en múltiples grupos predichos
-                errors["false_negatives"].append(group_df)
-
-        # Preparar ejemplos
-        error_examples: dict[str, pd.DataFrame] = {}
-
-        if errors["false_positives"]:
-            fp_df = pd.concat(errors["false_positives"][:n_examples])
-            error_examples["false_positives"] = fp_df[
-                ["NIT", "RAZON_SOCIAL", "TRUE_GROUP", "PREDICTED_GROUP"]
-            ]
-
-        if errors["false_negatives"]:
-            fn_df = pd.concat(errors["false_negatives"][:n_examples])
-            error_examples["false_negatives"] = fn_df[
-                ["NIT", "RAZON_SOCIAL", "TRUE_GROUP", "PREDICTED_GROUP"]
-            ]
-
-        return error_examples
-
-    def cross_validate(
-        self,
-        ground_truth_df: pd.DataFrame,
-        parameter_space: ParameterSpace,
-        params: dict[str, Any],
-        n_folds: int = 5,
-    ) -> dict[str, float]:
+        Una sola matriz sirve a las clases difícil y ambigua. Los nombres
+        vacíos quedan con fila y columna en 0 y no entran a ninguna banda.
+        No se usa ``uint8``: rapidfuzz redondea (59,57 → 60) y un par quedaría
+        dentro de la banda por redondeo mientras ``NAME_SIMILARITY`` (exacta)
+        dice lo contrario.
         """
-        Realiza validación cruzada para obtener métricas más robustas.
+        from rapidfuzz import fuzz, process as rf_process
 
-        Los artefactos de cada fold se escriben en directorios creados por el
-        sistema bajo una raíz temporal privada. Esto evita reutilizar o borrar
-        un ``cv_fold_N`` preexistente en el directorio de trabajo.
+        n = min(self.config.muestra_max, len(marco))
+        muestra = marco.sample(n=n, random_state=self.config.semilla).reset_index(drop=True)
+        nombres = self._texto(muestra, self.config.col_nombre)
+        matriz = rf_process.cdist(
+            nombres.tolist(), nombres.tolist(), scorer=fuzz.token_set_ratio, dtype=np.float32
+        )
+        matriz /= 100.0
+        vacios = nombres == ""
+        matriz[vacios, :] = 0
+        matriz[:, vacios] = 0
+        return muestra, matriz
+
+    def _por_banda(
+        self, muestra: pd.DataFrame, matriz: np.ndarray, n: int, clase: str
+    ) -> pd.DataFrame:
+        """Pares cuya similitud de nombre cae en la banda de la clase.
+
+        ``difficult_positive``: ≥ umbral_dificil y NIT canónico distinto (o ausente).
+        ``ambiguous``: [umbral_ambiguo, umbral_dificil) y NIT canónico distinto
+        (o ausente). La exclusión del NIT canónico aplica a las DOS bandas: un
+        par con el mismo identificador es positivo por identificador (clase
+        ``easy_positive``), no ambiguo; sin ella el mismo par salía dos veces
+        con etiquetas contradictorias (hallazgo de revisión, ronda 3).
+
+        Para cada registro se toma su mejor pareja dentro de la banda; después
+        se exige que ningún registro aparezca en dos pares (vectorizado:
+        ``drop_duplicates`` + ``isin``), se verifica la banda sobre la
+        similitud exacta del par y se eligen ``n`` al azar con semilla.
         """
-        from sklearn.model_selection import KFold
+        if len(muestra) < 2:
+            return pd.DataFrame()
+        banda = self._banda(clase)
+        mascara = (matriz >= banda[0]) & (matriz < banda[1])
+        nit = self._texto(muestra, self.config.col_nit_canonico).to_numpy()
+        mismo_nit = (nit[:, None] == nit[None, :]) & (nit[:, None] != "")
+        mascara &= ~mismo_nit
+        mascara &= np.triu(np.ones(matriz.shape, dtype=bool), k=1)
+        if not mascara.any():
+            return pd.DataFrame()
 
-        # Preparar folds
-        kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-        indices = np.arange(len(ground_truth_df))
+        puntajes = np.where(mascara, matriz, -1.0)
+        j = puntajes.argmax(axis=1)
+        i = np.arange(len(muestra))
+        hay = puntajes[i, j] >= 0
+        pares = pd.DataFrame({"i": i[hay], "j": j[hay]})
+        pares = pares.drop_duplicates("j")
+        pares = pares.loc[~pares["j"].isin(pares["i"])]
+        construidos = self._construir_pares(
+            muestra.iloc[pares["i"].to_numpy()], muestra.iloc[pares["j"].to_numpy()], clase
+        )
+        exacta = construidos["NAME_SIMILARITY"]
+        construidos = construidos.loc[((exacta >= banda[0]) & (exacta < banda[1])).to_numpy()]
+        rng = np.random.default_rng(self.config.semilla)
+        return construidos.iloc[rng.permutation(len(construidos))[:n]].reset_index(drop=True)
 
-        cv_scores = []
+    def _banda(self, clase: str) -> tuple[float, float]:
+        """[mínimo, máximo) de similitud de nombre de la clase.
 
-        with tempfile.TemporaryDirectory(prefix="rues_linker_cv_") as cv_workspace:
-            for fold, (_train_idx, test_idx) in enumerate(kf.split(indices)):
-                # Dividir datos
-                test_df = ground_truth_df.iloc[test_idx].copy()
+        El tope de la clase difícil es ``inf``, no ``1 + ε``: la matriz es
+        ``float32`` y NumPy (NEP 50) compara en ese tipo, donde ``1 + 1e-9``
+        redondea a ``1.0`` y excluiría los nombres idénticos.
+        """
+        if clase == "difficult_positive":
+            return self.config.umbral_dificil, float("inf")
+        return self.config.umbral_ambiguo, self.config.umbral_dificil
 
-                # Cada contexto es propietario exclusivo de la ruta que
-                # elimina. El sufijo aleatorio impide colisiones entre
-                # ejecuciones concurrentes y TemporaryDirectory no sigue un
-                # symlink que un componente interno deje en el workspace.
-                with tempfile.TemporaryDirectory(
-                    prefix=f"cv_fold_{fold}_", dir=cv_workspace
-                ) as fold_output_dir:
-                    engine = OptimizationEngine(
-                        ground_truth_df=test_df,
-                        parameter_space=parameter_space,
-                        output_dir=fold_output_dir,
-                        enable_checkpoints=False,
-                    )
+    def _negativos_claros(self, marco: pd.DataFrame, n: int) -> pd.DataFrame:
+        """Pares que no se parecen (nombre < umbral_ambiguo) con NIT canónico distinto o ausente.
 
-                    metrics = engine.evaluate_single_config(params)
-                    cv_scores.append(metrics["f1_score"])
+        Primero se emparejan registros de las dos fuentes más pobladas; si no
+        alcanza, se completan con pares al azar. Se sobremuestrea ×3 porque la
+        verificación de similitud descarta una parte.
+        """
+        rng = np.random.default_rng(self.config.semilla)
+        objetivo = 3 * n
+        izq_partes: list[pd.DataFrame] = []
+        der_partes: list[pd.DataFrame] = []
+        col_fuente = self.config.col_fuente
+        if col_fuente in marco.columns:
+            fuentes = marco[col_fuente].value_counts().index
+            if len(fuentes) >= 2:
+                a = marco.loc[marco[col_fuente] == fuentes[0]]
+                b = marco.loc[marco[col_fuente] == fuentes[1]]
+                k = min(objetivo, len(a), len(b))
+                izq_partes.append(a.sample(n=k, random_state=self.config.semilla))
+                der_partes.append(b.sample(n=k, random_state=self.config.semilla + 1))
+        faltan = objetivo - sum(len(p) for p in izq_partes)
+        if faltan > 0 and len(marco) >= 2:
+            k = min(faltan, len(marco) // 2)
+            posiciones = rng.permutation(len(marco))[: 2 * k].reshape(k, 2)
+            izq_partes.append(marco.iloc[posiciones[:, 0]])
+            der_partes.append(marco.iloc[posiciones[:, 1]])
+        if not izq_partes:
+            return pd.DataFrame()
+        pares = self._construir_pares(pd.concat(izq_partes), pd.concat(der_partes), "easy_negative")
+        if pares.empty:
+            return pares
+        # NIT_SIMILARITY sale del NIT canónico (NIT_OK) y vale 0 si falta
+        # alguno de los dos; comparar el crudo (NIT_1/NIT_2, con DV o guiones)
+        # dejaba entrar pares de la misma empresa como negativos.
+        claros = (pares["NAME_SIMILARITY"] < self.config.umbral_ambiguo) & (
+            pares["NIT_SIMILARITY"] < 1.0
+        )
+        pares = pares.loc[claros]
+        llave = pd.DataFrame(
+            {"a": pares[["ID_1", "ID_2"]].min(axis=1), "b": pares[["ID_1", "ID_2"]].max(axis=1)}
+        )
+        pares = pares.loc[~llave.duplicated().to_numpy()]
+        return pares.head(n).reset_index(drop=True)
 
-        return {
-            "cv_mean_f1": np.mean(cv_scores),
-            "cv_std_f1": np.std(cv_scores),
-            "cv_scores": cv_scores,
-        }
+    # ── Construcción vectorizada de los pares ─────────────────────────────
+    def _construir_pares(self, izq: pd.DataFrame, der: pd.DataFrame, clase: str) -> pd.DataFrame:
+        """Filas alineadas de ``izq`` y ``der`` → un par por fila, con similitudes."""
+        if len(izq) != len(der):
+            raise ValueError(f"izq y der deben alinearse: {len(izq)} vs {len(der)} filas.")
+        if izq.empty:
+            return pd.DataFrame()
+        from rapidfuzz import process as rf_process
+        from rapidfuzz.distance import Levenshtein
+
+        cfg = self.config
+        nombre_1 = self._texto(izq, cfg.col_nombre)
+        nombre_2 = self._texto(der, cfg.col_nombre)
+        sim_nombre = self._comparar_nombres(nombre_1.to_numpy(), nombre_2.to_numpy())
+
+        nit_1 = self._texto(izq, cfg.col_nit_canonico)
+        nit_2 = self._texto(der, cfg.col_nit_canonico)
+        sim_nit = rf_process.cpdist(
+            nit_1.tolist(),
+            nit_2.tolist(),
+            scorer=Levenshtein.normalized_similarity,
+            dtype=np.float64,
+        )
+        sim_nit = np.where((nit_1 != "").to_numpy() & (nit_2 != "").to_numpy(), sim_nit, 0.0)
+
+        return pd.DataFrame(
+            {
+                "ID_1": izq[_COLUMNA_ID].to_numpy(),
+                "ID_2": der[_COLUMNA_ID].to_numpy(),
+                "NIT_1": self._texto(izq, cfg.col_nit).to_numpy(),
+                "NIT_2": self._texto(der, cfg.col_nit).to_numpy(),
+                "RAZON_SOCIAL_1": self._texto(izq, cfg.col_razon_social).to_numpy(),
+                "RAZON_SOCIAL_2": self._texto(der, cfg.col_razon_social).to_numpy(),
+                "SRC_1": self._texto(izq, cfg.col_fuente).to_numpy(),
+                "SRC_2": self._texto(der, cfg.col_fuente).to_numpy(),
+                "CASE_TYPE": clase,
+                "NAME_SIMILARITY": np.round(sim_nombre, 4),
+                "NIT_SIMILARITY": np.round(sim_nit, 4),
+            }
+        )
+
+    @staticmethod
+    def _texto(marco: pd.DataFrame, columna: str) -> pd.Series:
+        """Columna como texto real, sin ausentes disfrazados; vacía si no existe."""
+        if columna not in marco.columns:
+            return pd.Series([""] * len(marco), index=marco.index, dtype=str)
+        serie = _a_texto(marco[columna].to_numpy()).str.strip()
+        serie.index = marco.index
+        return serie

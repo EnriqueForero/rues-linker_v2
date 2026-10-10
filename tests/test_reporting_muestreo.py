@@ -310,7 +310,8 @@ def test_pipeline_heredado_relanza_el_error_de_muestreo_de_la_suite(
     monkeypatch.setattr(modulo, "_class_is_importable", lambda n: n == "EnhancedReportingSuite")
     monkeypatch.setattr(modulo_suite, "EnhancedReportingSuite", _SuiteQueFalla)
 
-    pipeline = modulo.RecordLinkagePipeline()
+    with pytest.warns(DeprecationWarning, match="RecordLinkagePipeline"):  # F2.9
+        pipeline = modulo.RecordLinkagePipeline()
     pipeline.config["output_directory"] = str(tmp_path / "salida")
     pipeline.keep_intermediate_results = True
     datos = pd.DataFrame({"ID_GRUPO": [1], "SRC": ["A"]})

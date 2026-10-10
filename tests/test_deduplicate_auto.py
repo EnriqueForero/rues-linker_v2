@@ -134,3 +134,23 @@ def test_auto_supera_baseline_en_gt_mixto(tmp_path):
     )
     assert res.f1 >= 0.85, f"F1 global={res.f1:.3f} < 0.85 (esperado ~0.907)"
     assert res.precision >= 0.93, f"Precision={res.precision:.3f} < 0.93"
+
+
+def test_auto_stats_traen_las_rutas_del_escritor_por_regimen(tmp_path):
+    """F2.10: cada régimen deja ``correlativa.parquet`` + ``conexiones.parquet``
+    (escritor único) en su subcarpeta y las estadísticas dicen dónde, con el
+    conteo de conexiones igual a las filas del parquet."""
+    df = pd.concat([_df_con_nit(4), _df_sin_nit(4)], ignore_index=True)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _corr, stats = deduplicate_auto(df, output_dir=str(tmp_path / "o"))
+    for regimen, sub in (("con_nit", "con_nit"), ("sin_nit", "sin_nit")):
+        rutas = stats[f"stats_{regimen}"]["rutas"]
+        assert rutas["correlativa"] == str(tmp_path / "o" / sub / "correlativa.parquet")
+        assert rutas["conexiones"] == str(tmp_path / "o" / sub / "conexiones.parquet")
+        assert Path(rutas["correlativa"]).is_file() and Path(rutas["conexiones"]).is_file()
+        conexiones = pd.read_parquet(rutas["conexiones"])
+        assert len(conexiones) == stats[f"stats_{regimen}"]["n_conexiones_no_triviales"]
+        assert (
+            len(pd.read_parquet(rutas["correlativa"])) == stats[f"stats_{regimen}"]["n_registros"]
+        )

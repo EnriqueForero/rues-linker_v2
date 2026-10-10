@@ -86,18 +86,22 @@ def run(expected_version: str) -> None:
             raise RuntimeError(f"Payload inesperado: {sorted(payload)}")
 
         generation_dir = Path(result.rutas["generation_dir"])
+        # F2.5: la generación tiene la forma del estándar (manifest.json dentro) y
+        # resultados.manifest.json es el puntero a la generación vigente.
         manifest_path = Path(result.rutas["manifest"])
-        metadata_path = Path(result.rutas["metadatos"])
-        for path in (result.golden.path, result.correlativa.path, manifest_path, metadata_path):
+        puntero_path = Path(result.rutas["manifest_generaciones"])
+        for path in (result.golden.path, result.correlativa.path, manifest_path, puntero_path):
             if not Path(path).is_file():
                 raise FileNotFoundError(path)
         if not generation_dir.is_dir():
             raise FileNotFoundError(generation_dir)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("generation") != generation_dir.name:
+        puntero = json.loads(puntero_path.read_text(encoding="utf-8"))
+        if puntero.get("generation") != generation_dir.name:
             raise RuntimeError("El manifiesto no apunta a la generación publicada.")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        parameters = metadata["parametros"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not manifest.get("invariantes", {}).get("ok"):
+            raise RuntimeError("La generación publicada no cumple el contrato de salida.")
+        parameters = manifest["corrida"]["cruce"]["parametros"]
         expected_parameters = {
             "limite_filas": {"B": 1},
             "modo_resultado": "disco",

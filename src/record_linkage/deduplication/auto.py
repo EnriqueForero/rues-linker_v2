@@ -24,7 +24,7 @@ from typing import Any
 
 import pandas as pd
 
-from .unified import deduplicate_unified
+from .unified import deduplicate_unified, rutas_salida
 
 logger = logging.getLogger("deduplicate_auto")
 
@@ -43,24 +43,31 @@ def _is_nit_empty(series: pd.Series) -> pd.Series:
 
 
 def _estadisticas_regimen(
-    correlativa: pd.DataFrame, conexiones: pd.DataFrame, profile: str
+    correlativa: pd.DataFrame, conexiones: pd.DataFrame, profile: str, output_dir: str
 ) -> dict[str, Any]:
     """Estadísticas de una pasada de ``deduplicate_unified`` como dict serializable.
 
-    ``deduplicate_unified`` devuelve ``(correlativa, conexiones_no_triviales)``:
-    el segundo elemento es un DataFrame, no un dict de estadísticas. Hasta
-    F1.13 ``deduplicate_auto`` lo desempaquetaba como ``stats`` y lo
-    expandía con ``{**stats}``: el dict resultante traía una ``Series`` por
-    columna de las conexiones (``NIT``, ``RAZON_SOCIAL``, …) en el caso
-    homogéneo, y DataFrames enteros bajo ``stats_con_nit``/``stats_sin_nit``
-    en el mixto. Nada lo leía, pero ``dedupe()`` lo guardaba en
-    ``metricas['stats_pipeline']`` y no era serializable.
+    ``deduplicate_unified`` devuelve ``(correlativa, conexiones)``: el segundo
+    elemento es un DataFrame (la tabla ``contrato.CONEXIONES``), no un dict de
+    estadísticas. Hasta F1.13 ``deduplicate_auto`` lo desempaquetaba como
+    ``stats`` y lo expandía con ``{**stats}``: el dict resultante traía una
+    ``Series`` por columna de las conexiones (``NIT``, ``RAZON_SOCIAL``, …) en
+    el caso homogéneo, y DataFrames enteros bajo
+    ``stats_con_nit``/``stats_sin_nit`` en el mixto. Nada lo leía, pero
+    ``dedupe()`` lo guardaba en ``metricas['stats_pipeline']`` y no era
+    serializable. F2.10 declaró el contrato real en ``deduplicate_unified``.
+
+    ``rutas`` dice dónde quedaron ``correlativa.parquet`` (la tabla de trabajo
+    con las técnicas de L1) y ``conexiones.parquet`` de este régimen
+    (``unified.rutas_salida``), escritas por el escritor único: es lo que el
+    manifiesto de ``dedupe()`` publica para que alguien las encuentre.
     """
     return {
         "profile": profile,
         "n_registros": len(correlativa),
         "n_grupos": int(correlativa["ID_GRUPO"].nunique()),
         "n_conexiones_no_triviales": len(conexiones),
+        "rutas": {k: str(v) for k, v in rutas_salida(output_dir).items()},
     }
 
 
@@ -110,8 +117,11 @@ def deduplicate_auto(
         ``n_con_nit``, ``n_sin_nit``, ``n_grupos_con_nit``,
         ``n_grupos_sin_nit``, ``profile_con_nit``, ``profile_sin_nit`` y, por
         régimen ejecutado, ``stats_con_nit``/``stats_sin_nit`` con
-        ``n_registros``, ``n_grupos``, ``n_conexiones_no_triviales`` y
-        ``profile``.
+        ``n_registros``, ``n_grupos``, ``n_conexiones_no_triviales``,
+        ``profile`` y ``rutas`` (``correlativa.parquet`` y
+        ``conexiones.parquet`` de ese régimen, F2.10: en ``output_dir`` si el
+        dataset es homogéneo, en ``output_dir/con_nit`` y ``output_dir/sin_nit``
+        si es mixto).
 
     Raises:
         ValueError: si faltan columnas requeridas o el DataFrame está vacío.
@@ -149,7 +159,7 @@ def deduplicate_auto(
             **kwargs,
         )
         corr["REGIMEN_AUTO"] = "CON_NIT"
-        stats_con = _estadisticas_regimen(corr, conexiones, profile_con_nit)
+        stats_con = _estadisticas_regimen(corr, conexiones, profile_con_nit, output_dir)
         stats: dict[str, Any] = {
             "routed": "homogeneo_con_nit",
             "n_con_nit": n_con,
@@ -173,7 +183,7 @@ def deduplicate_auto(
             **kwargs,
         )
         corr["REGIMEN_AUTO"] = "SIN_NIT"
-        stats_sin = _estadisticas_regimen(corr, conexiones, profile_sin_nit)
+        stats_sin = _estadisticas_regimen(corr, conexiones, profile_sin_nit, output_dir)
         stats = {
             "routed": "homogeneo_sin_nit",
             "n_con_nit": 0,
@@ -236,8 +246,12 @@ def deduplicate_auto(
         "n_grupos_sin_nit": corr_sin["ID_GRUPO"].nunique(),
         "profile_con_nit": profile_con_nit,
         "profile_sin_nit": profile_sin_nit,
-        "stats_con_nit": _estadisticas_regimen(corr_con, conexiones_con, profile_con_nit),
-        "stats_sin_nit": _estadisticas_regimen(corr_sin, conexiones_sin, profile_sin_nit),
+        "stats_con_nit": _estadisticas_regimen(
+            corr_con, conexiones_con, profile_con_nit, f"{output_dir}/con_nit"
+        ),
+        "stats_sin_nit": _estadisticas_regimen(
+            corr_sin, conexiones_sin, profile_sin_nit, f"{output_dir}/sin_nit"
+        ),
     }
     logger.info(
         "deduplicate_auto OK: %d grupos CON_NIT + %d grupos SIN_NIT",

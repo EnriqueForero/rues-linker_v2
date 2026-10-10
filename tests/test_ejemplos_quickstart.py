@@ -33,11 +33,15 @@ def test_ejemplo_1_dedupe_en_cinco_lineas(tmp_path: Path) -> None:
         }
     )
     with _silencio():
-        res = rl.dedupe(df, output_dir=str(tmp_path / "salida"))
+        res = rl.dedupe(df, carpeta_salida=tmp_path / "salidas")
 
     assert res.metricas["n_grupos"] == 2  # dos entidades reales
     assert set(res.correlativa.columns) >= {"ID_GRUPO", "ORIGINAL_INDEX"}
     assert "dedupe" in res.resumen()
+    # F2.7: carpeta_salida= escribe la carpeta del estándar con el escritor único.
+    carpeta = Path(res.manifiesto["carpeta_salida"])
+    assert carpeta.parent == tmp_path / "salidas" and carpeta.name.endswith("_dedupe")
+    assert (carpeta / "correlativa.parquet").is_file() and (carpeta / "manifest.json").is_file()
 
 
 def test_ejemplo_2_perfiles_del_registro_unico(tmp_path: Path) -> None:

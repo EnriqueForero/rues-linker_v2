@@ -10,7 +10,11 @@ USO
     python scripts/banco.py --etiqueta extras --variables-extra CIUDAD TELEFONO EMAIL
     python scripts/banco.py --comparar base ruidoso
 
-La evidencia queda en ``docs/evidencia/corrida_<etiqueta>.json``.
+La evidencia queda en ``docs/evidencia/corrida_<etiqueta>.json`` (o en la
+carpeta de ``--evidencia``: un barrido exploratorio, como el del umbral de
+cobertura de F2.2, no debe dejar corridas en la evidencia del tronco).
+``--ajuste CLAVE=VALOR`` sobrescribe una perilla del perfil; una clave con
+punto apunta a una perilla anidada (``cobertura_sin_identificador.umbral=0.70``).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from record_linkage.evaluation.banco import (
     Corrida,
     EspecificacionBanco,
     correr_banco,
+    parsear_ajustes,
 )
 from record_linkage.evaluation.comparador import cargar_corrida, comparar
 
@@ -69,6 +74,15 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--pliegues", type=int, default=3, help="número total de pliegues")
     p.add_argument("--dir-trabajo", type=Path, default=Path("/tmp/banco_trabajo"))
+    p.add_argument(
+        "--evidencia",
+        type=Path,
+        default=EVIDENCIA,
+        help=(
+            "carpeta de los JSON de corrida, para correr y para --comparar "
+            "(defecto docs/evidencia/; un barrido exploratorio va a otra carpeta)"
+        ),
+    )
     return p
 
 
@@ -95,35 +109,20 @@ def _parsear_variables(especificaciones: list[str] | None) -> tuple[object, ...]
     return tuple(salida)
 
 
-def _parsear_ajustes(pares: list[str]) -> dict[str, object]:
-    """Convierte ``clave=valor`` en un diccionario con tipos inferidos."""
-    salida: dict[str, object] = {}
-    for par in pares:
-        if "=" not in par:
-            raise SystemExit(f"--ajuste espera CLAVE=VALOR, recibió {par!r}")
-        clave, _, bruto = par.partition("=")
-        if bruto.lower() in {"true", "false"}:
-            salida[clave] = bruto.lower() == "true"
-        else:
-            try:
-                salida[clave] = int(bruto)
-            except ValueError:
-                try:
-                    salida[clave] = float(bruto)
-                except ValueError:
-                    salida[clave] = bruto
-    return salida
-
-
 def main(argv: list[str] | None = None) -> int:
     """Punto de entrada."""
     args = construir_parser().parse_args(argv)
 
     if args.comparar:
-        base, nueva = (cargar_corrida(EVIDENCIA, e) for e in args.comparar)
+        base, nueva = (cargar_corrida(args.evidencia, e) for e in args.comparar)
         informe = comparar(base, nueva)
         print(informe.resumen())
         return 0 if informe.pasa else 1
+
+    try:
+        ajustes = parsear_ajustes(args.ajuste)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     if not args.etiqueta:
         raise SystemExit("--etiqueta es obligatoria (o use --comparar)")
@@ -134,18 +133,19 @@ def main(argv: list[str] | None = None) -> int:
         perfil=args.perfil,
         confiables=frozenset(args.confiables),
         variables_extra=_parsear_variables(args.variables_extra),
-        ajustes_perfil=_parsear_ajustes(args.ajuste) or None,
+        ajustes_perfil=ajustes or None,
         perfil_multicampo=args.multicampo,
         pliegue=args.pliegue,
         pliegues=args.pliegues,
         dir_trabajo=args.dir_trabajo,
-        dir_evidencia=EVIDENCIA,
+        dir_evidencia=args.evidencia,
         nota=args.nota,
     )
     corrida: Corrida = correr_banco(espec)
     print(corrida.resumen())
-    destino = corrida.guardar(EVIDENCIA)
-    print(f"\n💾 Evidencia: {destino.relative_to(RAIZ)}")
+    destino = corrida.guardar(args.evidencia)
+    mostrada = destino.relative_to(RAIZ) if destino.is_relative_to(RAIZ) else destino
+    print(f"\n💾 Evidencia: {mostrada}")
     return 0
 
 

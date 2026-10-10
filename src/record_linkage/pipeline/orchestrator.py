@@ -28,6 +28,10 @@ import psutil
 from ..config.auditoria import prioridad_del_perfil
 from ..engine.cannot_link import aplicar_cannot_link_identificador
 from ..engine.clusterer import OptimizedClusterer
+from ..engine.cobertura import (
+    ConfigCoberturaSinIdentificador,
+    aplicar_cobertura_sin_identificador,
+)
 from ..engine.lsh.disk_based import DiskBasedLSHEngine
 from ..engine.lsh.trusted import TrustedSourceLSHEngine
 from ..engine.scorer import VectorizedScorer
@@ -54,10 +58,16 @@ from ..reporting.strategies import (
     ReportingContext,
     VisualizationsStrategy,
 )
+from ..salida.identificadores_registro import (
+    asignar_id_registro,
+    nombre_efectivo,
+    recodificar_id_grupo,
+)
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.memory import RSSSampler
 from ._internal import _fmt_time, _get_logger, _phase_cleanup, _validate_sources
 from ._phase_constants import PHASE_TIMES, PHASES_ORDER
+from .componentes import ComponentesPreparacion, fabricar_componentes
 from .errores import (
     ArtefactoObligatorioError,
     ConsolidacionNitError,
@@ -65,7 +75,6 @@ from .errores import (
     mensaje_accionable,
 )
 from .fingerprints import fingerprint_sources
-from .linkage_pipeline import RecordLinkagePipeline
 from .metricas import (
     CLAVES_METRICAS,
     RUTA_CANDIDATES_DB,
@@ -222,7 +231,7 @@ class Orchestrator:
 
         # Cache de datos procesados
         self._df_clean: pd.DataFrame | None = None
-        self._pipeline_instance = None
+        self._componentes: ComponentesPreparacion | None = None
 
         # (v2.1.0) Set de fases explícitamente forzadas a re-ejecutar.
         # Lo manipula `run()` con el kwarg `force_rerun_phases`.
@@ -307,18 +316,17 @@ class Orchestrator:
     # ==========================================================================
 
     @property
-    def pipeline(self):
-        """
-        Lazy initialization del RecordLinkagePipeline subyacente.
+    def componentes(self) -> ComponentesPreparacion:
+        """Componentes de preparación (L1), creados la primera vez que se piden.
 
-        Se crea solo cuando se necesita, permitiendo que el Orchestrator
-        se inicialice sin cargar todas las dependencias.
+        F2.9: antes salían de una instancia de ``RecordLinkagePipeline`` que el
+        Orchestrator no ejecutaba nunca; ahora los entrega
+        ``pipeline.componentes.fabricar_componentes`` con la misma regla de
+        ``cleaning_mode``. Se invalidan cuando cambian las fuentes.
         """
-        if not self._pipeline_instance:
-            self._pipeline_instance = RecordLinkagePipeline(
-                self.config, profile=self.config.get("profile")
-            )
-        return self._pipeline_instance
+        if self._componentes is None:
+            self._componentes = fabricar_componentes(self.config, self.config.get("profile"))
+        return self._componentes
 
     @property
     def profile(self) -> dict:
@@ -598,7 +606,7 @@ class Orchestrator:
                 )
                 self.data_sig = current_data_sig
                 self._df_clean = None
-                self._pipeline_instance = None
+                self._componentes = None
 
         # Invalidar fases si se especifica punto de inicio
         if from_phase:
@@ -1055,30 +1063,30 @@ class Orchestrator:
 
         # Cargar y consolidar fuentes
         self.log.info("   📥 Cargando fuentes...")
-        loaded, load_report = self.pipeline.data_handler.load_sources(self.sources)
+        loaded, load_report = self.componentes.data_handler.load_sources(self.sources)
 
         if load_report.get("errors"):
             for err in load_report["errors"]:
                 self.log.warning(f"   ⚠️ {err}")
 
         self.log.info("   🔄 Consolidando fuentes...")
-        df = self.pipeline.data_handler.consolidate_sources(loaded)
+        df = self.componentes.data_handler.consolidate_sources(loaded)
         self.log.info(f"   📊 Registros consolidados: {len(df):,}")
 
         # Limpiar nombres
         self.log.info("   🧹 Limpiando nombres...")
-        df["NOMBRE_LIMPIO"] = self.pipeline.text_processor.process_series(df["RAZON_SOCIAL"])
+        df["NOMBRE_LIMPIO"] = self.componentes.text_processor.process_series(df["RAZON_SOCIAL"])
         # v0.17.1 — firma de bloqueo separada del nombre de decisión. El LSH
         # la usa para que los tokens genéricos no llenen los buckets; el
         # scorer sigue viendo NOMBRE_LIMPIO íntegro. Derivar cuesta un filtro
         # de tokens cacheado por valor único, no una segunda limpieza.
-        df["NOMBRE_BLOQUEO"] = self.pipeline.text_processor.derivar_nombre_bloqueo(
+        df["NOMBRE_BLOQUEO"] = self.componentes.text_processor.derivar_nombre_bloqueo(
             df["NOMBRE_LIMPIO"]
         )
 
         # Procesar NITs
         self.log.info("   🔢 Procesando NITs...")
-        nit_res = self.pipeline.nit_processor.process_series(df["NIT"])
+        nit_res = self.componentes.nit_processor.process_series(df["NIT"])
 
         # ✅ CORRECCIÓN CRÍTICA: Mapear columnas correctamente
         # NitProcessor retorna IS_VALID, no NIT_VALID
@@ -1757,6 +1765,20 @@ class Orchestrator:
 
         return outfile, [outfile]
 
+    def _col_id_efectivo(self, df: pd.DataFrame) -> str | None:
+        """``config["col_id"]`` con el nombre que tiene en el consolidado de L1.
+
+        El usuario nombra la columna como está en su fuente; si coincide con
+        ``col_name``/``col_nit``/``col_ciudad``, la ingesta la renombró al
+        canónico (``column_mapping`` = {canónico: columna_usuario}).
+        """
+        col_id = self.config.get("col_id")
+        if col_id is None:
+            return None
+        mapeo = self.config.get("column_mapping") or {}
+        canonicos = {usuario: canonico for canonico, usuario in mapeo.items()}
+        return nombre_efectivo(str(col_id), df.columns, canonicos)
+
     def _run_L4(self, df: pd.DataFrame, score_path: Path) -> tuple[dict, list[Path]]:
         """
         L4: Clustering de entidades.
@@ -1766,6 +1788,10 @@ class Orchestrator:
 
         FASE 2 - Paso 2.1: Si HybridStorage está disponible, lee scored.db
         desde disco local para acelerar la lectura de SQLite.
+
+        F2.3: ``ID_GRUPO`` es determinista por contenido (menor ``ID_REGISTRO``
+        del grupo); ``config["col_id"]`` (lo pone ``api.linkage``) dice con qué
+        columna se construye la clave.
 
         Returns:
             Tupla (dict de mapeo record_id → ID_GRUPO, [Path])
@@ -1795,9 +1821,20 @@ class Orchestrator:
 
         self.log.info(f"   📊 Pares para clustering: {n_scored:,}")
 
+        # F2.3: ID_GRUPO determinista por contenido. La clave por registro
+        # (ID_REGISTRO: <SRC>-<col_id> o <SRC>-F<ORIGINAL_INDEX>) se construye
+        # con la MISMA regla que salida/completar (identificadores_registro);
+        # el clusterer etiqueta cada grupo por su menor clave, no por la
+        # posición mínima. Una col_id inexistente falla aquí, con mensaje
+        # accionable, y no al final de la corrida.
+        claves, reglas_id = asignar_id_registro(df, self._col_id_efectivo(df))
+        for fuente, regla in reglas_id.items():
+            if regla["regla"] == "fila" and regla.get("columna"):
+                self.log.warning(f"   ⚠️ ID_REGISTRO por fila en '{fuente}': {regla['motivo']}")
+
         # Ejecutar clustering directamente desde SQLite
         clusterer = OptimizedClusterer(self.profile, self.config)
-        cluster_map = clusterer.cluster_entities(str(read_path), df_full=df)
+        cluster_map = clusterer.cluster_entities(str(read_path), df_full=df, claves_registro=claves)
 
         # Normalizar a dict
         if isinstance(cluster_map, pd.Series):
@@ -1824,6 +1861,11 @@ class Orchestrator:
 
         Consolida clusters en Golden Records únicos usando
         GoldenRecordGeneratorV7 y consolidate_groups_by_nit_balanced.
+
+        F2.3: al cierre (tras cannot-link y consolidación por NIT, que
+        renumeran) ``ID_GRUPO`` se recodifica por contenido con la misma
+        regla y clave que L4, para que lo persistido y los reportes L6 lleven
+        los ids del entregable.
 
         Returns:
             Tupla (dict con 'golden' y 'correlative', [Path, Path])
@@ -1892,6 +1934,33 @@ class Orchestrator:
             if reporte_cl.hubo_cambios:
                 self.log.warning(f"   ⚠️ {reporte_cl.resumen()}")
 
+        # ── F2.1 (ADR-0011): cobertura por estrellas SIN identificador ──────
+        # El clustering une por componentes conexas (single-linkage). Con
+        # identificador válido el cannot-link de arriba corta los puentes; sin
+        # identificador nadie los corta y un prefijo genérico encadena
+        # empresas distintas (medido: grupo de 630 registros/198 entidades a
+        # 139k). Aquí cada grupo SIN identificador válido se reparte en
+        # estrellas con `SimilitudNombre` sobre el IDF de NOMBRE_LIMPIO; los
+        # grupos con identificador no se tocan. Perilla
+        # `cobertura_sin_identificador` del perfil; ausente o `activa: False`
+        # conserva la huella de 0.22.4. El reporte va al manifiesto de L5.
+        cfg_cobertura = ConfigCoberturaSinIdentificador.desde_perfil(
+            self.profile.get("cobertura_sin_identificador")
+        )
+        if cfg_cobertura.activa:
+            df_clustered, reporte_cob = aplicar_cobertura_sin_identificador(
+                df_clustered,
+                config=cfg_cobertura,
+                canonicalizar_dv=bool(self.profile.get("dv_es_mismo_identificador", True)),
+            )
+            self._meta_extra.setdefault(Phase.L5_GOLDEN.value, {})[
+                "cobertura_sin_identificador"
+            ] = reporte_cob.como_dict()
+            if reporte_cob.hubo_cambios:
+                self.log.warning(f"   ⚠️ {reporte_cob.resumen()}")
+            else:
+                self.log.info(f"   📊 {reporte_cob.resumen()}")
+
         # Prioridad de fuentes
         priority = self.prioridad_fuentes
         self.log.debug(f"   📝 Prioridad de fuentes: {priority}")
@@ -1932,6 +2001,25 @@ class Orchestrator:
         if golden_final is not golden:
             del golden
         self.log.info("   ✅ Consolidación por NIT completada")
+
+        # F2.3: L4 etiquetó por contenido, pero el cannot-link (max+1 por orden
+        # de aparición) y la consolidación por NIT renumeran. La MISMA regla se
+        # aplica otra vez aquí, con la misma clave que L4, antes de persistir:
+        # así _trabajo/L5_golden/*.parquet y los reportes L6 (que leen este
+        # resultado) llevan los ID_GRUPO del entregable y quien abra un reporte
+        # encuentra el grupo en la correlativa. completar_correlativa vuelve a
+        # aplicarla como red de seguridad y declara que no cambió nada.
+        claves, _ = asignar_id_registro(correl_final, self._col_id_efectivo(correl_final))
+        golden_final, info_grupo = recodificar_id_grupo(correl_final, golden_final, claves)
+        if info_grupo["huerfanas_golden"]:
+            self.log.warning(
+                f"   ⚠️ {info_grupo['huerfanas_golden']:,} fila(s) del golden sin grupo en la "
+                "correlativa tras la consolidación (ID_GRUPO = -1)"
+            )
+        self.log.info(
+            f"   🔢 ID_GRUPO por contenido tras L5: {info_grupo['valores_cambiados']:,} "
+            f"valor(es) recodificado(s) en {info_grupo['n_grupos']:,} grupos"
+        )
 
         # F1.1: red final antes de persistir. Fuera del try anterior a propósito:
         # un golden con métricas nulas o columnas de la correlativa no se

@@ -33,6 +33,8 @@ from scipy.sparse.csgraph import connected_components as scipy_cc
 from tqdm import tqdm
 
 from ..deduplication.strict import build_strict_clusters
+from ..pipeline.errores import mensaje_accionable
+from ..salida.identificadores_registro import id_grupo_por_clave_minima
 from ..utils.logger import CustomLogger
 from ..utils.performance import (
     track_performance,
@@ -143,6 +145,7 @@ class OptimizedClusterer:
         scored_pairs: pd.DataFrame | str,
         df_full: pd.DataFrame,  # Añadimos df_full como parámetro requerido
         n_entities: int | None = None,
+        claves_registro: np.ndarray | pd.Series | None = None,
     ) -> dict[int, int] | str:
         """
         Versión MEJORADA que integra el clustering estricto para mayor precisión.
@@ -151,6 +154,15 @@ class OptimizedClusterer:
         de NetworkX. Esto reduce RAM de ~3GB a ~300MB y ahorra 10-20 min.
         El clustering estricto sigue usando NetworkX porque build_strict_clusters
         requiere un grafo nx.Graph como entrada.
+
+        F2.3 — ``claves_registro``: ``ID_REGISTRO`` por nodo (alineado con
+        ``df_full``). Si se da, el ``ID_GRUPO`` devuelto es determinista por
+        contenido: la posición lexicográfica del menor ``ID_REGISTRO`` del
+        grupo (``salida.identificadores_registro.id_grupo_por_clave_minima``),
+        no la posición mínima del grupo. El Orchestrator siempre la pasa; sin
+        ella (llamadores heredados) el representante sigue siendo el nodo
+        mínimo. La partición es la misma en ambos casos: solo cambia el valor
+        del id, y la huella del banco no depende de él.
         """
         if n_entities is None:
             n_entities = len(df_full)
@@ -162,8 +174,45 @@ class OptimizedClusterer:
         # dos veces el mismo camino en memoria. Activarla aquí evita cargar
         # todos los scores, una matriz CSR y/o un grafo NetworkX a la vez.
         if self._should_use_disk_processing(scored_pairs, n_entities):
-            return self._cluster_streaming(scored_pairs, df_full, n_entities)
+            cluster_mapping = self._cluster_streaming(scored_pairs, df_full, n_entities)
+        else:
+            cluster_mapping = self._cluster_materializado(scored_pairs, df_full, n_entities)
+        return self._recodificar_por_clave(cluster_mapping, claves_registro, n_entities)
 
+    def _recodificar_por_clave(
+        self,
+        cluster_mapping: dict[int, int],
+        claves_registro: np.ndarray | pd.Series | None,
+        n_entities: int,
+    ) -> dict[int, int]:
+        """``ID_GRUPO`` por contenido (F2.3) si hay claves; si no, el mapeo tal cual."""
+        if claves_registro is None:
+            return cluster_mapping
+        if len(claves_registro) != n_entities:
+            raise ValueError(
+                mensaje_accionable(
+                    f"claves_registro tiene {len(claves_registro):,} valores para "
+                    f"{n_entities:,} entidades.",
+                    "el ID_GRUPO por contenido se deriva de la clave de cada nodo; sin alineación "
+                    "se etiquetaría mal.",
+                    "pase un ID_REGISTRO por fila de df_full, en el mismo orden.",
+                )
+            )
+        nodos = np.arange(n_entities)
+        etiquetas = np.fromiter(
+            (cluster_mapping[int(n)] for n in nodos), dtype=np.int64, count=n_entities
+        )
+        nuevos = id_grupo_por_clave_minima(etiquetas, claves_registro)
+        self.logger.info("ID_GRUPO determinista por contenido (menor ID_REGISTRO del grupo).")
+        return dict(zip(nodos.tolist(), nuevos.tolist(), strict=True))
+
+    def _cluster_materializado(
+        self,
+        scored_pairs: pd.DataFrame | str,
+        df_full: pd.DataFrame,
+        n_entities: int,
+    ) -> dict[int, int]:
+        """Camino en memoria: aristas materializadas + scipy.sparse (o NetworkX si estricto)."""
         # --- PASO 1: Cargar pares desde DataFrame o DB ---
         self.logger.info("Cargando pares de conexiones...")
 

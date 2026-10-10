@@ -25,8 +25,14 @@ Decisiones (plan F1, no se discuten aquí)
 * ``golden/columnas_finales.py`` importa sus cuatro columnas DESDE aquí (una
   regla escrita una vez); nunca al revés, para no crear ciclos.
 * ``entidades_ids`` (F1.10) es el crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la
-  corrida que ``exporters/escritor.py`` deja en la carpeta; ``RETIRADO_EN``
-  queda vacío hasta que F2.4 añada la herencia entre corridas.
+  corrida que ``exporters/escritor.py`` deja en la carpeta; desde F2.4 trae
+  ``REGISTROS`` (los ``ID_REGISTRO`` de la entidad) y ``RETIRADO_EN`` (el id
+  sobreviviente de una entidad retirada): ``identidad/estable.py``.
+* ``conexiones`` (F2.10) es la tabla de trabajo de la ruta ``dedupe()``
+  (``deduplication.unified``): una fila por registro que comparte grupo con
+  otro, con las columnas fijas de aquí primero y después TODAS las del
+  registro (fuente y técnicas, porque vive junto a los checkpoints). Sus
+  columnas son las mismas de la correlativa y el golden: se declaran una vez.
 
 Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.23.0
 """
@@ -35,12 +41,14 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 import pyarrow as pa
 
 __all__ = [
+    "COLUMNAS_CONEXIONES",
     "COLUMNAS_CORRELATIVA",
     "COLUMNAS_DIAGNOSTICO",
     "COLUMNAS_DICCIONARIO",
@@ -52,6 +60,7 @@ __all__ = [
     "COLUMNAS_METRICAS_GOLDEN",
     "COLUMNAS_REVISION",
     "COLUMNAS_TECNICAS",
+    "FORMATO_CREATED_AT",
     "METODOS_UNION",
     "METODOS_UNION_F1",
     "NIVELES_CONFIANZA",
@@ -59,18 +68,41 @@ __all__ = [
     "VERSION_CONTRATO",
     "ColumnaContrato",
     "diccionario",
+    "esquema_conexiones",
     "esquema_correlativa",
     "esquema_enlaces",
     "esquema_entidades_ids",
     "esquema_golden",
     "esquema_revision",
     "familia_tipo",
+    "marca_de_corrida",
     "revision_vacia",
 ]
 
 #: Versión del contrato. Cambia solo cuando cambia una columna fija, su tipo
 #: o su orden; se escribe en ``manifest.json`` y en el diccionario.
 VERSION_CONTRATO = "1.0"
+
+#: Formato de ``CREATED_AT`` en el golden (texto, sin zona: la zona es UTC
+#: por la regla de reloj de :func:`marca_de_corrida`).
+FORMATO_CREATED_AT = "%Y-%m-%d %H:%M:%S"
+
+
+def marca_de_corrida() -> datetime:
+    """La hora de una corrida: UNA regla de reloj para todo el estándar.
+
+    UTC con zona horaria (``datetime.now(timezone.utc)``). La leen el
+    escritor (nombre de la carpeta ``<AAAA-MM-DD_HHMM>_<nombre>`` y
+    ``manifest.marca_tiempo``, que lleva ``+00:00``), ``flujo.importadores``
+    (carpeta y ``CREATED_AT``) y ``salida.completar`` (``CREATED_AT`` del golden
+    que el motor no fijó). Hasta el pulido de F2 (hallazgo 25 de F2.6) el
+    escritor usaba hora local naive y los otros dos UTC: dos corridas
+    simultáneas quedaban en carpetas con 5 horas de diferencia en Colombia y
+    un manifiesto llevaba zona y el otro no. Quien quiera otra marca la pasa
+    en ``marca_tiempo=``; las pruebas la fijan con ``monkeypatch`` aquí.
+    """
+    return datetime.now(timezone.utc)
+
 
 #: Columnas que acompañan a toda tabla del diccionario, en este orden.
 COLUMNAS_DICCIONARIO: tuple[str, ...] = (
@@ -82,15 +114,27 @@ COLUMNAS_DICCIONARIO: tuple[str, ...] = (
     "alias_es",
 )
 
-#: Una sola definición de CONFIANZA, repetida en el diccionario de cada tabla.
-#: La regla vigente del golden (golden/metricas.py::confianza_de_grupo, la
-#: misma de GoldenRecordGeneratorV7), con sus tres umbrales exactos.
+#: Vocabulario de CONFIANZA. Es el único sitio donde se nombran los niveles:
+#: ``golden.metricas.confianza_de_grupo`` los toma de aquí y ``resultado.validar``
+#: rechaza cualquier otro valor.
+NIVELES_CONFIANZA: tuple[str, ...] = ("ALTA", "MEDIA", "BAJA")
+
+#: Una sola definición de CONFIANZA, repetida en el diccionario de cada tabla
+#: que la lleva (correlativa, golden, enlaces). Cita por su nombre la función
+#: que produce los datos —golden/metricas.py::confianza_de_grupo, la única
+#: copia de la regla desde F2.12— con sus tres umbrales exactos; los umbrales
+#: de la función y este texto se comprueban juntos en
+#: ``tests/test_contrato_salida.py``.
 _DEFINICION_CONFIANZA = (
-    "ALTA · MEDIA · BAJA, una sola definición (la regla que produce los datos): "
-    "ALTA si el grupo tiene un solo identificador (NIT_VARIATIONS = 1) confirmado por dos "
-    "o más fuentes (SOURCES_COUNT >= 2); si no, MEDIA si tiene a lo sumo dos "
-    "identificadores (NIT_VARIATIONS <= 2) y es pequeño (RECORD_COUNT <= 5); BAJA en el "
-    "resto. Un registro solo sin identificador queda en MEDIA. F2.12 unifica la regla "
+    "ALTA · MEDIA · BAJA (contrato.NIVELES_CONFIANZA), una sola definición: la regla "
+    "record_linkage.golden.metricas.confianza_de_grupo, que produce los datos en los "
+    "cinco caminos (linkage, link, dedupe, cruce e importadores; los enlaces de "
+    "vinculación la citan igual). ALTA si el grupo tiene un solo identificador "
+    "(NIT_VARIATIONS = 1) confirmado por dos o más fuentes (SOURCES_COUNT >= 2); si no, "
+    "MEDIA si tiene a lo sumo dos identificadores (NIT_VARIATIONS <= 2) y es pequeño "
+    "(RECORD_COUNT <= 5); BAJA en el resto. Un registro solo sin identificador queda en "
+    "MEDIA; una base sin identificador y de una sola fuente (importadores) solo distingue "
+    "por tamaño del grupo (MEDIA hasta 5 filas, BAJA después). F2.12 unifica la regla "
     "entre caminos."
 )
 
@@ -151,7 +195,13 @@ CORRELATIVA: tuple[ColumnaContrato, ...] = (
         "Posición del registro en la consolidación de entrada (v1).",
         "FILA_ORIGEN",
     ),
-    _c("ID_GRUPO", pa.int64(), "Grupo de esta corrida al que pertenece el registro.", "ID_GRUPO"),
+    _c(
+        "ID_GRUPO",
+        pa.int64(),
+        "Grupo de esta corrida al que pertenece el registro. Determinista por contenido: "
+        "posición lexicográfica del menor ID_REGISTRO del grupo (entero denso desde 0).",
+        "ID_GRUPO",
+    ),
     _c(
         "ID_ENTIDAD",
         pa.string(),
@@ -334,8 +384,9 @@ REVISION: tuple[ColumnaContrato, ...] = (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Entidades_ids: crosswalk ID_ENTIDAD ↔ ID_GRUPO de la corrida (F1.10). La
-# herencia entre corridas (RETIRADO_EN → sobreviviente) la añade F2.4.
+# Entidades_ids: crosswalk ID_ENTIDAD ↔ ID_GRUPO de la corrida (F1.10) con la
+# herencia entre corridas de F2.4 (identidad/estable.py, ADR-0012): REGISTROS
+# para medir el solapamiento y RETIRADO_EN → sobreviviente.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ENTIDADES_IDS: tuple[ColumnaContrato, ...] = (
@@ -350,10 +401,47 @@ ENTIDADES_IDS: tuple[ColumnaContrato, ...] = (
     _c(
         "RETIRADO_EN",
         pa.string(),
-        "ID_ENTIDAD sobreviviente si esta entidad se fusionó con otra en una corrida "
-        "posterior; vacío en la corrida que la crea (F2.4 lo llena).",
+        "ID_ENTIDAD sobreviviente si esta entidad se retiró (se fusionó con otra o el "
+        "grupo adoptó un identificador); vacío si la entidad está activa en esta corrida.",
         "RETIRADO_EN",
     ),
+    _c(
+        "REGISTROS",
+        pa.string(),
+        "ID_REGISTRO de la entidad en esta corrida, ordenados y separados por '|': lo que "
+        "la corrida siguiente usa para heredar el ID_ENTIDAD (corrida_anterior=); vacío "
+        "en las retiradas.",
+        "REGISTROS",
+    ),
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conexiones (F2.10): la tabla de trabajo de dedupe(): una fila por registro que
+# comparte grupo con otro (grupos de más de un registro). La deja
+# ``deduplication.unified.deduplicate_unified`` como ``conexiones.parquet`` junto
+# a ``correlativa.parquet`` en su ``output_dir`` (por régimen en ``dedupe()``).
+# Las fijas van primero y después TODAS las columnas del registro, técnicas
+# incluidas. Cada columna es EL MISMO objeto que en la correlativa o el golden.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _columna(tabla: Sequence[ColumnaContrato], nombre: str) -> ColumnaContrato:
+    """La columna ``nombre`` de ``tabla`` (una regla escrita una vez)."""
+    for col in tabla:
+        if col.nombre == nombre:
+            return col
+    raise KeyError(nombre)
+
+
+CONEXIONES: tuple[ColumnaContrato, ...] = (
+    _columna(CORRELATIVA, "ID_GRUPO"),
+    _columna(GOLDEN, "RECORD_COUNT"),
+    _columna(CORRELATIVA, "ORIGINAL_INDEX"),
+    _columna(CORRELATIVA, "SRC"),
+    _columna(CORRELATIVA, "NIT_FINAL"),
+    _columna(CORRELATIVA, "RAZON_SOCIAL_FINAL"),
+    _columna(CORRELATIVA, "NAME_SIMILARITY_SCORE"),
+    _columna(CORRELATIVA, "NIT_DISTANCE"),
 )
 
 TABLAS: dict[str, tuple[ColumnaContrato, ...]] = {
@@ -362,6 +450,7 @@ TABLAS: dict[str, tuple[ColumnaContrato, ...]] = {
     "enlaces": ENLACES,
     "revision": REVISION,
     "entidades_ids": ENTIDADES_IDS,
+    "conexiones": CONEXIONES,
 }
 
 COLUMNAS_CORRELATIVA: tuple[str, ...] = tuple(c.nombre for c in CORRELATIVA)
@@ -369,6 +458,7 @@ COLUMNAS_GOLDEN: tuple[str, ...] = tuple(c.nombre for c in GOLDEN)
 COLUMNAS_ENLACES: tuple[str, ...] = tuple(c.nombre for c in ENLACES)
 COLUMNAS_REVISION: tuple[str, ...] = tuple(c.nombre for c in REVISION)
 COLUMNAS_ENTIDADES_IDS: tuple[str, ...] = tuple(c.nombre for c in ENTIDADES_IDS)
+COLUMNAS_CONEXIONES: tuple[str, ...] = tuple(c.nombre for c in CONEXIONES)
 
 #: Métricas del golden que nunca pueden quedar vacías.
 COLUMNAS_METRICAS_GOLDEN: tuple[str, ...] = (
@@ -411,8 +501,6 @@ METODOS_UNION: tuple[str, ...] = (
     "sin_pareja",
 )
 METODOS_UNION_F1: tuple[str, ...] = ("identificador", "nombre", "sin_pareja")
-
-NIVELES_CONFIANZA: tuple[str, ...] = ("ALTA", "MEDIA", "BAJA")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -470,6 +558,11 @@ def esquema_revision() -> pa.Schema:
 
 def esquema_entidades_ids() -> pa.Schema:
     return _esquema(ENTIDADES_IDS)
+
+
+def esquema_conexiones() -> pa.Schema:
+    """Esquema de las columnas fijas de ``conexiones``; las del registro van después."""
+    return _esquema(CONEXIONES)
 
 
 def revision_vacia() -> pd.DataFrame:
