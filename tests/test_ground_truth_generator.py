@@ -138,6 +138,8 @@ def test_cada_clase_cumple_su_definicion(base: pd.DataFrame) -> None:
     ambiguos = por_clase["ambiguous"]
     assert (ambiguos["NAME_SIMILARITY"] >= config.umbral_ambiguo).all()
     assert (ambiguos["NAME_SIMILARITY"] < config.umbral_dificil).all()
+    # Un par con el mismo identificador canónico no es ambiguo (ronda 3).
+    assert (ambiguos["NIT_SIMILARITY"] < 1.0).all()
 
     negativos = por_clase["easy_negative"]
     assert (negativos["NAME_SIMILARITY"] < config.umbral_ambiguo).all()
@@ -175,6 +177,80 @@ def test_negativos_claros_usan_el_nit_canonico() -> None:
     assert (negativos["NIT_SIMILARITY"] < 1.0).all(), negativos[
         ["NIT_1", "NIT_2", "NIT_SIMILARITY"]
     ]
+
+
+def _afirmar_invariantes(muestra: pd.DataFrame, config: ConfigGroundTruth) -> None:
+    """Invariante general de la muestra: ningún par dos veces y cada clase
+    cumple su definición sobre el NIT CANÓNICO (``NIT_SIMILARITY``), no sobre
+    el crudo (``NIT_1``/``NIT_2``), que puede traer DV o guion."""
+    assert (muestra["ID_1"] != muestra["ID_2"]).all()
+    llaves = muestra[["ID_1", "ID_2"]].apply(frozenset, axis=1)
+    assert llaves.is_unique, muestra.loc[llaves.duplicated(keep=False)]
+    por_clase = {clase: grupo for clase, grupo in muestra.groupby("CASE_TYPE")}
+    if "easy_positive" in por_clase:
+        assert (por_clase["easy_positive"]["NIT_SIMILARITY"] == 1.0).all()
+    for clase in ("difficult_positive", "ambiguous", "easy_negative"):
+        if clase in por_clase:
+            grupo = por_clase[clase]
+            assert (grupo["NIT_SIMILARITY"] < 1.0).all(), grupo
+            minimo, maximo = GroundTruthGenerator(config)._banda(clase)
+            if clase == "easy_negative":
+                minimo, maximo = 0.0, config.umbral_ambiguo
+            assert (grupo["NAME_SIMILARITY"] >= minimo).all(), grupo
+            assert (grupo["NAME_SIMILARITY"] < maximo).all(), grupo
+
+
+def test_ambiguos_excluyen_el_nit_canonico_igual() -> None:
+    """Hallazgo de revisión (ronda 3): la banda ambigua admitía pares con el
+    mismo ``NIT_OK``, que a la vez son candidatos de los positivos fáciles.
+    El mismo par salía dos veces con etiquetas contradictorias (``easy_positive``
+    y ``ambiguous``) y ``QualityEvaluator`` lo contaba dos veces.
+
+    Tres parejas con el mismo NIT canónico (NIT crudo distinto: DV) y nombres
+    a medias parecidos (banda ambigua), más dos sueltas. Antes del arreglo:
+    6 filas, 3 pares repetidos y 3 ambiguos con ``NIT_SIMILARITY == 1.0``.
+    """
+    parejas = [
+        ("700300005", "LACTEOS LA VAQUITA FELIZ", "LA VAQUITA DISTRIBUCIONES"),
+        ("700300001", "FERRETERIA EL MARTILLO SAS", "FERRETERIA LA TUERCA DEL NORTE"),
+        ("700300003", "TRANSPORTES RAPIDO DEL CARIBE", "TRANSPORTES UNIDOS DE OCCIDENTE"),
+    ]
+    filas = []
+    for nit, a, b in parejas:
+        filas.append({"NIT": f"{nit}-1", "NIT_OK": nit, "RAZON_SOCIAL": a, "SRC": "RUES"})
+        filas.append({"NIT": f"{nit}-2", "NIT_OK": nit, "RAZON_SOCIAL": b, "SRC": "CRM"})
+    for nit, nombre in _SUELTOS[:2]:
+        filas.append({"NIT": nit, "NIT_OK": nit, "RAZON_SOCIAL": nombre, "SRC": "RUES"})
+    marco = pd.DataFrame(filas)
+    marco["NOMBRE_LIMPIO"] = marco["RAZON_SOCIAL"]
+    config = ConfigGroundTruth(
+        proporciones={
+            "easy_positive": 0.5,
+            "difficult_positive": 0.0,
+            "ambiguous": 0.5,
+            "easy_negative": 0.0,
+        }
+    )
+    muestra = GroundTruthGenerator(config).create_intelligent_sample(marco, n_samples=6)
+
+    assert muestra[["ID_1", "ID_2"]].apply(frozenset, axis=1).is_unique, muestra
+    assert (muestra.loc[muestra["CASE_TYPE"] == "ambiguous", "NIT_SIMILARITY"] < 1.0).all()
+    # Las tres parejas siguen saliendo, pero una sola vez y como lo que son.
+    faciles = muestra.loc[muestra["CASE_TYPE"] == "easy_positive"]
+    assert len(faciles) == 3 and (faciles["NIT_SIMILARITY"] == 1.0).all()
+    _afirmar_invariantes(muestra, config)
+
+
+def test_invariantes_con_nit_crudo_distinto_del_canonico() -> None:
+    """Invariante general: con NIT crudo ≠ canónico (DV añadido en una fuente)
+    ningún par se repite y cada clase cumple su definición sobre el canónico."""
+    marco = _base_inventada()
+    es_crm = (marco["SRC"] == "CRM").to_numpy()
+    marco.loc[es_crm, "NIT"] = marco.loc[es_crm, "NIT"].astype("string") + "-7"
+    config = ConfigGroundTruth()
+    muestra = GroundTruthGenerator(config).create_intelligent_sample(marco, n_samples=24)
+    assert set(muestra["CASE_TYPE"]) == set(CLASES), muestra["CASE_TYPE"].value_counts()
+    _afirmar_invariantes(muestra, config)
 
 
 def test_reproducible_por_semilla(base: pd.DataFrame) -> None:

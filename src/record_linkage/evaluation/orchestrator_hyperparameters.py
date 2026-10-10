@@ -388,6 +388,10 @@ class OrchestratorOptimizer:
             con ``evaluation.banco.evaluar_calidad``.
         """
         verdad = self.truth if truth is None else truth
+        # Distingue «objetivo desconocido» de «macro_f1 sin ESTRATO» antes de
+        # evaluar: el notebook de F2.15 llama a _evaluate directo y una clave
+        # mal escrita no debe culpar a ESTRATO (hallazgo de revisión, ronda 3).
+        self._validar_objetivo(optimization_target, verdad)
         if "ID_GRUPO" not in correlative.columns:
             return 0.0, {"error": "correlativa sin ID_GRUPO"}
 
@@ -434,8 +438,9 @@ class OrchestratorOptimizer:
             metrics.update(self._metricas_banco(df))
 
         if optimization_target not in metrics:
-            # Sin esto, un objetivo que no se pudo calcular (macro_f1 con una
-            # verdad explícita sin ESTRATO) devolvía el F1 global en silencio.
+            # Guarda defensiva (``_validar_objetivo`` ya cubre el caso normal):
+            # un objetivo que no se pudo calcular no debe devolver el F1 global
+            # en silencio como si fuera el objetivo.
             raise ValueError(
                 f"La verdad evaluada no permite calcular '{optimization_target}' "
                 "(falta ESTRATO): se devolvería otra métrica como si fuera el objetivo. "

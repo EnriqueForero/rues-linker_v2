@@ -330,8 +330,12 @@ class GroundTruthGenerator:
     ) -> pd.DataFrame:
         """Pares cuya similitud de nombre cae en la banda de la clase.
 
-        ``difficult_positive``: ≥ umbral_dificil y NIT distinto (o ausente).
-        ``ambiguous``: [umbral_ambiguo, umbral_dificil).
+        ``difficult_positive``: ≥ umbral_dificil y NIT canónico distinto (o ausente).
+        ``ambiguous``: [umbral_ambiguo, umbral_dificil) y NIT canónico distinto
+        (o ausente). La exclusión del NIT canónico aplica a las DOS bandas: un
+        par con el mismo identificador es positivo por identificador (clase
+        ``easy_positive``), no ambiguo; sin ella el mismo par salía dos veces
+        con etiquetas contradictorias (hallazgo de revisión, ronda 3).
 
         Para cada registro se toma su mejor pareja dentro de la banda; después
         se exige que ningún registro aparezca en dos pares (vectorizado:
@@ -342,10 +346,9 @@ class GroundTruthGenerator:
             return pd.DataFrame()
         banda = self._banda(clase)
         mascara = (matriz >= banda[0]) & (matriz < banda[1])
-        if clase == "difficult_positive":
-            nit = self._texto(muestra, self.config.col_nit_canonico).to_numpy()
-            mismo_nit = (nit[:, None] == nit[None, :]) & (nit[:, None] != "")
-            mascara &= ~mismo_nit
+        nit = self._texto(muestra, self.config.col_nit_canonico).to_numpy()
+        mismo_nit = (nit[:, None] == nit[None, :]) & (nit[:, None] != "")
+        mascara &= ~mismo_nit
         mascara &= np.triu(np.ones(matriz.shape, dtype=bool), k=1)
         if not mascara.any():
             return pd.DataFrame()

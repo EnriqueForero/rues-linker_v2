@@ -437,6 +437,19 @@ class TestObjetivoMacroF1:
         score, metricas = opt._evaluate(correlativa, "macro_f1")
         assert score == metricas["macro_f1"]
 
+    def test_evaluate_objetivo_desconocido_culpa_al_objetivo_no_a_estrato(self, base_cfg):
+        """Hallazgo de revisión (ronda 3): ``_evaluate`` con una clave mal
+        escrita (``f1_macro``) decía «falta ESTRATO» aunque la verdad la
+        traía; el «qué hacer» apuntaba a la causa equivocada."""
+        truth = self._truth_estratificada()
+        opt = OrchestratorOptimizer(base_cfg, {}, truth)
+        correlativa = pd.DataFrame(
+            {"ID_REGISTRO": truth["ID_REGISTRO"], "ID_GRUPO": ["g1"] * 4 + ["g2"] * 4}
+        )
+        with pytest.raises(ValueError, match="optimization_target") as exc:
+            opt._evaluate(correlativa, "f1_macro")
+        assert "ESTRATO" not in str(exc.value)
+
     def test_evaluar_config_valida_la_verdad_que_evalua(self, base_cfg):
         """``evaluar_config(..., truth=otra)`` falla ANTES de correr el
         Orchestrator si ``otra`` no permite el objetivo (no devuelve el dict
