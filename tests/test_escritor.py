@@ -893,6 +893,25 @@ def test_leer_resultado_devuelve_un_resultado_valido(res: ResultadoLinkage, tmp_
     assert leido.dir_trabajo is None  # _trabajo/ no está dentro de esta carpeta
 
 
+def test_entero_del_contrato_todo_nulo_vuelve_como_int64(
+    res: ResultadoLinkage, tmp_path: Path
+) -> None:
+    """Una correlativa con ``NIT_DISTANCE`` todo nulo (una base sin identificador,
+    como la de importadores) se escribe ``int64`` por el esquema del contrato;
+    ``pd.read_parquet`` la devolvería ``float64`` y ``leer_resultado`` la restituye
+    a entero nulable (``Int64``), con ``validar().ok`` (F2.6)."""
+    correl = res.correlativa.copy()
+    correl["NIT_DISTANCE"] = pd.array([pd.NA] * len(correl), dtype="Int64")
+    man = escribir_resultado(_con(res, correlativa=correl), tmp_path, "nulos", marca_tiempo=MARCA)
+    assert str(pd.read_parquet(man.carpeta / "correlativa.parquet")["NIT_DISTANCE"].dtype) != (
+        "Int64"
+    ), "la lectura cruda de pandas es la que pierde el tipo; si deja de hacerlo, simplifique"
+    leido = leer_resultado(man.carpeta)
+    assert str(leido.correlativa["NIT_DISTANCE"].dtype) == "Int64"
+    assert leido.correlativa["NIT_DISTANCE"].isna().all()
+    assert leido.validar().ok, leido.validar().resumen()
+
+
 def test_revision_csv_es_fiel_a_los_datos(res: ResultadoLinkage, tmp_path: Path) -> None:
     """``revision.csv`` es la forma del archivo de decisiones y ``leer_resultado``
     lo lee de vuelta: no se neutraliza (eso es para los .xlsx y los alias

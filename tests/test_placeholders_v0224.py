@@ -59,7 +59,12 @@ def test_no_disponible_no_se_convierte_en_el_importador_mas_grande():
     assert centinelas.ID_IMPORTADOR.str.startswith("SINNOMBRE-").all()
     assert centinelas.ID_IMPORTADOR.nunique() == len(centinelas)
     assert c[c.RAZON_SOCIAL.str.startswith("ACME")].ID_IMPORTADOR.nunique() == 1
-    # Y el FOB no desaparece: se conserva y queda visible en REVISION.
+    # Y el FOB no desaparece: se conserva y queda visible en REVISION_GRUPOS
+    # (desde F2.6 `revision` es el archivo de decisiones por pares; los grupos
+    # sin nombre utilizable, de un registro, no forman par).
     assert abs(r.golden.FOB.sum() - df.FOB.sum()) < 1e-3
-    rev = r.revision
+    rev = r.revision_grupos
     assert rev.MOTIVO_REVISION.str.contains("sin_nombre_utilizable").sum() == len(centinelas)
+    assert (
+        c.loc[c.ID_IMPORTADOR.str.startswith("SINNOMBRE-"), "METODO_UNION"] == "sin_pareja"
+    ).all()

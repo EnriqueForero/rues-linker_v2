@@ -346,7 +346,7 @@ def test_importadores_aplica_la_regla_con_sus_metricas(res_importadores: Any) ->
     assert list(golden["CONFIANZA"]) == list(esperado)
     por_grupo = golden.set_index("ID_IMPORTADOR")["CONFIANZA"]
     assert (correl["CONFIANZA"] == correl["ID_IMPORTADOR"].map(por_grupo)).all()
-    assert "CONFIANZA" in res_importadores.revision.columns
+    assert "CONFIANZA" in res_importadores.revision_grupos.columns
     inv = res_importadores.invariantes
     fila = inv[inv["invariante"].str.contains("CONFIANZA")]
     assert len(fila) == 1 and bool(fila["cumple"].iloc[0])
