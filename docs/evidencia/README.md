@@ -73,20 +73,21 @@ parametrizada exige que cada JSON siga coincidiendo con su constante.
 
 | archivo | qué fija | quién lo lee |
 |---|---|---|
-| `corrida_base_f2.json` | el banco (30.486 registros) sobre el tronco `claude/f2-motor` en ef13f83 (merge de F2.1): huella `5bfed0d1…`, F1 0,8666, macro-F1 0,8803, B³ F1 0,9487, 246 FP que tocan negativos, recursos por fase. Medido por el coordinador con `python scripts/banco.py --etiqueta base_f2 --datos data/benchmark/benchmark_institucional.csv.gz` (perfil `produccion_estandar`, semilla 42, sin ajustes). **Por qué cambió la huella**: F2.1 activa por defecto la cobertura por estrellas en los grupos sin identificador válido (`cobertura_sin_identificador`, umbral 0,80; ADR-0011; F2.2 fija el umbral con `cobertura_umbral.json`). Es un cambio de partición declarado que cambia recall por precisión: precision 0,9385 → 0,9557, recall 0,8249 → 0,7927, FP sobre negativos 287 → 246; pasa la compuerta F2 (macro-F1 ≥ 0,880, FP-neg ≤ 287) | `tests/lineas_base.py` (`BANCO_F2` = `BANCO_VIGENTE`) y `tests/test_banco_linea_base.py` (la prueba `slow` reproduce la huella) |
+| `corrida_base_f2.json` | el banco (30.486 registros) sobre `main` en 059f80b (F2 mezclada), remedido el 2026-10-10 en máquina sin carga: huella `5bfed0d1…`, F1 0,8666, macro-F1 0,8803, B³ F1 0,9487, 246 FP que tocan negativos, recursos por fase. Medido con `python scripts/banco.py --etiqueta base_f2 --datos data/benchmark/benchmark_institucional.csv.gz` (perfil `produccion_estandar`, semilla 42, sin ajustes). **Por qué cambió la huella**: F2.1 activa por defecto la cobertura por estrellas en los grupos sin identificador válido (`cobertura_sin_identificador`, umbral 0,80; ADR-0011; F2.2 fija el umbral con `cobertura_umbral.json`). Es un cambio de partición declarado que cambia recall por precisión: precision 0,9385 → 0,9557, recall 0,8249 → 0,7927, FP sobre negativos 287 → 246; pasa la compuerta F2 (macro-F1 ≥ 0,880, FP-neg ≤ 287) | `tests/lineas_base.py` (`BANCO_F2` = `BANCO_VIGENTE`) y `tests/test_banco_linea_base.py` (la prueba `slow` reproduce la huella) |
 
 `python scripts/banco.py --comparar base_f0 base_f2` muestra el cambio
 (huella distinta, precisión y FP-neg mejoran, recall y F1 bajan); su veredicto
 «FALLA» es el del comparador de regresión (exige que ninguna métrica baje) y no
 el de la compuerta F2, que se juzga por macro-F1 y FP sobre negativos.
 
-> **Nota (2026-10-10, pulido de F2):** `corrida_base_f2.json` registra
-> `recursos.segundos_total = 113,52` (L2 en 71,5 s) porque la máquina estaba
-> cargada al medir; una corrida limpia del mismo commit tarda ≈ 70–75 s con la
-> misma huella `5bfed0d1…`. Mientras ese JSON no se remida, `--comparar base_f2
-> <nueva>` usa 113,5 s como base de tiempo (criterio ≤ ×1,2 = 136 s), una
-> compuerta de tiempo holgada. Remedirlo y sustituir el JSON es decisión del
-> coordinador (commit propio).
+> **Nota (2026-10-10, remedición):** la primera medición de este JSON (sobre
+> ef13f83) registró 113,5 s porque la máquina tenía agentes corriendo en
+> paralelo. Se remidió sobre `main` (059f80b) sin carga: **67,5 s** (L1 1,3 ·
+> L2 43,9 · L3 7,8 · L4 0,5 · L5 11,6), RSS pico 501 MiB, **misma huella
+> `5bfed0d1…` y mismas cifras de calidad**. La única diferencia de contenido es
+> el campo `calidad.grupo_mayor_sin_identificador` (16 filas / 1 entidad, 0
+> grupos ≥ 50), la métrica que añadió F2.2 después de la primera medición. Así
+> `--comparar base_f2 <nueva>` usa un tiempo base real (criterio ≤ ×1,2).
 
 El determinismo entre procesos (dos `PYTHONHASHSEED` distintos → misma huella)
 no deja JSON: lo verifica `tests/test_determinismo_linkage_procesos.py` en cada
