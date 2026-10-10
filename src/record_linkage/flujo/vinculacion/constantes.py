@@ -55,3 +55,6 @@ ORDEN_NIVEL: dict[str, int] = {
     "": 9,
 }
 ORDEN_BANDA: dict[str, int] = {"A": 0, "B": 1, "C": 2, "": 9}
+
+#: Nombre con el que el motor se identifica en PARAMETROS y en el LEEME del Excel.
+NOMBRE_MOTOR = "flujo.vinculacion"
