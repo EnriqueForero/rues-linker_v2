@@ -85,9 +85,11 @@ from ..resultado import ResultadoLinkage
 _MANIFEST_SCHEMA_VERSION = 1
 
 #: ``ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados>``: la regla
-#: de ``salida.completar._id_entidad`` (``_sha16``) escrita en SQL para la
-#: expansión, donde los ``ID_REGISTRO`` publicados ya no son los que vio el
-#: motor. El ``ORDER BY`` de DuckDB es binario, como ``sorted()`` de Python
+#: de ``identidad.estable.asignar_id_entidad`` sin corrida anterior (``_sha16``,
+#: ADR-0012) escrita en SQL para la expansión, donde los ``ID_REGISTRO``
+#: publicados ya no son los que vio el motor. Por eso mismo una herencia desde
+#: ``corrida_anterior`` no sobreviviría a la expansión: ``ConfigCruce`` la
+#: rechaza con el motor DuckDB. El ``ORDER BY`` de DuckDB es binario, como ``sorted()`` de Python
 #: sobre estos ids ASCII; ``sha256`` devuelve hex en minúsculas.
 _ID_ENTIDAD_ENT_SQL = (
     """'ENT-' || left(sha256(string_agg("ID_REGISTRO", '|' ORDER BY "ID_REGISTRO")), 16)"""
@@ -548,8 +550,11 @@ class ExpansionDisco:
         n_grupos: ``ID_GRUPO`` distintos de la correlativa (``len(grupos)``).
         filas_por_fuente: filas publicadas por fuente (``SRC``).
         grupos: una fila por ``ID_GRUPO`` con ``N_REGISTROS`` y, si la
-            correlativa lo trae, ``ID_ENTIDAD``: es el crosswalk de la corrida
-            sin pasar la tabla por pandas.
+            correlativa los trae, ``ID_ENTIDAD`` y ``REGISTROS`` (la lista
+            ordenada de ``ID_REGISTRO`` del grupo, F2.18): de aquí sale el
+            crosswalk de la corrida (``escritor._entidades_ids_de_grupos`` →
+            ``identidad.estable.crosswalk_de_corrida``) sin pasar la tabla por
+            pandas.
 
     Es una clase nueva (F2.5) y va en español; ``PublicacionResultadosDisco``
     (``entities``, ``source_rows``) es anterior y conserva sus nombres porque
@@ -599,8 +604,8 @@ def expandir_en_disco(
       ``escribir_estandar_de_expansion`` la declara en el manifiesto.
       ``ID_ENTIDAD``: los ``NIT-`` se conservan tal como los asignó el motor
       (valor por grupo); los ``ENT-`` se RECALCULAN en SQL con la regla de
-      ``salida.completar`` (``ENT-<sha16 de los ID_REGISTRO del grupo
-      ordenados>``) sobre los ``ID_REGISTRO`` publicados: el motor los hashó
+      ``identidad.estable`` sin corrida anterior (``ENT-<sha16 de los
+      ID_REGISTRO del grupo ordenados>``) sobre los ``ID_REGISTRO`` publicados: el motor los hashó
       sobre los representantes, ids que tras expandir no existen o son de otra
       fila, y la misma entrada daría ids distintos por motor. El golden recibe
       el mismo valor por ``ID_GRUPO``.
@@ -735,8 +740,16 @@ def expandir_en_disco(
         entidad_sql = (
             "any_value(ID_ENTIDAD) AS ID_ENTIDAD, " if "ID_ENTIDAD" in correlativa_schema else ""
         )
+        # REGISTROS (F2.18): la lista ORDENADA de ID_REGISTRO por grupo, lo que
+        # el crosswalk del estándar lleva por entidad (ADR-0012); el escritor la
+        # despliega y aplica la misma regla que en pandas (crosswalk_de_corrida).
+        registros_sql = (
+            ", list(ID_REGISTRO ORDER BY ID_REGISTRO) AS REGISTROS"
+            if "ID_REGISTRO" in correlativa_schema
+            else ""
+        )
         grupos = connection.execute(
-            f"SELECT ID_GRUPO, {entidad_sql}count(*)::BIGINT AS N_REGISTROS "
+            f"SELECT ID_GRUPO, {entidad_sql}count(*)::BIGINT AS N_REGISTROS{registros_sql} "
             "FROM read_parquet(?) GROUP BY ID_GRUPO ORDER BY ID_GRUPO",
             [str(correlativa_path)],
         ).fetch_df()
@@ -881,18 +894,14 @@ def escribir_estandar_de_expansion(
     _registrar(artefactos, carpeta, expansion.correlativa.path)
     _registrar(artefactos, carpeta, expansion.golden.path)
 
-    # NOTA PARA LA INTEGRACIÓN DE F2.4 (identidad estable, ADR-0012): F2.4
-    # reescribe ``escritor._entidades_ids`` para que el crosswalk salga de
-    # ``identidad.estable.crosswalk_de_corrida`` (columna ``REGISTROS`` =
-    # ``ID_REGISTRO`` del grupo, y retiros), y ``cargar_corrida_anterior``
-    # EXIGE ``REGISTROS``. Este crosswalk se arma en SQL desde ``grupos`` y
-    # no pasa por esa regla: al integrar F2.4 hay que (a) hacer que
-    # ``expandir_en_disco`` agregue ``string_agg("ID_REGISTRO", … ORDER BY
-    # "ID_REGISTRO")`` por grupo y que ``_entidades_ids_de_grupos`` emita
-    # ``REGISTROS`` (o pasar por ``crosswalk_de_corrida`` sobre esa tabla), y
-    # (b) añadir una prueba que lea una generación de disco como
-    # ``corrida_anterior``. Hasta entonces una generación de disco NO sirve
-    # como corrida anterior de F2.4.
+    # Crosswalk (F2.4 + F2.18): la tabla por grupo trae REGISTROS (lista
+    # ordenada de ID_REGISTRO, calculada en SQL) y el escritor aplica la MISMA
+    # función que en pandas (identidad.estable.crosswalk_de_corrida), así que
+    # la generación lleva REGISTROS y sirve como corrida_anterior de una corrida
+    # posterior con motor pandas (tests/test_flujo_cruce.py lo fija). Sin
+    # retiros: el modo disco no recibe corrida_anterior (ConfigCruce lo
+    # rechaza con error accionable; la expansión recalcula los ENT- por
+    # contenido y la herencia no sobreviviría).
     entidades_ids = _entidades_ids_de_grupos(expansion.grupos)
     ruta = carpeta / "entidades_ids.parquet"
     escribir_parquet(entidades_ids, ruta, contrato.ENTIDADES_IDS)

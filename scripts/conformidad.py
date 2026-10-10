@@ -320,8 +320,10 @@ def _particion_flujo_cruce(
         )
         resultado = ejecutar_cruce(config)
         correlativa = resultado.correlativa
-        manifiesto = json.loads(resultado.rutas["metadatos"].read_text(encoding="utf-8"))
-        reporte_arrastre = manifiesto["parametros"]["columnas_arrastre"]
+        # F2.5: la carpeta del estándar no tiene metadatos_corrida.json; lo que
+        # traía vive en manifest.json → corrida.cruce (F2.18 lo actualizó aquí).
+        manifiesto = json.loads(resultado.rutas["manifest"].read_text(encoding="utf-8"))
+        reporte_arrastre = manifiesto["corrida"]["cruce"]["parametros"]["columnas_arrastre"]
     faltan = sorted(set(arrastre) - set(reporte_arrastre["adjuntadas"]))
     if faltan or reporte_arrastre["omitidas"]:
         raise ColumnasArrastreError(

@@ -1194,3 +1194,117 @@ def test_golden_de_y_conflictos_identificador_de_exigen_el_contrato() -> None:
         manifiesto={"completar": {"identificador": {"grupos_con_bases_distintas": 2}}},
     )
     assert _conflictos_identificador_de(con_qa) == 2
+
+
+# ── F2.18: el crosswalk de F2.4 en los dos motores ─────────────────────
+
+
+def _con_filas_sin_nit(fuentes_csv) -> None:
+    """Dos copias exactas sin identificador en PADRON: un grupo ``ENT-…`` de 2."""
+    with Path(fuentes_csv[0].path).open("a", encoding="utf-8") as f:
+        f.write(",SIN IDENTIFICADOR SAS\n,SIN IDENTIFICADOR SAS\n")
+
+
+def test_corrida_anterior_exige_el_motor_pandas_y_lo_dice(fuentes_csv, tmp_path: Path) -> None:
+    """Con DuckDB la expansión recalcula los ``ENT-`` por contenido de las filas
+    publicadas (los representantes del motor no son las filas), así que una
+    herencia desde ``corrida_anterior`` no sobreviviría: en vez de perderse en
+    silencio, ``ConfigCruce`` la rechaza al recibirla (modo disco y modo
+    dataframe) y ``motor_ingesta='auto'`` la rechaza al resolverse a DuckDB,
+    antes de cargar nada."""
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    for modo in ("disco", "dataframe"):
+        with pytest.raises(ValueError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
+            config_cruce(
+                fuentes_csv,
+                tmp_path / modo,
+                motor_ingesta="duckdb",
+                modo_resultado=modo,
+                corrida_anterior=primera.carpeta,
+            )
+    auto = config_cruce(
+        fuentes_csv,
+        tmp_path / "auto",
+        motor_ingesta="auto",
+        umbral_filas_disco=1,  # fuerza DuckDB al resolver
+        corrida_anterior=primera.carpeta,
+    )
+    with pytest.raises(ValueError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
+        ejecutar_cruce(auto)
+    assert not (tmp_path / "auto" / "trabajo").exists() or not any(
+        (tmp_path / "auto" / "trabajo").rglob("*.parquet")
+    )
+
+
+def test_cruce_pandas_publica_el_crosswalk_con_sus_retiros(fuentes_csv, tmp_path: Path) -> None:
+    """El crosswalk que ``identidad.estable`` calculó dentro de ``linkage()``
+    (con ``REGISTROS`` y los retiros) es el que el cruce entrega y escribe; no
+    se rederiva de la correlativa perdiendo las entidades retiradas."""
+    from record_linkage.exporters.escritor import escribir_parquet
+    from record_linkage.identidad.estable import COLUMNA_REGISTROS, NOMBRE_CROSSWALK
+
+    _con_filas_sin_nit(fuentes_csv)
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    x1 = pd.read_parquet(primera.carpeta / NOMBRE_CROSSWALK)
+    ent = x1[x1["ID_ENTIDAD"].str.startswith("ENT-") & (x1["N_REGISTROS"] == 2)]
+    assert len(ent) == 1, x1
+    r1, r2 = str(ent[COLUMNA_REGISTROS].iloc[0]).split("|")
+    # Corrida anterior «a mano»: ese grupo era DOS entidades. En la segunda
+    # corrida se fusionan → una hereda y la otra se retira hacia ella.
+    partida = pd.concat(
+        [
+            x1[~x1.index.isin(ent.index)],
+            pd.DataFrame(
+                {
+                    "ID_ENTIDAD": pd.Series(["ENT-aaaaaaaaaaaaaaaa", "ENT-bbbbbbbbbbbbbbbb"]),
+                    "ID_GRUPO": pd.Series([900, 901], dtype="Int64"),
+                    "N_REGISTROS": pd.Series([1, 1], dtype="int64"),
+                    "RETIRADO_EN": pd.Series([pd.NA, pd.NA], dtype="string"),
+                    COLUMNA_REGISTROS: pd.Series([r1, r2], dtype="string"),
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    anterior = tmp_path / "anterior"
+    anterior.mkdir()
+    escribir_parquet(partida, anterior / NOMBRE_CROSSWALK, contrato.ENTIDADES_IDS)
+
+    segunda = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "p2", nombre="segunda", corrida_anterior=anterior)
+    )
+    assert segunda.validar().ok, segunda.validar().fallos
+    assert segunda.entidades_ids is not None
+    retiradas = segunda.entidades_ids[segunda.entidades_ids["RETIRADO_EN"].notna()]
+    assert len(retiradas) == 1, segunda.entidades_ids
+    assert retiradas["RETIRADO_EN"].iloc[0] in set(segunda.correlativa["ID_ENTIDAD"])
+    herencia = segunda.manifiesto["completar"]["id_entidad"]["herencia"]
+    assert herencia["heredadas"] == 1 and herencia["retiradas"] == 1
+    assert segunda.manifiesto["cruce"]["parametros"]["corrida_anterior"] == str(anterior)
+    leido = leer_resultado(segunda.carpeta)
+    # leer_resultado devuelve texto con nan (parquet → pandas); el contenido es el mismo.
+    pd.testing.assert_frame_equal(leido.entidades_ids, segunda.entidades_ids, check_dtype=False)
+    assert leido.validar().ok, leido.validar().fallos
+
+
+def test_una_generacion_de_disco_sirve_como_corrida_anterior(fuentes_csv, tmp_path: Path) -> None:
+    """La generación del modo disco lleva ``REGISTROS`` (la misma regla que en
+    pandas), así que una corrida posterior con motor pandas hereda de ella."""
+    from record_linkage.identidad.estable import COLUMNA_REGISTROS, NOMBRE_CROSSWALK
+
+    _con_filas_sin_nit(fuentes_csv)
+    disco = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "d", motor_ingesta="duckdb", modo_resultado="disco")
+    )
+    x = pd.read_parquet(disco.carpeta / NOMBRE_CROSSWALK)
+    assert list(x.columns) == list(contrato.COLUMNAS_ENTIDADES_IDS)
+    assert x[COLUMNA_REGISTROS].notna().all() and x["RETIRADO_EN"].isna().all()
+    assert x.loc[x["ID_ENTIDAD"].str.startswith("ENT-"), "N_REGISTROS"].tolist() == [2]
+
+    despues = ejecutar_cruce(
+        config_cruce(fuentes_csv, tmp_path / "p", nombre="despues", corrida_anterior=disco.carpeta)
+    )
+    herencia = despues.manifiesto["completar"]["id_entidad"]["herencia"]
+    assert herencia["corrida_anterior"] == str(disco.carpeta / NOMBRE_CROSSWALK)
+    assert herencia["heredadas"] == 1 and herencia["retiradas"] == 0
+    assert set(despues.correlativa["ID_ENTIDAD"]) == set(disco.leer().correlativa["ID_ENTIDAD"])

@@ -85,6 +85,7 @@ from record_linkage.exporters.escritor import (
     escribir_resultado,
     leer_resultado,
 )
+from record_linkage.identidad.estable import crosswalk_de_corrida
 from record_linkage.pipeline.errores import ContratoSalidaError, EscrituraSalidaError
 from record_linkage.resultado import ResultadoLinkage
 
@@ -407,22 +408,36 @@ def test_hoja_diccionario_selecciona_por_tabla_o_por_columnas() -> None:
 
 
 def test_entidades_ids_de_grupos_es_la_misma_regla(res: ResultadoLinkage) -> None:
-    """La regla del crosswalk se escribe una vez: ``_entidades_ids`` (desde la
-    correlativa en pandas) y ``_entidades_ids_de_grupos`` (desde una tabla
-    por grupo, como la que el modo disco calcula en SQL) dan lo mismo."""
+    """La regla del crosswalk se escribe una vez (F2.4 + F2.18): ``_entidades_ids``
+    (desde la correlativa en pandas, ``identidad.estable.crosswalk_de_corrida``)
+    y ``_entidades_ids_de_grupos`` (desde la tabla por grupo que el modo disco
+    calcula en SQL: ``ID_GRUPO``, ``ID_ENTIDAD``, ``N_REGISTROS`` y ``REGISTROS``
+    = ``list(ID_REGISTRO ORDER BY ID_REGISTRO)``) dan EXACTAMENTE lo mismo,
+    con ``REGISTROS`` y ``RETIRADO_EN`` nulo (no hay corrida anterior)."""
     c = res.correlativa
     grupos = (
-        c.groupby("ID_GRUPO", sort=False)
-        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
+        c.sort_values("ID_REGISTRO")
+        .groupby("ID_GRUPO", sort=False)
+        .agg(
+            ID_ENTIDAD=("ID_ENTIDAD", "first"),
+            N_REGISTROS=("ID_ENTIDAD", "size"),
+            REGISTROS=("ID_REGISTRO", list),
+        )
         .reset_index()
         .sample(frac=1, random_state=7)  # el orden de entrada no importa
     )
-    pd.testing.assert_frame_equal(
-        escritor._entidades_ids_de_grupos(grupos), escritor._entidades_ids(c)
-    )
-    assert list(escritor._entidades_ids_de_grupos(grupos).columns) == list(
-        contrato.COLUMNAS_ENTIDADES_IDS
-    )
+    desde_grupos = escritor._entidades_ids_de_grupos(grupos)
+    esperado = crosswalk_de_corrida(c)
+    pd.testing.assert_frame_equal(desde_grupos, esperado)
+    pd.testing.assert_frame_equal(desde_grupos, escritor._entidades_ids(res))
+    assert list(desde_grupos.columns) == list(contrato.COLUMNAS_ENTIDADES_IDS)
+    assert desde_grupos["REGISTROS"].notna().all() and desde_grupos["RETIRADO_EN"].isna().all()
+    # Una lista incompleta (REGISTROS no cubre N_REGISTROS) no pasa en silencio.
+    rotos = grupos.copy()
+    i = rotos.index[rotos["N_REGISTROS"] > 1][0]
+    rotos.at[i, "REGISTROS"] = list(rotos.at[i, "REGISTROS"])[:-1]
+    with pytest.raises(ContratoSalidaError, match="REGISTROS"):
+        escritor._entidades_ids_de_grupos(rotos)
 
 
 def test_manifiesto_de_admite_lo_que_el_modo_disco_calcula_en_sql(

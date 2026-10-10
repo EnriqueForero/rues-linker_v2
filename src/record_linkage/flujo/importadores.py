@@ -39,12 +39,22 @@ escritor del estándar), igual que ``linkage()``:
   ``SIM_AL_FINAL``…), que se conservan como columnas adicionales documentadas
   en ``diccionario.csv``. La partición (``ID_IMPORTADOR``) no cambia: el
   estándar se añade encima (ADR-0009 sigue igual).
-* ``ID_GRUPO``: entero por orden de primera aparición en ``ORIGINAL_INDEX``
-  (la misma regla que ``salida.completar`` aplica a las etiquetas de texto de
-  ``dedupe``); uno por ``ID_IMPORTADOR``. ``ID_ENTIDAD``: la base no trae
-  identificador, así que SIEMPRE es ``ENT-<16 hex de SHA-256 de los
-  ID_REGISTRO del grupo ordenados>`` (``salida.completar._id_entidad``,
-  determinista por contenido). ``NIT_FINAL`` y ``NIT_DISTANCE`` quedan nulos.
+* ``ID_REGISTRO``, ``ID_GRUPO`` e ``ID_ENTIDAD`` con las reglas ÚNICAS de la
+  librería (F2.18; antes este flujo tenía copias por posición). ``ID_REGISTRO``
+  = ``<SRC>-<col_id>`` o ``<SRC>-F<ORIGINAL_INDEX>``
+  (``salida.identificadores_registro.asignar_id_registro``). ``ID_GRUPO``:
+  entero determinista por CONTENIDO —la posición lexicográfica del menor
+  ``ID_REGISTRO`` del grupo (``id_grupo_por_clave_minima`` vía
+  ``recodificar_id_grupo``; ADR-0013)—, uno por ``ID_IMPORTADOR``; barajar la
+  entrada no cambia el mapa ``ID_REGISTRO → ID_GRUPO`` (hasta F2.6 era «por
+  primera aparición en ORIGINAL_INDEX», un id volátil). ``ID_ENTIDAD``: la
+  base no trae identificador, así que SIEMPRE es ``ENT-<16 hex de SHA-256 de
+  los ID_REGISTRO del grupo ordenados>`` (``identidad.estable.asignar_id_entidad``
+  sin corrida anterior, ADR-0012; este flujo no expone ``corrida_anterior``:
+  F2.4 solo lo pide en ``linkage()``/``ConfigCruce``). El crosswalk que esa
+  función calcula (``REGISTROS`` por entidad, ``RETIRADO_EN`` nulo) viaja en
+  ``ResultadoImportadores.entidades_ids`` y es el ``entidades_ids.parquet`` de
+  la carpeta. ``NIT_FINAL`` y ``NIT_DISTANCE`` quedan nulos.
 * ``METODO_UNION``: ``sin_pareja`` en grupos de un registro; ``nombre`` en el
   resto (el nombre es toda la evidencia). ``SCORE_PAR``: la similitud 0–1 del
   nombre normalizado del registro con el del líder de su estrella (la misma
@@ -97,6 +107,7 @@ from .. import contrato
 from ..config.auditoria import ParametrosMotor
 from ..engine.cobertura import ReglaLider, cobertura_estrella
 from ..golden.metricas import metricas_de_calidad, metricas_de_grupo
+from ..identidad.estable import asignar_id_entidad
 from ..matching.campos import CampoSpec, EsquemaCampos, PoliticaFaltante, TipoCampo
 from ..matching.genericos import (
     GENERICOS_ESTRUCTURALES,
@@ -122,12 +133,8 @@ from ..processing.saneamiento import (
     unir_iniciales,
 )
 from ..resultado import ResultadoLinkage
-from ..salida.completar import (
-    _SUFIJO_COLISION,
-    _asignar_id_registro,
-    _id_entidad,
-    _recodificar_id_grupo,
-)
+from ..salida.completar import _SUFIJO_COLISION
+from ..salida.identificadores_registro import asignar_id_registro, recodificar_id_grupo
 
 if TYPE_CHECKING:  # pragma: no cover - solo para tipar sin importar el escritor
     from ..exporters.escritor import Manifiesto
@@ -220,9 +227,10 @@ _SIGNIFICADOS_PROPIOS: dict[str, str] = {
 #: Matices de este flujo sobre columnas fijas del contrato (se AÑADEN al
 #: significado del contrato, no lo sustituyen).
 _MATICES_CONTRATO: dict[str, str] = {
-    "ID_GRUPO": "En importadores: entero por orden de primera aparición en ORIGINAL_INDEX, "
-    "uno por ID_IMPORTADOR.",
-    "ID_ENTIDAD": "En importadores la base no trae identificador: siempre ENT-….",
+    "ID_GRUPO": "En importadores: entero determinista por contenido (posición del menor "
+    "ID_REGISTRO del grupo), uno por ID_IMPORTADOR.",
+    "ID_ENTIDAD": "En importadores la base no trae identificador: siempre ENT-… (por contenido; "
+    "sin herencia entre corridas).",
     "NIT_FINAL": "En importadores siempre vacío: la base no trae identificador.",
     "NIT_DISTANCE": "En importadores siempre vacío: la base no trae identificador.",
     "SCORE_PAR": "En importadores: similitud 0–1 del nombre con el líder de la estrella "
@@ -541,6 +549,11 @@ class ResultadoImportadores:
         manifiesto: trazabilidad de la corrida (función, parámetros y su hash,
             huella del insumo, versiones, ``configuracion`` efectiva,
             reporte ``completar``); lo que ``escribir_resultado`` publica.
+        entidades_ids: el crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la corrida con
+            la forma de ``contrato.ENTIDADES_IDS`` (con ``REGISTROS``; sin
+            retiros: este flujo no hereda), tal como lo calculó
+            ``identidad.estable.asignar_id_entidad`` (F2.18). Es lo que
+            ``escribir_resultado`` publica como ``entidades_ids.parquet``.
         carpeta_salida: la carpeta del estándar si se escribió.
         muestra: muestra estratificada lista para etiquetar a mano.
         metricas: indicadores de la corrida.
@@ -574,6 +587,7 @@ class ResultadoImportadores:
     revision_grupos: pd.DataFrame = field(default_factory=pd.DataFrame)
     diccionario: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifiesto: dict[str, Any] = field(default_factory=dict)
+    entidades_ids: pd.DataFrame | None = None
     carpeta_salida: Path | None = None
 
     @property
@@ -611,7 +625,9 @@ class ResultadoImportadores:
         El diccionario se construye aquí si no vino (``diccionario_importadores``);
         el manifiesto NO: lo arma ``deduplicar_importadores`` con la huella del
         insumo y sin él ``validar()`` no puede comprobar «una fila por registro
-        de entrada» ni el escritor reproducir la corrida.
+        de entrada» ni el escritor reproducir la corrida. ``entidades_ids`` viaja
+        tal cual (el crosswalk de ``identidad.estable``); si falta, el escritor
+        lo deriva de la correlativa con la misma función (``crosswalk_de_corrida``).
 
         Raises:
             ContratoSalidaError: si el resultado no trae manifiesto.
@@ -653,6 +669,7 @@ class ResultadoImportadores:
             revision=self.revision,
             diccionario=diccionario,
             dir_trabajo=None,
+            entidades_ids=self.entidades_ids,
         )
 
     def resumen(self) -> str:
@@ -1126,9 +1143,14 @@ def construir_entregables(
     ``verificar_invariantes`` y :func:`ensamblar_resultado` leen este dict tal
     cual.
 
-    Deja en ``corrida["regla_id_registro"]`` el reporte de
-    ``salida.completar._asignar_id_registro`` (``{fuente: {regla, columna,
-    motivo}}``): el manifiesto lo publica tal cual, sin recomputar la regla.
+    Deja en ``corrida`` lo que las reglas de identidad declararon, para que
+    el manifiesto lo publique tal cual sin recomputar nada:
+    ``corrida["regla_id_registro"]`` (``asignar_id_registro``: ``{fuente:
+    {regla, columna, motivo}}``), ``corrida["info_id_grupo"]``
+    (``recodificar_id_grupo``: ``recodificado``, ``valores_cambiados``…),
+    ``corrida["reporte_id_entidad"]`` (``asignar_id_entidad``: sin corrida
+    anterior, el motivo) y ``corrida["entidades_ids"]`` (el crosswalk de la
+    corrida, que :func:`ensamblar_resultado` pone en el resultado).
     ``CONFIANZA`` (F2.12) sale UNA vez por grupo en ``GOLDEN`` de la regla única
     de ``golden.metricas`` (``_golden_estandar`` → ``metricas_de_grupo`` →
     ``confianza_de_grupo``) y la correlativa lleva la de su grupo: no hay una
@@ -1245,15 +1267,12 @@ def construir_entregables(
     corr["CAMBIO_PAIS"] = corr[cfg.col_pais] != corr["PAIS_FINAL"]
     corr["ES_LIDER"] = corr["ES_LIDER"].astype(bool)
 
-    # ── Columnas fijas del contrato 1.0 (F2.6) ──────────────────────────
-    # ID_GRUPO: entero por primera aparición en ORIGINAL_INDEX, UNA regla con
-    # salida.completar (la misma que recodifica C<n>/S<n> de dedupe).
-    corr["ID_GRUPO"] = corr["ID_IMPORTADOR"].astype("string")
-    _recodificar_id_grupo(corr)
-    id_registro, regla_id = _asignar_id_registro(corr, cfg.col_id or None)
+    # ── Columnas fijas del contrato 1.0 (F2.6; reglas únicas desde F2.18) ──
+    # ID_REGISTRO primero: ID_GRUPO (por contenido) e ID_ENTIDAD se derivan de él.
+    id_registro, regla_id = asignar_id_registro(corr, cfg.col_id or None)
     corrida["regla_id_registro"] = regla_id
     corr["ID_REGISTRO"] = id_registro.astype(str)
-    # Defensa: _asignar_id_registro cae a <SRC>-F<ORIGINAL_INDEX> cuando col_id
+    # Defensa: asignar_id_registro cae a <SRC>-F<ORIGINAL_INDEX> cuando col_id
     # no es único, así que hoy solo un merge que multiplique filas llegaría aquí.
     repetidos = int(corr["ID_REGISTRO"].duplicated().sum())
     if repetidos:
@@ -1269,11 +1288,22 @@ def construir_entregables(
                 )
             ]
         )
-    # ID_ENTIDAD: ningún grupo adopta identificador (la base no lo trae): todos ENT-….
+    # ID_GRUPO: entero determinista por contenido (menor ID_REGISTRO del grupo;
+    # ADR-0013), la misma regla y función que L5/api.linkage/completar aplican a
+    # las etiquetas del motor. La partición (ID_IMPORTADOR) no cambia: solo el id.
+    corr["ID_GRUPO"] = corr["ID_IMPORTADOR"].astype("string")
+    _, info_grupo = recodificar_id_grupo(corr, None, corr["ID_REGISTRO"])
+    corrida["info_id_grupo"] = info_grupo
+    # ID_ENTIDAD: ningún grupo adopta identificador (la base no lo trae): todos
+    # ENT-… por contenido (ADR-0012, sin corrida anterior: este flujo no la
+    # expone). El crosswalk que la regla calcula es el entidades_ids de la corrida.
     sin_identificador = pd.Series(pd.NA, index=corr.index, dtype="string")
-    corr["ID_ENTIDAD"] = _id_entidad(
-        corr, sin_identificador, np.zeros(len(corr), dtype=bool)
-    ).astype(str)
+    identidad = asignar_id_entidad(
+        corr, sin_identificador, np.zeros(len(corr), dtype=bool), corrida_anterior=None
+    )
+    corr["ID_ENTIDAD"] = identidad.id_entidad.astype(str)
+    corrida["reporte_id_entidad"] = identidad.reporte
+    corrida["entidades_ids"] = identidad.entidades_ids
     corr["NIT_FINAL"] = sin_identificador
     corr["NIT_DISTANCE"] = pd.array([pd.NA] * len(corr), dtype="Int64")
     corr["NAME_SIMILARITY_SCORE"] = corr["SIM_AL_FINAL"].astype("float64")
@@ -1948,16 +1978,18 @@ def _manifiesto_importadores(
             for c in correl.columns
             if c not in contrato.COLUMNAS_CORRELATIVA and c not in COLUMNAS_PROPIAS
         ],
-        # La regla que _asignar_id_registro aplicó de verdad (construir_entregables
-        # la deja en corrida): no se recompone a partir de los valores.
+        # Lo que las reglas de identidad aplicaron de verdad (construir_entregables
+        # lo deja en corrida): no se recompone a partir de los valores. Mismas
+        # claves que salida.completar (id_registro, id_grupo, id_entidad.herencia).
         "id_registro": corrida["regla_id_registro"],
-        "id_grupo": {
-            "regla": "entero por orden de primera aparición en ORIGINAL_INDEX, uno por "
-            "ID_IMPORTADOR"
-        },
+        "id_grupo": dict(corrida["info_id_grupo"]),
         "id_entidad": {
             "regla": "ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados> para "
-            "todos los grupos: la base no trae identificador"
+            "todos los grupos: la base no trae identificador (identidad/estable.py, sin "
+            "corrida anterior)",
+            "grupos_nit": 0,
+            "grupos_ent": int(correl["ID_GRUPO"].nunique()),
+            "herencia": dict(corrida["reporte_id_entidad"]),
         },
         "score_par": {
             "origen": "similitud de nombre al líder de la estrella (SIM_AL_FINAL); 1.0 por "
@@ -2091,6 +2123,7 @@ def ensamblar_resultado(
             cols_metricas=cfg.cols_metricas,
         ),
         manifiesto=manifiesto,
+        entidades_ids=corrida.get("entidades_ids"),
     )
 
 

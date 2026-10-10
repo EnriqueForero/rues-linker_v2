@@ -177,7 +177,12 @@ class ConfigCruce:
             para comparar y las re-adjunta por fila física al publicar.
         corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
             de la corrida previa desde la que los grupos sin identificador
-            heredan su ``ID_ENTIDAD`` (F2.4). Se valida al construirse.
+            heredan su ``ID_ENTIDAD`` (F2.4). Se valida al construirse. Solo
+            con ``motor_ingesta='pandas'`` (F2.18): con DuckDB la expansión
+            recalcula los ``ENT-`` por contenido de las filas publicadas y la
+            herencia no sobreviviría; se rechaza al recibirla (y al resolverse
+            ``'auto'`` a DuckDB), no en silencio. Una generación del modo disco
+            SÍ sirve como corrida anterior de una corrida pandas posterior.
     """
 
     fuentes: list[SourceSpec]
@@ -274,6 +279,7 @@ class ConfigCruce:
         if not isinstance(self.preservar_payload, bool):
             raise TypeError("preservar_payload debe ser bool.")
         if self.corrida_anterior is not None:
+            _exigir_corrida_anterior_con_pandas(motor_ingesta, self.corrida_anterior)
             # Falla al construirse, no tras cuarenta minutos de corrida: lee y
             # valida el crosswalk (existe, trae REGISTROS, ids únicos), no solo
             # la ruta. Es un parquet pequeño; linkage() lo vuelve a leer.
@@ -1006,13 +1012,19 @@ def _resultado_cruce(
     *,
     reportes_carga: dict[str, Any],
     insumos: Mapping[str, Any] | None = None,
+    entidades_ids: pd.DataFrame | None = None,
 ) -> ResultadoCruce:
     """El ``ResultadoCruce`` a partir de lo que devolvió ``linkage()`` y la correlativa entregada.
 
     La correlativa puede traer más columnas que la que vio el motor (las de
     arrastre re-adjuntadas o el payload de DuckDB): el diccionario se
     recalcula con ellas como columnas de la fuente, y ``metricas``/``entradas``
-    describen la tabla entregada, no la compacta.
+    describen la tabla entregada, no la compacta. ``entidades_ids`` es el
+    crosswalk que ``identidad.estable`` calculó dentro de ``linkage()`` (con
+    ``REGISTROS`` y los retiros, F2.4): se pasa SOLO cuando la correlativa
+    entregada es la que el motor identificó (motor pandas); tras la expansión
+    DuckDB los ``ENT-`` se recalcularon y el escritor deriva el crosswalk de
+    la tabla publicada con la misma regla (``_entidades_ids``).
     """
     manifiesto = dict(salida.manifiesto)
     manifiesto["funcion"] = "ejecutar_cruce"
@@ -1042,6 +1054,7 @@ def _resultado_cruce(
         revision=salida.revision,
         diccionario=diccionario,
         dir_trabajo=salida.dir_trabajo,
+        entidades_ids=entidades_ids,
         reportes_carga=reportes_carga,
     )
 
@@ -2073,6 +2086,34 @@ def _registrar_reporte_arrastre(reporte: ReporteColumnasArrastre, log: Any) -> N
         )
 
 
+def _exigir_corrida_anterior_con_pandas(motor_ingesta: str, corrida_anterior: Path | str) -> None:
+    """``corrida_anterior`` (F2.4) solo tiene sentido con el motor pandas (F2.18).
+
+    Con DuckDB ``linkage()`` corre sobre representantes y la expansión
+    (``resultados_disco.expandir_en_disco``) recalcula los ``ENT-`` por
+    contenido de las filas publicadas, cuyos ``ID_REGISTRO`` no son los que
+    vio el motor: lo heredado se perdería y los retiros no llegarían al
+    crosswalk. Decirlo al recibir el parámetro vale más que una corrida larga
+    que publica ids nuevos en silencio.
+
+    Raises:
+        ValueError: si ``motor_ingesta`` es ``'duckdb'`` (mensaje accionable).
+    """
+    if motor_ingesta == "duckdb":
+        raise ValueError(
+            mensaje_accionable(
+                f"corrida_anterior={str(corrida_anterior)!r} con motor_ingesta='duckdb'.",
+                "la expansión DuckDB recalcula los ENT- por contenido de las filas "
+                "publicadas (los representantes del motor no son las filas) y la herencia de "
+                "ID_ENTIDAD no sobreviviría: se publicarían ids nuevos y sin retiros, en "
+                "silencio.",
+                "use motor_ingesta='pandas' (modo dataframe) con corrida_anterior, o quite "
+                "corrida_anterior; una generación del modo disco sí sirve como corrida "
+                "anterior de una corrida pandas posterior.",
+            )
+        )
+
+
 def resolver_motor(config: ConfigCruce, log: Any = None) -> ConfigCruce:
     """Fija ``motor_ingesta``/``modo_resultado`` cuando vienen en ``"auto"``.
 
@@ -2141,6 +2182,9 @@ def resolver_motor(config: ConfigCruce, log: Any = None) -> ConfigCruce:
         if log:
             log.info(f"      · {estimacion.fuente}: {estimacion.detalle}")
 
+    if elegido == "duckdb" and config.corrida_anterior is not None:
+        # Antes de cargar nada: la herencia no sobreviviría a la expansión.
+        _exigir_corrida_anterior_con_pandas(elegido, config.corrida_anterior)
     config.motor_ingesta = elegido
     if elegido == "duckdb":
         if config.dir_procesados is not None:
@@ -2442,7 +2486,14 @@ def _ejecutar_cruce_medido(
             )
             _registrar_reporte_arrastre(reporte_arrastre, log)
         res = _resultado_cruce(
-            salida, correlativa, golden_compacta, reporte_arrastre, reportes_carga=reportes_carga
+            salida,
+            correlativa,
+            golden_compacta,
+            reporte_arrastre,
+            reportes_carga=reportes_carga,
+            # Motor pandas: la correlativa es la que el motor identificó, así que
+            # el crosswalk de linkage() (REGISTROS + retiros) es el del entregable.
+            entidades_ids=salida.entidades_ids,
         )
 
     # Invariantes: el contrato (validar) más el cruce de filas del flujo, ANTES

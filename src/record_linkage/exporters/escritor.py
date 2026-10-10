@@ -127,7 +127,7 @@ from .. import contrato
 from ..config.auditoria import ParametrosMotor
 from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
 from ..identidad.estable import crosswalk_de_corrida
-from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
+from ..pipeline.errores import ContratoSalidaError, EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
 from . import excel
@@ -849,28 +849,74 @@ def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
 
 
 def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
-    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde una tabla por grupo (``RETIRADO_EN`` vacío).
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` desde la tabla por grupo del modo disco.
 
-    Es la forma de ``_entidades_ids`` cuando la correlativa no pasa por
-    pandas: ``grupos`` trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD`` y
-    ``N_REGISTROS`` calculada en SQL (modo disco de ``flujo.cruce``,
-    ``resultados_disco.escribir_estandar_de_expansion``). Mismas columnas,
-    tipos y orden por ``ID_GRUPO`` que ``_entidades_ids`` sobre la misma
-    partición (``tests/test_escritor.py`` lo fija). Función añadida en F2.5
-    sin tocar ``_entidades_ids``, que F2.4 reescribe (``REGISTROS`` y
-    retiros vía ``identidad.estable.crosswalk_de_corrida``): al integrar
-    F2.4, esta función debe producir el mismo esquema (ver la nota en
-    ``resultados_disco.escribir_estandar_de_expansion``).
+    Es ``_entidades_ids`` cuando la correlativa no pasa por pandas: ``grupos``
+    trae una fila por ``ID_GRUPO`` con ``ID_ENTIDAD``, ``N_REGISTROS`` y
+    ``REGISTROS`` —la lista ORDENADA de ``ID_REGISTRO`` del grupo, que
+    ``resultados_disco.expandir_en_disco`` calcula en SQL
+    (``list(ID_REGISTRO ORDER BY ID_REGISTRO)``)—. No reescribe la regla: la
+    tabla se despliega a (``ID_GRUPO``, ``ID_REGISTRO``, ``ID_ENTIDAD``) con
+    Arrow (``list_flatten``/``list_parent_indices``, sin bucles) y se llama a
+    la MISMA función que el modo dataframe,
+    ``identidad.estable.crosswalk_de_corrida`` (F2.4 + F2.18): mismas
+    columnas (con ``REGISTROS``), tipos, orden y ``RETIRADO_EN`` nulo, porque
+    el modo disco no recibe ``corrida_anterior`` (``ConfigCruce`` lo rechaza
+    con error accionable). ``tests/test_escritor.py`` lo fija contra
+    ``crosswalk_de_corrida(res.correlativa)``.
+
+    El despliegue cuesta lo que el crosswalk mismo (``REGISTROS`` ya lleva
+    todos los ``ID_REGISTRO``): no materializa la correlativa.
+
+    Raises:
+        ContratoSalidaError: ``grupos`` no trae ``REGISTROS``, o una lista no
+            cubre ``N_REGISTROS`` (un crosswalk incompleto partiría mal la
+            herencia de la corrida siguiente).
     """
-    grupos = grupos.sort_values("ID_GRUPO", kind="stable").reset_index(drop=True)
-    return pd.DataFrame(
+    import pyarrow.compute as pc
+
+    from ..identidad.estable import COLUMNA_REGISTROS
+
+    if COLUMNA_REGISTROS not in grupos.columns:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"la tabla por grupo no trae {COLUMNA_REGISTROS} (columnas: "
+                    f"{list(grupos.columns)}).",
+                    "sin los ID_REGISTRO de cada grupo el crosswalk no puede llevar "
+                    f"{COLUMNA_REGISTROS} y la corrida siguiente no podría heredar.",
+                    "calcule la tabla con expandir_en_disco (list(ID_REGISTRO ORDER BY "
+                    "ID_REGISTRO) por grupo) o pase la correlativa a _entidades_ids.",
+                )
+            ]
+        )
+    listas = pa.array(grupos[COLUMNA_REGISTROS])
+    if not pa.types.is_list(listas.type) and not pa.types.is_large_list(listas.type):
+        listas = listas.cast(pa.list_(pa.string()))
+    largos = pc.list_value_length(listas).to_numpy(zero_copy_only=False)
+    n_registros = grupos["N_REGISTROS"].to_numpy(dtype="int64")
+    incompletos = int((largos != n_registros).sum())
+    if incompletos:
+        raise ContratoSalidaError(
+            [
+                mensaje_accionable(
+                    f"{incompletos} grupo(s) cuya lista {COLUMNA_REGISTROS} no cubre N_REGISTROS.",
+                    "el crosswalk declararía menos registros de los que tiene la entidad y "
+                    "la corrida siguiente heredaría mal.",
+                    "calcule la tabla por grupo con expandir_en_disco (list() sobre la "
+                    "correlativa publicada, sin ID_REGISTRO nulos).",
+                )
+            ]
+        )
+    padres = pc.list_parent_indices(listas).to_numpy(zero_copy_only=False)
+    desplegado = pd.DataFrame(
         {
-            "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
-            "ID_GRUPO": grupos["ID_GRUPO"].astype("int64"),
-            "N_REGISTROS": grupos["N_REGISTROS"].astype("int64"),
-            "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
+            "ID_GRUPO": grupos["ID_GRUPO"].to_numpy()[padres],
+            "ID_REGISTRO": pd.array(pc.list_flatten(listas), dtype="string"),
+            "ID_ENTIDAD": grupos["ID_ENTIDAD"].to_numpy()[padres],
         }
     )
+    return crosswalk_de_corrida(desplegado)
 
 
 def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[str, Any]:

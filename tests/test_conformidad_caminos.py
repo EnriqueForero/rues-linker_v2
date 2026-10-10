@@ -384,14 +384,19 @@ def test_arrastre_omitido_en_flujo_cruce_levanta_la_excepcion_especifica(
     from record_linkage import flujo
     from record_linkage.pipeline.errores import ColumnasArrastreError
 
-    metadatos = tmp_path / "metadatos.json"
-    metadatos.write_text(
+    # F2.5: el reporte de arrastre vive en manifest.json → corrida.cruce.parametros.
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
         json.dumps(
             {
-                "parametros": {
-                    "columnas_arrastre": {
-                        "adjuntadas": ["REG_ID", "DIRECCION", "DEPARTAMENTO"],
-                        "omitidas": ["SECTOR"],
+                "corrida": {
+                    "cruce": {
+                        "parametros": {
+                            "columnas_arrastre": {
+                                "adjuntadas": ["REG_ID", "DIRECCION", "DEPARTAMENTO"],
+                                "omitidas": ["SECTOR"],
+                            }
+                        }
                     }
                 }
             }
@@ -401,7 +406,7 @@ def test_arrastre_omitido_en_flujo_cruce_levanta_la_excepcion_especifica(
 
     class _Resultado:
         correlativa = pd.DataFrame({"REG_ID": ["1"], "ID_GRUPO": [1]})
-        rutas = {"metadatos": metadatos}
+        rutas = {"manifest": manifest}
 
     monkeypatch.setattr(flujo, "ejecutar_cruce", lambda config: _Resultado())
     datos = pd.DataFrame(

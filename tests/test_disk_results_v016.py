@@ -488,6 +488,11 @@ def test_metodo_union_en_disco_fija_la_divergencia_declarada(tmp_path: Path) -> 
         "A-F4": "identificador",
     }
     assert "METODO_UNION" in DIVERGENCIA_METODO_UNION and "8/30486" in DIVERGENCIA_METODO_UNION
+    # F2.18: la tabla por grupo trae la lista ORDENADA de ID_REGISTRO (REGISTROS),
+    # de la que el escritor arma el crosswalk con la misma regla que en pandas.
+    grupos = expansion.grupos.sort_values("ID_GRUPO")
+    assert [list(r) for r in grupos["REGISTROS"]] == [["A-F0", "A-F1", "A-F2"], ["A-F3", "A-F4"]]
+    assert grupos["N_REGISTROS"].tolist() == [3, 2]
 
 
 @pytest.mark.xfail(strict=True, reason=DIVERGENCIA_METODO_UNION)
