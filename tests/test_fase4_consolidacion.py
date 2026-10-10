@@ -5,8 +5,9 @@ Verifica:
 2. `min_sources_for_golden` filtra golden records correctamente.
 3. `DEPRECATED_CONFIG_KEYS` se detectan en `validar_config`.
 4. `RESURRECTED_CONFIG_KEYS` existe y contiene los esperados.
-5. Los shims heredados de `optimization/` se retiraron (F2.8); la alternativa
-   es `evaluation.OrchestratorOptimizer`.
+5. Los shims heredados de `optimization/` se retiraron (F2.8) y no vuelven
+   (F2.14, decisión de Enrique de conservar la FUNCIONALIDAD, no los módulos):
+   el único optimizador es `evaluation.OrchestratorOptimizer`.
 6. Retrocompat: sin min_sources_for_golden, comportamiento idéntico.
 """
 
@@ -189,7 +190,9 @@ class TestOptimizacionRetirada:
     DeprecationWarning al importarse. Se retiraron con evidencia (0 usos fuera
     del propio paquete); ``tests/test_retiros_f2_8.py`` fija el retiro. Lo que
     se conserva es la alternativa moderna, ``evaluation.OrchestratorOptimizer``,
-    OPT-IN con optuna instalado (extra `optimization`/`dev`).
+    OPT-IN con optuna instalado (extra `optimization`/`dev`). F2.14 (2026-10-07)
+    la completó (espacio por parámetro, ``macro_f1``, validación cruzada,
+    ``ajustes_perfil``, gráficas) en vez de restaurar ``optimization/``.
     """
 
     def test_alternativa_orchestrator_optimizer_disponible(self):
