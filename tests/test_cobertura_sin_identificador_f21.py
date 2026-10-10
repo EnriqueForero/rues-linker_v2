@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from lineas_base import BANCO_F0
 
 from record_linkage import linkage
 from record_linkage.config.profiles import PERFILES_BASE
@@ -320,10 +321,10 @@ def test_linkage_parte_la_cadena_solo_con_la_perilla_activa(tmp_path) -> None:
 # ── Paridad: con la perilla apagada el banco reproduce la huella de F0 ─────
 
 #: Huella de la partición del banco institucional en 0.22.4 / F0 (ADR-0011,
-#: `docs/evidencia/corrida_base_f0.json`). Se fija aquí, no en `BANCO_F0`,
-#: porque esa constante seguirá al tronco cuando la cobertura quede activa por
-#: defecto y ESTA prueba mide lo contrario: que apagarla devuelve 0.22.4 exacto.
-HUELLA_SIN_COBERTURA = "1e365ba81c4df45e410dd09154cafef1d38e96d9fb2846998260c10ad69cbe31"
+#: `docs/evidencia/corrida_base_f0.json`). Se lee de `BANCO_F0`, que desde
+#: F2.17 es historia (el tronco sigue a `BANCO_VIGENTE`), y ESTA prueba mide lo
+#: contrario del tronco: que apagar la cobertura devuelve 0.22.4 exacto.
+HUELLA_SIN_COBERTURA = BANCO_F0.huella
 RAIZ = Path(__file__).resolve().parents[1]
 DATOS_BANCO = RAIZ / "data" / "benchmark" / "benchmark_institucional.csv.gz"
 
@@ -353,8 +354,8 @@ def test_con_la_perilla_apagada_el_banco_reproduce_la_huella_de_f0(tmp_path: Pat
         f"con la cobertura apagada la huella debía ser {HUELLA_SIN_COBERTURA[:16]}… y fue "
         f"{corrida.huella[:16]}…: algo distinto de la perilla cambió la partición"
     )
-    assert corrida.calidad.fp_que_tocan_negativo == 287
-    assert corrida.calidad.macro_f1 == pytest.approx(0.8920, abs=5e-4)
+    assert corrida.calidad.fp_que_tocan_negativo == BANCO_F0.fp_que_tocan_negativo
+    assert corrida.calidad.macro_f1 == pytest.approx(BANCO_F0.macro_f1, abs=5e-4)
 
 
 # ── scripts/banco.py: --ajuste con clave anidada (para medir el barrido) ───
