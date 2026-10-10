@@ -97,12 +97,18 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def _parsear_etiquetas(pares: list[str]) -> dict[float, str]:
+    """``["0.75=mio"]`` → ``{0.75: "mio"}``; falla rápido si un par viene mal."""
     salida: dict[float, str] = {}
     for par in pares:
-        if "=" not in par:
-            raise SystemExit(f"--etiquetas espera UMBRAL=ETIQUETA, recibió {par!r}")
-        umbral, _, etiqueta = par.partition("=")
-        salida[float(umbral)] = etiqueta
+        umbral, separador, etiqueta = par.partition("=")
+        try:
+            if not separador or not etiqueta:
+                raise ValueError("falta el '=' o la etiqueta")
+            salida[float(umbral)] = etiqueta
+        except ValueError as exc:
+            raise SystemExit(
+                f"--etiquetas espera UMBRAL=ETIQUETA (p. ej. 0.75=mio), recibió {par!r}: {exc}"
+            ) from exc
     return salida
 
 

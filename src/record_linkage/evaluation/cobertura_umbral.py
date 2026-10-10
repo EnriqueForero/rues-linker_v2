@@ -166,12 +166,14 @@ def _motivo_descarte(punto: PuntoUmbral, compuerta: CompuertaF2) -> str | None:
         fallas.append(
             f"FP sobre negativos {b.fp_que_tocan_negativo} > {compuerta.fp_negativos_maximo}"
         )
-    mayor = punto.grupo_mayor
-    if mayor is not None and mayor > compuerta.grupo_mayor_maximo:
-        fallas.append(
-            f"grupo mayor sin identificador {mayor} filas > {compuerta.grupo_mayor_maximo} a "
-            f"{punto.escala.filas:,} filas"  # type: ignore[union-attr]
-        )
+    escala = punto.escala
+    if escala is not None:
+        mayor = int(escala.grupo_mayor_sin_identificador.get("filas", 0))
+        if mayor > compuerta.grupo_mayor_maximo:
+            fallas.append(
+                f"grupo mayor sin identificador {mayor} filas > {compuerta.grupo_mayor_maximo} "
+                f"a {escala.filas:,} filas"
+            )
     return "; ".join(fallas) or None
 
 
@@ -200,10 +202,25 @@ def elegir_umbral(
         SinUmbralAdmisibleError: si ningún umbral pasa la compuerta.
     """
     if not puntos:
-        raise ValueError("elegir_umbral necesita al menos un punto del barrido.")
+        raise ValueError(
+            mensaje_accionable(
+                "elegir_umbral necesita al menos un punto del barrido y recibió ninguno.",
+                "sin mediciones no hay umbral que elegir y el perfil quedaría adivinado.",
+                "pase un PuntoUmbral por umbral medido (scripts/cobertura_umbral.py "
+                "--umbrales 0.70 0.75 ...).",
+            )
+        )
     umbrales = [p.umbral for p in puntos]
     if len(set(umbrales)) != len(umbrales):
-        raise ValueError(f"umbral repetido en el barrido: {sorted(umbrales)}")
+        raise ValueError(
+            mensaje_accionable(
+                f"umbral repetido en el barrido: {sorted(umbrales)}.",
+                "dos mediciones del mismo umbral no son un barrido y la regla no sabría "
+                "cuál cuenta.",
+                "pase un PuntoUmbral por umbral; si repitió un valor en --umbrales o una "
+                "etiqueta en --etiquetas, corríjalo.",
+            )
+        )
     ordenados = sorted(puntos, key=lambda p: p.umbral)
     descartados: list[Descarte] = []
     candidatos: list[PuntoUmbral] = []

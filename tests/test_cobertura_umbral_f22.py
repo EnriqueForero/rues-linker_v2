@@ -15,6 +15,10 @@ Tres piezas, cada una con su prueba:
    unir; desempate hacia la precisión) a la tabla medida, y
    ``docs/evidencia/cobertura_umbral.json`` —la tabla de decisión que cita el
    ADR-0011— debe reproducir con esa función el umbral que trae el perfil.
+4. El script compone la tabla. ``scripts/cobertura_umbral.py`` lee las
+   corridas de los dos instrumentos por su etiqueta (``u<umbral>``), verifica
+   que cada una se midió con el umbral que se le atribuye, escribe la tabla
+   donde se le pide y resume la decisión.
 """
 
 from __future__ import annotations
@@ -357,16 +361,17 @@ def test_sin_escala_la_compuerta_del_grupo_mayor_no_se_evalua_pero_se_declara() 
 def test_si_nada_pasa_la_compuerta_se_falla_con_mensaje_accionable() -> None:
     with pytest.raises(cu.SinUmbralAdmisibleError, match="Qué hacer"):
         cu.elegir_umbral([_punto(0.80, macro_f1=0.5)])
-    with pytest.raises(ValueError, match="repetido"):
+    with pytest.raises(ValueError, match=r"(?s)repetido.*Qué hacer"):
         cu.elegir_umbral([_punto(0.80), _punto(0.80)])
+    with pytest.raises(ValueError, match=r"(?s)al menos un punto.*Qué hacer"):
+        cu.elegir_umbral([])
 
 
-def test_la_tabla_se_arma_desde_los_json_de_los_dos_instrumentos(tmp_path: Path) -> None:
-    corrida = _corrida_falsa("u080")
-    corrida.guardar(tmp_path)
+def _escala_falsa(directorio: Path, etiqueta: str, umbral: float) -> Path:
+    """Deja en ``directorio`` un ``escala_<etiqueta>.json`` mínimo (solo 139k)."""
     escala_doc = {
-        "etiqueta": "u080",
-        "ajustes_perfil": {"cobertura_sin_identificador": {"umbral": 0.8}},
+        "etiqueta": etiqueta,
+        "ajustes_perfil": {"cobertura_sin_identificador": {"umbral": umbral}},
         "tamanos": {
             "139k": {
                 "filas": 139_028,
@@ -388,7 +393,15 @@ def test_la_tabla_se_arma_desde_los_json_de_los_dos_instrumentos(tmp_path: Path)
             }
         },
     }
-    (tmp_path / "escala_u080.json").write_text(json.dumps(escala_doc), encoding="utf-8")
+    destino = directorio / f"escala_{etiqueta}.json"
+    destino.write_text(json.dumps(escala_doc), encoding="utf-8")
+    return destino
+
+
+def test_la_tabla_se_arma_desde_los_json_de_los_dos_instrumentos(tmp_path: Path) -> None:
+    corrida = _corrida_falsa("u080")
+    corrida.guardar(tmp_path)
+    _escala_falsa(tmp_path, "u080", 0.8)
     puntos = cu.puntos_desde_evidencia(tmp_path, {0.80: "u080"}, tamano="139k")
     assert len(puntos) == 1 and puntos[0].umbral == 0.80
     assert puntos[0].banco.huella == "prueba"
@@ -412,6 +425,91 @@ def test_sin_corrida_a_escala_el_punto_lo_declara(tmp_path: Path) -> None:
     assert puntos[0].escala is None
     with pytest.raises(FileNotFoundError, match="u099"):
         cu.puntos_desde_evidencia(tmp_path, {0.99: "u099"}, tamano="139k")
+
+
+# ── 4. El script compone la tabla ─────────────────────────────────────────
+
+
+def _corrida_falsa_con_umbral(etiqueta: str, umbral: float | None) -> Corrida:
+    """Una corrida del banco que declara con qué umbral se midió (o ninguno)."""
+    base = _corrida_falsa(etiqueta)
+    ajustes = None if umbral is None else {"cobertura_sin_identificador": {"umbral": umbral}}
+    return Corrida(**{**base.__dict__, "especificacion": {"ajustes_perfil": ajustes}})
+
+
+def test_la_etiqueta_del_script_es_la_convencion_con_que_se_corren_banco_y_escala() -> None:
+    """``u<umbral a dos decimales sin punto>``: si cambia, el script lee corridas
+    equivocadas o no las encuentra."""
+    script = cargar_script("cobertura_umbral")
+    assert script.etiqueta_de(0.70) == "u070"
+    assert script.etiqueta_de(0.8) == "u080"
+    assert script.etiqueta_de(0.84) == "u084"
+
+
+def test_las_etiquetas_propias_se_parsean_y_fallan_rapido_si_vienen_mal() -> None:
+    script = cargar_script("cobertura_umbral")
+    assert script._parsear_etiquetas(["0.75=mio"]) == {0.75: "mio"}
+    assert script._parsear_etiquetas([]) == {}
+    with pytest.raises(SystemExit, match="UMBRAL=ETIQUETA"):
+        script._parsear_etiquetas(["x"])
+    with pytest.raises(SystemExit, match="UMBRAL=ETIQUETA"):
+        script._parsear_etiquetas(["abc=mio"])
+
+
+def test_el_script_compone_la_tabla_desde_las_corridas_del_barrido(tmp_path: Path) -> None:
+    """Dos corridas del banco (u075 y u080, una con escala), una apagada como
+    referencia: el script escribe la tabla donde se le pide y elige 0,80."""
+    script = cargar_script("cobertura_umbral")
+    _corrida_falsa_con_umbral("u075", 0.75).guardar(tmp_path)
+    _corrida_falsa_con_umbral("u080", 0.80).guardar(tmp_path)
+    _corrida_falsa_con_umbral("apagada", None).guardar(tmp_path)
+    _escala_falsa(tmp_path, "u080", 0.80)
+    salida = tmp_path / "t.json"
+
+    codigo = script.main(
+        [
+            "--evidencia",
+            str(tmp_path),
+            "--umbrales",
+            "0.75",
+            "0.80",
+            "--sin-estrellas",
+            "apagada",
+            "--salida",
+            str(salida),
+        ]
+    )
+
+    assert codigo == 0
+    assert salida.is_file()
+    tabla = json.loads(salida.read_text(encoding="utf-8"))
+    assert tabla["decision"]["umbral"] == 0.80
+    assert tabla["sin_estrellas"]["etiqueta"] == "apagada"
+    assert [fila["umbral"] for fila in tabla["umbrales"]] == [0.75, 0.80]
+    assert tabla["umbrales"][0]["escala"] is None
+    assert tabla["umbrales"][1]["escala"]["grupo_mayor_sin_identificador"]["filas"] == 13
+
+
+def test_el_script_falla_si_la_corrida_no_se_midio_con_el_umbral_que_se_le_atribuye(
+    tmp_path: Path,
+) -> None:
+    script = cargar_script("cobertura_umbral")
+    _corrida_falsa_con_umbral("mio", 0.75).guardar(tmp_path)
+    with pytest.raises(ValueError, match=r"se midió con umbral 0\.75"):
+        script.main(["--evidencia", str(tmp_path), "--umbrales", "0.80", "--etiquetas", "0.80=mio"])
+
+
+def test_el_resumen_del_script_dice_el_elegido_con_y_sin_escala() -> None:
+    script = cargar_script("cobertura_umbral")
+    con_escala = cu.armar_tabla([_punto(0.75), _punto(0.80)])
+    sin_escala = cu.armar_tabla([_punto(0.75, grupo_mayor=None), _punto(0.80, grupo_mayor=None)])
+    for tabla in (con_escala, sin_escala):
+        texto = script.resumen(json.loads(json.dumps(tabla)))
+        assert "ELEGIDO 0.80" in texto
+        filas = [linea for linea in texto.splitlines() if linea.strip()[:4] in {"0.75", "0.80"}]
+        assert len(filas) == 2
+        # Sin escala, las columnas de 139k se marcan con «—»; con escala traen cifras.
+        assert all(("—" in fila) == (tabla["umbrales"][0]["escala"] is None) for fila in filas)
 
 
 # ── La tabla de decisión del repositorio ──────────────────────────────────
