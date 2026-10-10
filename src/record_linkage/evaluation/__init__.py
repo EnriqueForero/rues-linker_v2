@@ -8,10 +8,14 @@ Componentes principales:
     - GroundTruthGenerator / ConfigGroundTruth: muestra estratificada de pares
       para revisión humana (ground_truth.py; restaurado en F2.14 sin
       optimization/).
-    - OrchestratorOptimizer (v3.2.6; ampliado en F2.14): el ÚNICO optimizador
-      Optuna, sobre Orchestrator.run(): default_search_space /
+    - OrchestratorOptimizer (v3.2.6; ampliado en F2.14 y F2.15): el ÚNICO
+      optimizador Optuna, sobre Orchestrator.run(): default_search_space /
       espacio_de_busqueda, objetivos f1·f2·precision·recall·macro_f1,
-      validacion_cruzada, ajustes_perfil para linkage().
+      validacion_cruzada, ajustes_perfil para linkage(), verdad por registro
+      o por pares etiquetados, evaluar_correlativa, guardar_estudio.
+    - evaluar_pares_etiquetados / MetricasParesEtiquetados: la métrica sobre
+      los pares que una persona etiquetó (pairwise.py; F2.15);
+      validar_etiquetas falla rápido si un IS_MATCH no es 0/1.
     - graficar_convergencia / graficar_importancia: figuras matplotlib de una
       optimización (graficas_optimizacion.py).
     - HyperparameterOptimizer: Optuna sobre linkage_pipeline.run() (legacy).
@@ -23,17 +27,26 @@ from ._flags import OPTUNA_AVAILABLE
 from .evaluador_verdad import GroundTruthEvaluator
 from .graficas_optimizacion import graficar_convergencia, graficar_importancia
 from .ground_truth import ConfigGroundTruth, GroundTruthGenerator
-from .pairwise import PairwiseMetrics, evaluar_pares
+from .pairwise import (
+    MetricasParesEtiquetados,
+    PairwiseMetrics,
+    evaluar_pares,
+    evaluar_pares_etiquetados,
+    validar_etiquetas,
+)
 
 __all__ = [
     "OPTUNA_AVAILABLE",
     "ConfigGroundTruth",
     "GroundTruthEvaluator",
     "GroundTruthGenerator",
+    "MetricasParesEtiquetados",
     "PairwiseMetrics",
     "evaluar_pares",
+    "evaluar_pares_etiquetados",
     "graficar_convergencia",
     "graficar_importancia",
+    "validar_etiquetas",
 ]
 
 # Imports opt-in (requieren optuna)

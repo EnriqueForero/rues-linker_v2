@@ -49,6 +49,18 @@ tenía se añadió aquí UNA vez:
   formato de ``linkage(ajustes_perfil=...)``.
 * Las gráficas (convergencia e importancia) viven en
   ``evaluation.graficas_optimizacion`` (matplotlib, sin dashboard).
+
+F2.15 (2026-10-10), para el notebook 12. La verdad puede ser también el
+archivo de PARES etiquetados que produce ``GroundTruthGenerator``
+(``ID_1``, ``ID_2``, ``IS_MATCH``): entonces cada trial se mide con
+``evaluation.pairwise.evaluar_pares_etiquetados`` SOLO sobre esos pares.
+Cerrar los positivos en componentes y evaluar la partición resultante
+contaría como falso positivo toda unión correcta entre registros que nadie
+etiquetó (un tercer registro del mismo NIT, por ejemplo), así que no se hace.
+Con esa verdad no hay ``macro_f1`` (no hay estratos) ni validación cruzada
+(parte por grupo). ``evaluar_correlativa`` es la vía pública para medir una
+correlativa producida por ``linkage()``; ``guardar_estudio`` deja el estudio
+como JSON.
 """
 
 from __future__ import annotations
@@ -56,6 +68,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import io
+import json
 import math
 import tempfile
 import time
@@ -69,10 +82,20 @@ import pandas as pd
 from ..utils.logger import CustomLogger
 from ._flags import OPTUNA_AVAILABLE
 from .banco import evaluar_calidad
-from .pairwise import PairwiseMetrics, evaluar_pares
+from .pairwise import (
+    COLUMNAS_PARES_ETIQUETADOS,
+    PairwiseMetrics,
+    esta_revisado,
+    evaluar_pares,
+    evaluar_pares_etiquetados,
+    validar_etiquetas,
+)
 
 #: Métricas que ``optimize`` sabe maximizar. ``macro_f1`` exige ``ESTRATO`` en la verdad.
 OBJETIVOS_VALIDOS: frozenset[str] = frozenset({"f1", "f2", "precision", "recall", "macro_f1"})
+
+#: Columnas de la verdad por REGISTRO (una partición completa).
+_COLUMNAS_VERDAD_REGISTRO: tuple[str, ...] = ("ID_REGISTRO", "ID_GROUP")
 
 #: Columnas de la verdad que, si vienen, se conservan para las métricas del banco.
 _COLUMNAS_BANCO: tuple[str, ...] = ("ESTRATO", "REGIMEN", "CASO")
@@ -84,6 +107,48 @@ _PESOS: dict[str, str] = {"weight_name": "name", "weight_nit": "nit", "weight_ph
 _COLUMNAS_ID: tuple[str, ...] = ("ID_REGISTRO", "ID", "id_registro")
 
 
+def _f_beta(precision: float, recall: float, beta: float = 2.0) -> float:
+    """F-beta: ``(1+β²)·P·R / (β²·P + R)``; 0.0 sin denominador.
+
+    ``beta=2`` (el ``f2`` que ``optimize`` sabe maximizar) pesa el recall
+    cuatro veces más que la precisión: útil cuando los duplicados perdidos
+    cuestan más. Escrita una vez para los dos caminos de ``_evaluate``
+    (verdad por registro y por pares).
+    """
+    denominador = beta**2 * precision + recall
+    if denominador <= 0:
+        return 0.0
+    return (1 + beta**2) * precision * recall / denominador
+
+
+def _trial_fallido(
+    numero: int, params: Mapping[str, Any], elapsed: float, error: str
+) -> dict[str, Any]:
+    """Entrada del historial para un trial que no produjo métricas."""
+    return {
+        "trial": numero,
+        "params": dict(params),
+        "score": 0.0,
+        "elapsed_s": elapsed,
+        "status": "failed",
+        "metrics": {},
+        "error": error,
+    }
+
+
+def _a_json(valor: Any) -> Any:
+    """Serializa lo que ``json`` no sabe: escalares numpy, rutas, tuplas de params."""
+    if isinstance(valor, np.generic):
+        return valor.item()
+    if isinstance(valor, np.ndarray):
+        return valor.tolist()
+    if isinstance(valor, Path):
+        return str(valor)
+    if isinstance(valor, (set, frozenset)):
+        return sorted(valor)
+    return str(valor)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  Estrategia de búsqueda — define el espacio Optuna
 # ─────────────────────────────────────────────────────────────────────────
@@ -93,6 +158,11 @@ def default_search_space(trial) -> dict[str, Any]:
     Cubre los parámetros que el código REALMENTE LEE (verificados en
     auditoría Fase 1). Cualquiera puede pasar su propia función al
     constructor de OrchestratorOptimizer si necesita otro espacio.
+
+    Incluye ``nit_empty_passes_filter``: solo válido con perfiles que la
+    declaren (``produccion_calibrada``, ``alta_precision``); con
+    ``produccion_estandar`` el constructor falla antes del primer trial
+    (``_validar_espacio``): use ``espacio_de_busqueda({...})`` sin esa clave.
 
     Returns:
         Dict con valores sugeridos para cada parámetro. Estructura plana
@@ -114,6 +184,21 @@ def default_search_space(trial) -> dict[str, Any]:
     # Asegurar suma = 1.0; phonetic = 0 (recomendación heredada IT-7)
     params["weight_nit"] = 1.0 - params["weight_name"]
     return params
+
+
+#: Claves que ``default_search_space`` propone: el optimizador las contrasta con
+#: el perfil activo ANTES del primer trial (ver ``_validar_espacio``).
+default_search_space.claves = frozenset(  # type: ignore[attr-defined]
+    {
+        "lsh_threshold",
+        "score_threshold",
+        "min_name_similarity",
+        "max_nit_distance",
+        "nit_empty_passes_filter",
+        "weight_name",
+        "weight_nit",
+    }
+)
 
 
 def _claves_de_perfil() -> frozenset[str]:
@@ -197,6 +282,7 @@ def espacio_de_busqueda(rangos: Mapping[str, Any]) -> Callable[[Any], dict[str, 
             params["weight_nit"] = 1.0 - params["weight_name"]
         return params
 
+    espacio.claves = frozenset(rangos)  # type: ignore[attr-defined]
     return espacio
 
 
@@ -210,9 +296,19 @@ class OrchestratorOptimizer:
         base_config: dict de configuración completo (con 'profile' y 'profiles').
             Sirve de plantilla; los params del trial se aplican encima.
         sources: dict {nombre_fuente: DataFrame}.
-        truth: DataFrame con columnas 'ID_REGISTRO' y 'ID_GROUP' alineadas
-            con las fuentes (cada ID_REGISTRO de las sources debe existir
-            en truth).
+        truth: la verdad, en uno de dos formatos. Por REGISTRO: columnas
+            ``ID_REGISTRO`` e ``ID_GROUP`` (partición completa; admite
+            ``ESTRATO``/``REGIMEN``/``CASO`` para las métricas del banco y
+            ``macro_f1``). Por PARES: ``ID_1``, ``ID_2`` e ``IS_MATCH`` (el
+            archivo de ``GroundTruthGenerator`` revisado; se mide solo sobre
+            esos pares, ver ``evaluation.pairwise.evaluar_pares_etiquetados``).
+            Los ids deben ser los de la columna de identificador de las
+            fuentes, que el Orchestrator conserva en la correlativa: por
+            defecto ``ID_REGISTRO`` o ``ID``; con otro nombre, pase ``col_id``.
+        col_id: nombre de la columna única por fila con la que las fuentes y
+            la correlativa identifican sus registros (la misma que
+            ``linkage(col_id=...)``). ``None`` (default) busca ``ID_REGISTRO``
+            e ``ID``. Si se pasa, toda fuente debe traerla (fail-fast).
         search_space: función `(trial) -> dict[str, Any]` que define el
             espacio de búsqueda. Default: `default_search_space`.
         silent: si True (default), silencia logs del Orchestrator durante
@@ -220,9 +316,13 @@ class OrchestratorOptimizer:
         keep_workdir: si True, conserva los work_dirs de cada trial (útil
             para debug). Default False (se borran al terminar).
 
+    Attributes:
+        verdad_por_pares: True si ``truth`` es el archivo de pares etiquetados.
+
     Raises:
         ImportError: si Optuna no está instalado.
-        ValueError: si truth no tiene las columnas requeridas.
+        ValueError: si truth no tiene las columnas de ninguno de los dos
+            formatos, o si ``col_id`` nombra una columna que alguna fuente no trae.
     """
 
     def __init__(
@@ -233,17 +333,14 @@ class OrchestratorOptimizer:
         search_space: Callable | None = None,
         silent: bool = True,
         keep_workdir: bool = False,
+        col_id: str | None = None,
     ):
         if not OPTUNA_AVAILABLE:
             raise ImportError(
                 "Optuna no está instalado. Instalar con: pip install 'rues-linker[optimization]'"
             )
 
-        # Validar truth
-        required_cols = {"ID_REGISTRO", "ID_GROUP"}
-        missing = required_cols - set(truth.columns)
-        if missing:
-            raise ValueError(f"`truth` debe tener columnas {required_cols}. Falta(n): {missing}")
+        self.verdad_por_pares = self._es_verdad_por_pares(truth)
         # Validar base_config
         if "profile" not in base_config or "profiles" not in base_config:
             raise ValueError("base_config debe tener claves 'profile' y 'profiles'.")
@@ -255,9 +352,19 @@ class OrchestratorOptimizer:
 
         self.base_config = base_config
         self.sources = sources
-        columnas = ["ID_REGISTRO", "ID_GROUP"] + [c for c in _COLUMNAS_BANCO if c in truth.columns]
+        self.col_id = col_id
+        self._validar_col_id()
+        if self.verdad_por_pares:
+            columnas = list(COLUMNAS_PARES_ETIQUETADOS)
+        else:
+            columnas = list(_COLUMNAS_VERDAD_REGISTRO) + [
+                c for c in _COLUMNAS_BANCO if c in truth.columns
+            ]
         self.truth = truth[columnas].copy()
+        if self.verdad_por_pares:
+            self._validar_verdad_por_pares(self.truth)
         self.search_space = search_space or default_search_space
+        self._validar_espacio(base_config["profiles"][active], active)
         self.silent = silent
         self.keep_workdir = keep_workdir
 
@@ -266,10 +373,96 @@ class OrchestratorOptimizer:
         self.best_config: dict[str, Any] | None = None
         self.optimization_history: list[dict[str, Any]] = []
         self._tmp_workdirs: list[Path] = []  # para cleanup
+        #: Lo que ``optimize`` dejó y ``guardar_estudio`` escribe (objetivo, mejor score…).
+        self._resumen_estudio: dict[str, Any] | None = None
 
     # ─────────────────────────────────────────────────────────────────────
     #  Helpers internos
     # ─────────────────────────────────────────────────────────────────────
+    def _validar_espacio(self, perfil: Mapping[str, Any], nombre_perfil: str) -> None:
+        """Fail-fast: cada clave del espacio existe en el perfil ACTIVO.
+
+        El Orchestrator acepta cualquier clave en el perfil (el scorer lee
+        ``nit_empty_passes_filter`` aunque ``produccion_estandar`` no la
+        declare), pero ``linkage(ajustes_perfil=...)`` valida contra las claves
+        del perfil y rechaza las desconocidas. Sin esta guarda el estudio corre
+        entero y la aplicación falla al final (hallazgo del notebook 12, F2.15).
+        Solo se puede comprobar cuando el espacio declara sus claves
+        (``espacio_de_busqueda`` y ``default_search_space`` lo hacen).
+        """
+        claves = getattr(self.search_space, "claves", None)
+        if claves is None:
+            return
+        desconocidas = sorted(set(claves) - set(perfil) - set(_PESOS))
+        if desconocidas:
+            from ..config.profiles import PERFILES_BASE
+
+            con_la_clave = sorted(
+                nombre
+                for nombre, otro in PERFILES_BASE.items()
+                if all(c in otro for c in desconocidas)
+            )
+            raise ValueError(
+                f"Qué pasó: el espacio de búsqueda incluye {desconocidas}, que el perfil "
+                f"'{nombre_perfil}' no declara. Por qué importa: los trials correrían, pero "
+                "linkage(ajustes_perfil=...) rechaza las claves que el perfil no tiene y los "
+                "mejores parámetros no se podrían aplicar. Qué hacer: quite esas claves del "
+                "espacio o use un perfil que las declare"
+                + (f" ({', '.join(con_la_clave)})" if con_la_clave else "")
+                + "."
+            )
+
+    def _validar_col_id(self) -> None:
+        """Fail-fast: si ``col_id`` se pasó, cada fuente la trae.
+
+        Sin esta guarda el estudio corría entero y cada trial moría al cruzar
+        la correlativa con la verdad (revisión F2.15, ronda 2).
+        """
+        if self.col_id is None:
+            return
+        sin_columna = sorted(n for n, f in self.sources.items() if self.col_id not in f.columns)
+        if sin_columna:
+            raise ValueError(
+                f"Qué pasó: col_id='{self.col_id}' no es columna de las fuentes {sin_columna}. "
+                "Por qué importa: con esa columna se cruza la correlativa con la verdad; sin "
+                "ella ningún trial se puede medir. Qué hacer: pase el nombre exacto de la "
+                "columna única por fila de cada fuente, o renómbrela a 'ID'."
+            )
+
+    @staticmethod
+    def _validar_verdad_por_pares(truth: pd.DataFrame) -> None:
+        """Fail-fast: las etiquetas son 0/1 y hay al menos un par revisado.
+
+        Sin esta guarda, un ``IS_MATCH`` con «si»/«no» pasaba el constructor
+        (solo mira columnas) y cada trial moría dentro de
+        ``evaluar_pares_etiquetados`` con score 0,0: el mensaje accionable
+        existía pero nunca llegaba a quien optimiza (revisión F2.15).
+        """
+        revisadas = truth.loc[esta_revisado(truth["IS_MATCH"]), "IS_MATCH"]
+        if revisadas.empty:
+            raise ValueError(
+                f"Qué pasó: ninguno de los {len(truth)} pares de `truth` tiene IS_MATCH "
+                "(todos vacíos). Por qué importa: sin pares revisados no hay verdad contra "
+                "la que medir y todos los trials darían 0. Qué hacer: etiquete pares "
+                "(1 = misma empresa, 0 = distinta) y vuelva a construir el optimizador."
+            )
+        validar_etiquetas(revisadas)
+
+    @staticmethod
+    def _es_verdad_por_pares(truth: pd.DataFrame) -> bool:
+        """Decide el formato de la verdad por sus columnas; falla si no es ninguno."""
+        columnas = set(truth.columns)
+        if set(_COLUMNAS_VERDAD_REGISTRO) <= columnas:
+            return False
+        if set(COLUMNAS_PARES_ETIQUETADOS) <= columnas:
+            return True
+        raise ValueError(
+            "`truth` no tiene las columnas de ningún formato conocido. Por registro: "
+            f"{list(_COLUMNAS_VERDAD_REGISTRO)}; por pares etiquetados: "
+            f"{list(COLUMNAS_PARES_ETIQUETADOS)} (la salida de GroundTruthGenerator con "
+            f"IS_MATCH llenado). Columnas recibidas: {sorted(columnas)}."
+        )
+
     @staticmethod
     def _params_a_ajustes(params: Mapping[str, Any]) -> dict[str, Any]:
         """Params planos del trial → sobrescrituras del perfil (una sola regla).
@@ -359,13 +552,24 @@ class OrchestratorOptimizer:
 
         return result.get("correlative"), time.perf_counter() - t0
 
-    @staticmethod
-    def _columna_id(marco: pd.DataFrame) -> str | None:
-        """Nombre de la columna de identificador de registro, si hay una conocida."""
-        for candidata in _COLUMNAS_ID:
+    def _columna_id(self, marco: pd.DataFrame) -> str | None:
+        """Columna de identificador de registro: ``col_id`` si se pasó, si no una conocida."""
+        candidatas = (self.col_id, *_COLUMNAS_ID) if self.col_id else _COLUMNAS_ID
+        for candidata in candidatas:
             if candidata in marco.columns:
                 return candidata
         return None
+
+    def _mensaje_sin_columna_id(self, que: str) -> str:
+        """Mensaje accionable cuando ``que`` (la correlativa, una fuente) no trae id."""
+        conocidas = ", ".join(_COLUMNAS_ID[:2])
+        esperada = f"'{self.col_id}' ni " if self.col_id else ""
+        return (
+            f"Qué pasó: {que} no trae {esperada}ninguna columna de identificador conocida "
+            f"({conocidas}). Por qué importa: sin ella no se cruza con la verdad y ningún "
+            "trial se puede medir. Qué hacer: pase col_id=<columna única por fila de sus "
+            "fuentes> al construir el optimizador, o renombre esa columna a 'ID'."
+        )
 
     def _evaluate(
         self,
@@ -389,7 +593,7 @@ class OrchestratorOptimizer:
         """
         verdad = self.truth if truth is None else truth
         # Distingue «objetivo desconocido» de «macro_f1 sin ESTRATO» antes de
-        # evaluar: el notebook de F2.15 llama a _evaluate directo y una clave
+        # evaluar: el notebook de F2.15 llama a evaluar_correlativa y una clave
         # mal escrita no debe culpar a ESTRATO (hallazgo de revisión, ronda 3).
         self._validar_objetivo(optimization_target, verdad)
         if "ID_GRUPO" not in correlative.columns:
@@ -397,7 +601,10 @@ class OrchestratorOptimizer:
 
         col_id = self._columna_id(correlative)
         if col_id is None:
-            return 0.0, {"error": "correlativa sin columna de ID conocida"}
+            return 0.0, {"error": self._mensaje_sin_columna_id("la correlativa")}
+
+        if self._es_verdad_por_pares(verdad):
+            return self._evaluar_por_pares(correlative, col_id, verdad, optimization_target)
 
         # Merge — usar inner join + sin validate estricto (algunos pipelines
         # pueden duplicar registros y queremos seguir evaluando)
@@ -427,12 +634,7 @@ class OrchestratorOptimizer:
             "n_records": m.n_records,
             "n_pred_groups": m.n_pred_groups,
         }
-        # F2 score (favorece recall) — útil cuando los duplicados perdidos cuestan más
-        beta2 = 4.0
-        if m.precision + m.recall > 0:
-            metrics["f2"] = (1 + beta2) * m.precision * m.recall / (beta2 * m.precision + m.recall)
-        else:
-            metrics["f2"] = 0.0
+        metrics["f2"] = _f_beta(m.precision, m.recall)
 
         if "ESTRATO" in df.columns:
             metrics.update(self._metricas_banco(df))
@@ -454,6 +656,23 @@ class OrchestratorOptimizer:
             metrics["advertencia"] = "macro_f1 sin estratos con pares"
             score = 0.0
         return score, metrics
+
+    @staticmethod
+    def _evaluar_por_pares(
+        correlative: pd.DataFrame, col_id: str, verdad: pd.DataFrame, optimization_target: str
+    ) -> tuple[float, dict[str, Any]]:
+        """Verdad por pares: la regla vive en ``evaluation.pairwise``; aquí solo se alinea."""
+        grupos = pd.Series(
+            correlative["ID_GRUPO"].astype(str).to_numpy(),
+            index=correlative[col_id].astype(str).to_numpy(),
+        )
+        try:
+            medidas = evaluar_pares_etiquetados(verdad, grupos)
+        except ValueError as exc:
+            return 0.0, {"error": f"evaluar_pares_etiquetados falló: {exc}"}
+        metrics: dict[str, Any] = medidas.como_dict()
+        metrics["f2"] = _f_beta(medidas.precision, medidas.recall)
+        return float(metrics[optimization_target]), metrics
 
     @staticmethod
     def _metricas_banco(df: pd.DataFrame) -> dict[str, Any]:
@@ -498,6 +717,13 @@ class OrchestratorOptimizer:
             raise ValueError(
                 f"optimization_target debe ser uno de {sorted(OBJETIVOS_VALIDOS)}, "
                 f"recibido: '{optimization_target}'"
+            )
+        if optimization_target == "macro_f1" and self._es_verdad_por_pares(verdad):
+            raise ValueError(
+                "optimization_target='macro_f1' no existe para una verdad por pares "
+                "etiquetados: el macro-F1 promedia el F1 por ESTRATO de una partición "
+                "completa. Con pares use 'f1', 'f2', 'precision' o 'recall'; para "
+                "macro_f1 pase una verdad por registro (ID_REGISTRO, ID_GROUP, ESTRATO)."
             )
         if optimization_target == "macro_f1" and "ESTRATO" not in verdad.columns:
             raise ValueError(
@@ -555,7 +781,8 @@ class OrchestratorOptimizer:
         Returns:
             Dict con:
               - 'best_params': mejores hiperparámetros encontrados.
-              - 'best_score': mejor score (de optimization_target).
+              - 'best_score': mejor score (de optimization_target) entre los
+                trials completados (los fallidos no cuentan aunque Optuna los vea como 0,0).
               - 'best_config': config completo listo para Orchestrator.
               - 'best_metrics': métricas completas del mejor trial.
               - 'optimization_history': lista de dicts por trial.
@@ -579,20 +806,22 @@ class OrchestratorOptimizer:
 
             correlative, elapsed = self._run_orchestrator(cfg)
             if correlative is None:
-                # Run falló
                 self.optimization_history.append(
-                    {
-                        "trial": trial.number,
-                        "params": params,
-                        "score": 0.0,
-                        "elapsed_s": elapsed,
-                        "status": "failed",
-                        "metrics": {},
-                    }
+                    _trial_fallido(trial.number, params, elapsed, "Orchestrator.run() falló")
                 )
                 return 0.0
 
             score, metrics = self._evaluate(correlative, optimization_target)
+            if "error" in metrics:
+                # La correlativa no se pudo medir contra la verdad (ids que no
+                # alinean, etc.): es un trial FALLIDO, no un score 0,0. Si todos
+                # fallan, el estudio termina sin trials completados y
+                # guardar_estudio se niega (revisión F2.15).
+                self.logger.warning(f"Trial falló al evaluar la correlativa: {metrics['error']}")
+                self.optimization_history.append(
+                    _trial_fallido(trial.number, params, elapsed, str(metrics["error"]))
+                )
+                return 0.0
 
             # Penalización por tiempo (opcional)
             if time_penalty_seconds > 0 and elapsed > time_penalty_seconds:
@@ -610,9 +839,13 @@ class OrchestratorOptimizer:
                 }
             )
 
-            # Guardar métricas completas del mejor trial visto hasta ahora
+            # Guardar métricas completas del mejor trial COMPLETADO visto hasta
+            # ahora. Es la única fuente de best_params, best_score y mejor_trial:
+            # un trial failed devuelve 0,0 a Optuna y, si el mejor completado
+            # también puntúa 0,0, study.best_trial es el fallido (ronda 2).
             if not best_metrics_holder or score > best_metrics_holder.get("score", -1):
-                best_metrics_holder["score"] = score
+                best_metrics_holder["trial"] = trial.number
+                best_metrics_holder["score"] = float(score)
                 best_metrics_holder["metrics"] = metrics
                 best_metrics_holder["params"] = params
 
@@ -653,19 +886,29 @@ class OrchestratorOptimizer:
                 "total_trials_completed": 0,
             }
 
-        self.best_params = best_metrics_holder.get("params") or study.best_params
+        self.best_params = best_metrics_holder["params"]
         self.best_config = self._build_config_for_trial(self.best_params)
-        best_metrics = best_metrics_holder.get("metrics", {})
+        best_metrics = best_metrics_holder["metrics"]
+        mejor_trial: int = best_metrics_holder["trial"]
+        mejor_score: float = best_metrics_holder["score"]
+        self._resumen_estudio = {
+            "objetivo": optimization_target,
+            "n_trials": n_trials,
+            "trials_completados": len(completed_trials),
+            "mejor_trial": mejor_trial,
+            "mejor_score": mejor_score,
+            "mejores_metricas": best_metrics,
+        }
 
         self.logger.info(
             f"✅ Optimización completa. Mejor {optimization_target}: "
-            f"{study.best_value:.4f} (trial #{study.best_trial.number}). "
+            f"{mejor_score:.4f} (trial #{mejor_trial}). "
             f"Trials completados: {len(completed_trials)}/{n_trials}"
         )
 
         return {
             "best_params": self.best_params,
-            "best_score": study.best_value,
+            "best_score": mejor_score,
             "best_config": self.best_config,
             "best_metrics": best_metrics,
             "optimization_history": self.optimization_history,
@@ -687,7 +930,10 @@ class OrchestratorOptimizer:
 
         Returns:
             Métricas de ``_evaluate`` más ``score`` (la del objetivo) y
-            ``elapsed_s``. Si el run falla: ``{"error": ..., "score": 0.0}``.
+            ``elapsed_s``. Si el run falla o la correlativa no se puede medir
+            contra la verdad (ids que no alinean): ``{"error": ..., "score":
+            0.0, "elapsed_s": ...}``, sin métricas; el mismo caso que
+            ``optimize`` registra como trial ``failed``.
         """
         self._validar_objetivo(optimization_target, truth)
         cfg = self._build_config_for_trial(params)
@@ -702,6 +948,9 @@ class OrchestratorOptimizer:
         if correlativa is None:
             return {"error": "Orchestrator.run() falló", "score": 0.0, "elapsed_s": elapsed}
         score, metricas = self._evaluate(correlativa, optimization_target, truth)
+        if "error" in metricas:
+            self.logger.warning(f"No se pudo medir la correlativa: {metricas['error']}")
+            return {"error": metricas["error"], "score": 0.0, "elapsed_s": elapsed}
         return {**metricas, "score": score, "elapsed_s": elapsed}
 
     def validacion_cruzada(
@@ -732,12 +981,19 @@ class OrchestratorOptimizer:
 
         if pliegues < 2:
             raise ValueError(f"pliegues debe ser >= 2 para validar cruzado; recibido {pliegues}.")
+        if self.verdad_por_pares:
+            raise ValueError(
+                "La validación cruzada reparte GRUPOS completos entre pliegues y exige la "
+                "verdad por registro (ID_REGISTRO, ID_GROUP); la verdad por pares etiquetados "
+                "no tiene grupos. Mida con evaluar_config/optimize, o construya una verdad "
+                "por registro."
+            )
         self._validar_objetivo(optimization_target)
         for nombre, fuente in self.sources.items():
             if self._columna_id(fuente) is None:
                 raise ValueError(
-                    f"La fuente '{nombre}' no tiene columna de identificador "
-                    f"({', '.join(_COLUMNAS_ID)}): sin ella no se puede recortar al pliegue."
+                    self._mensaje_sin_columna_id(f"la fuente '{nombre}'")
+                    + " Sin esa columna tampoco se puede recortar la fuente al pliegue."
                 )
 
         puntajes: list[float] = []
@@ -769,6 +1025,65 @@ class OrchestratorOptimizer:
             "metricas_por_pliegue": metricas_por_pliegue,
         }
 
+    def evaluar_correlativa(
+        self, correlativa: pd.DataFrame, optimization_target: str = "f1"
+    ) -> tuple[float, dict[str, Any]]:
+        """Mide una correlativa ya producida (p. ej. por ``linkage()``) contra la verdad.
+
+        Es la misma regla con la que ``optimize`` puntúa cada trial, expuesta
+        para comprobar que los ajustes aplicados en producción reproducen el
+        score del estudio. La correlativa debe traer ``ID_GRUPO`` y la columna
+        de identificador que usa la verdad (``col_id`` o, por defecto,
+        ``ID_REGISTRO``/``ID``): la del estándar de salida trae todas las
+        columnas de la fuente, así que ``res.correlativa[[col_id, "ID_GRUPO"]]``
+        basta.
+
+        Returns:
+            ``(score, métricas)`` como ``_evaluate``; si la correlativa no se
+            puede alinear, ``score`` es 0.0 y ``métricas`` trae ``error``.
+        """
+        return self._evaluate(correlativa, optimization_target)
+
+    def guardar_estudio(self, ruta: str | Path) -> Path:
+        """Escribe el estudio como JSON: lo que hace falta para reproducir y aplicar.
+
+        Contenido: ``version`` de la librería, ``fecha``, ``objetivo``,
+        ``verdad`` (``"registro"`` o ``"pares"``), ``n_trials``,
+        ``trials_completados``, ``mejor_trial``, ``mejor_score``,
+        ``mejores_parametros``, ``mejores_metricas``, ``ajustes_perfil`` (lo
+        que recibe ``linkage(ajustes_perfil=...)``) e ``historial`` (un
+        registro por trial con ``params``, ``score``, ``elapsed_s``,
+        ``status`` y ``metrics``; los fallidos traen además ``error``).
+
+        Raises:
+            ValueError: si aún no se ha optimizado (no hay estudio que guardar).
+        """
+        if self._resumen_estudio is None or self.best_params is None:
+            raise ValueError(
+                "No hay estudio que guardar: llame a optimize() primero y con al menos un "
+                "trial completado."
+            )
+        from datetime import datetime, timezone
+
+        from .. import __version__
+
+        estudio = {
+            "version": __version__,
+            "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "verdad": "pares" if self.verdad_por_pares else "registro",
+            **self._resumen_estudio,
+            "mejores_parametros": self.best_params,
+            "ajustes_perfil": self.ajustes_perfil(),
+            "historial": self.optimization_history,
+        }
+        destino = Path(ruta)
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(
+            json.dumps(estudio, ensure_ascii=False, indent=2, default=_a_json), encoding="utf-8"
+        )
+        self.logger.info(f"Estudio guardado en: {destino}")
+        return destino
+
     def history_df(self) -> pd.DataFrame:
         """Devuelve el historial de optimización como DataFrame plano."""
         if not self.optimization_history:
@@ -781,6 +1096,8 @@ class OrchestratorOptimizer:
                 "elapsed_s": h["elapsed_s"],
                 "status": h["status"],
             }
+            if h.get("error"):
+                row["error"] = h["error"]
             row.update({f"param_{k}": v for k, v in h["params"].items()})
             row.update({f"metric_{k}": v for k, v in h["metrics"].items()})
             rows.append(row)
