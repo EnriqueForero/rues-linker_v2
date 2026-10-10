@@ -225,7 +225,10 @@ class Manifiesto:
             en disco: ``candidatos``, ``pares_puntuados``, ``tasa_reduccion``,
             ``grupos_multifuente``, ``confianza_media``/``mediana``,
             ``segundos_total``, ``rss_pico_mib``), más los escalares de
-            ``res.metricas`` (``n_registros``, ``n_fuentes``…).
+            ``res.metricas`` (``n_registros``, ``n_fuentes``…) y, si
+            ``linkage()`` postprocesó (matcher y/o colapso exacto), el bloque
+            ``preprocessing`` (``exact_duplicate_collapse`` por fuente e
+            ``id_grupo_tras_postprocesado``, F2.3).
         tiempos_por_fase: segundos por fase L1…L6 desde ``_trabajo/manifest.json``.
         rss_por_fase: pico de RSS (MiB) por fase, misma fuente.
         omitidos: ``[{"artefacto", "motivo"}]``: lo que no se escribió y por qué.
@@ -890,6 +893,12 @@ def _metricas(
     for clave, valor in res.metricas.items():
         if clave not in metricas and (valor is None or isinstance(valor, (bool, int, float, str))):
             metricas[clave] = valor
+    # ``preprocessing`` (F2.3, ronda 3): el colapso exacto por fuente y la
+    # recodificación de ID_GRUPO tras el postprocesado de linkage() son
+    # declaraciones de la corrida (dicts de escalares); sin ellas quien audita
+    # desde el disco no ve que la regla se aplicó antes de L6.
+    if isinstance(res.metricas.get("preprocessing"), Mapping):
+        metricas["preprocessing"] = dict(res.metricas["preprocessing"])
     return metricas
 
 

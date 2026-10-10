@@ -546,6 +546,10 @@ def linkage(
         trusted_unique_sources=trusted,
         **(ajustes_perfil or {}),
     )
+    # F2.3: L4 construye la clave por registro (ID_REGISTRO) con col_id para
+    # que ID_GRUPO sea determinista por contenido; el mismo valor va al
+    # manifiesto arriba y a completar_correlativa abajo (una sola regla).
+    config["col_id"] = col_id
     if owned_sources is not None:
         # Orchestrator debe recibir exactamente el mapping cuya propiedad se
         # cedió; así puede vaciar las referencias del llamador después de L1.
@@ -634,6 +638,31 @@ def linkage(
         result["golden"]["INPUT_ROW_COUNT"] = (
             result["golden"]["ID_GRUPO"].map(input_counts).fillna(0).astype("int64")
         )
+
+    if needs_postprocessing:
+        # F2.3 (revisión, rondas 2 y 3): el postprocesado de linkage() cambia
+        # los ID_GRUPO que L5 dejó por contenido. El matcher asigna a los
+        # subgrupos que separa ids nuevos max+1; la expansión del colapso
+        # reasigna ORIGINAL_INDEX y, al restaurar los duplicados, col_id deja
+        # de ser única en la fuente, así que la clave de registro cambia (de
+        # <SRC>-<id> a <SRC>-F<n>) y con ella el id. La MISMA regla y la MISMA
+        # clave que L4/L5 se aplican UNA vez, aquí, sobre el resultado ya
+        # postprocesado y ANTES de L6, para que los reportes lleven los ids del
+        # entregable; completar_correlativa no tendrá nada que cambiar.
+        from .salida.identificadores_registro import (
+            asignar_id_registro,
+            nombre_efectivo,
+            recodificar_id_grupo,
+        )
+
+        nombre_id = (
+            nombre_efectivo(col_id, result["correlative"].columns, canonicos) if col_id else None
+        )
+        claves, _ = asignar_id_registro(result["correlative"], nombre_id)
+        result["golden"], info_grupo = recodificar_id_grupo(
+            result["correlative"], result["golden"], claves
+        )
+        result.setdefault("preprocessing", {})["id_grupo_tras_postprocesado"] = info_grupo
 
     if needs_postprocessing and reporting_requested:
         # Los checkpoints L5 pertenecen al resultado compacto/anterior al
@@ -941,11 +970,13 @@ def dedupe(
         el manifiesto (``completar``): ``CONFIANZA`` queda nula (es la del
         golden), ``SCORE_PAR`` queda nulo (esta ruta no deja
         ``L3_scoring/scored.db``) e ``ID_GRUPO`` se recodifica de las
-        etiquetas ``C<n>``/``S<n>`` por régimen a entero por orden de primera
-        aparición (determinista por contenido); ``REGIMEN_AUTO`` sigue
-        diciendo por qué ruta pasó cada registro. Con ``carpeta_salida``,
-        ``manifiesto['carpeta_salida']`` es la carpeta escrita y
-        ``dir_trabajo``/``metricas['output_dir']`` apuntan a su ``_trabajo/``.
+        etiquetas ``C<n>``/``S<n>`` por régimen a entero determinista por
+        contenido (posición lexicográfica del menor ``ID_REGISTRO`` del
+        grupo, la misma regla de ``linkage``; F2.3, ADR-0013);
+        ``REGIMEN_AUTO`` sigue diciendo por qué ruta pasó cada registro.
+        Con ``carpeta_salida``, ``manifiesto['carpeta_salida']`` es la carpeta
+        escrita y ``dir_trabajo``/``metricas['output_dir']`` apuntan a su
+        ``_trabajo/``.
 
     Raises:
         TypeError | ValueError: preflight accionable (qué pasó / por qué

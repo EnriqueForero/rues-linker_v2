@@ -8,7 +8,20 @@ las dos tablas con la forma del estándar (``contrato.py``):
 * ``ID_REGISTRO`` = ``<SRC>-<id nativo>`` si ``col_id`` nombra una columna
   única y no vacía por fila en la fuente; si no, ``<SRC>-F<ORIGINAL_INDEX>``.
   La regla aplicada por fuente, y el motivo cuando se cae a la fila, van en
-  el reporte (y de ahí al manifiesto): nada se decide en silencio.
+  el reporte (y de ahí al manifiesto): nada se decide en silencio. La regla
+  vive en ``salida/identificadores_registro.py`` (F2.3): L4 la usa para
+  etiquetar y aquí se aplica sobre la correlativa final.
+* ``ID_GRUPO`` entero determinista por contenido (F2.3, ADR-0013): posición
+  lexicográfica del menor ``ID_REGISTRO`` del grupo. L4 etiqueta así, el
+  cierre de L5 vuelve a aplicar la regla tras separar (cannot-link) y
+  fusionar por NIT, y ``api.linkage`` la aplica una vez más tras su
+  postprocesado (matcher, que separa con ids ``max+1``, y/o colapso exacto,
+  cuya expansión reasigna ``ORIGINAL_INDEX``), siempre ANTES de L6: así
+  ``_trabajo/`` y los reportes L6 ya llevan los ids del entregable. Aquí es
+  la red de seguridad (``dedupe`` trae texto ``C<n>``/``S<n>``) con la misma
+  función (``identificadores_registro.recodificar_id_grupo``), y el golden
+  recibe el mismo mapa. ``reporte.id_grupo["recodificado"]`` dice si hubo
+  que cambiar algo (en ``linkage()``, con o sin postprocesado: False).
 * ``ID_ENTIDAD`` = ``NIT-<base sin DV>`` si el grupo adopta un identificador
   válido (``matching.identificadores.base_canonica`` con al menos
   ``LONGITUD_MINIMA_BASE`` dígitos); si no, ``ENT-<16 hex de SHA-256 de los
@@ -65,10 +78,6 @@ las dos tablas con la forma del estándar (``contrato.py``):
   correlativa pegadas y sin filas huérfanas (``ID_GRUPO`` que no está en la
   correlativa; se retiran y se cuentan). Un grupo de la correlativa SIN fila
   en el golden es un defecto del motor y se levanta ``ContratoSalidaError``.
-* ``ID_GRUPO`` de texto (``dedupe`` lo etiqueta ``C<n>``/``S<n>`` por
-  régimen) se recodifica a entero por orden de primera aparición en
-  ``ORIGINAL_INDEX`` — determinista por contenido — y el reporte lo declara.
-  En ``linkage()`` ya es entero y no se toca.
 
 Lo que NO hace
 --------------
@@ -97,6 +106,11 @@ from ..engine.scorer import _a_booleano
 from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
 from ..matching.identificadores import bases_validas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
+from .identificadores_registro import (
+    asignar_id_registro,
+    nombre_efectivo,
+    recodificar_id_grupo,
+)
 
 __all__ = [
     "COLUMNAS_QUE_ANADE",
@@ -147,7 +161,11 @@ class ReporteCompletar:
             había sobrescrito antes de llegar aquí.
         id_registro: por fuente, ``{"regla": "col_id" | "fila", ...}`` y el
             motivo cuando ``col_id`` no sirvió.
-        id_grupo: si hubo que recodificar ``ID_GRUPO`` de texto a entero.
+        id_grupo: la regla de ``ID_GRUPO`` (entero determinista por
+            contenido, F2.3), ``n_grupos``, ``valores_cambiados`` y si hubo
+            que recodificar (``recodificado``: False cuando el motor ya venía
+            por contenido, que es lo normal en ``linkage()``; True desde texto
+            en ``dedupe`` o tras el colapso exacto).
         id_entidad: cuántos grupos recibieron ``NIT-…`` y cuántos ``ENT-…``,
             y los grupos que comparten NIT con otro y por eso se desplazaron
             a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo).
@@ -289,30 +307,19 @@ def anexar_score_par(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _nombre_efectivo(col: str, presentes: Collection[str], canonicos: Mapping[str, str]) -> str:
-    """Cómo se llama hoy en la correlativa una columna de la fuente.
-
-    El Orchestrator renombra ``col_nit``/``col_name``/``col_ciudad`` a las
-    canónicas (``NIT``…) en la ingesta; ``deduplicate_unified`` (dedupe) NO
-    renombra: copia. El canónico se aplica solo si la columna original ya
-    no está: así el entregable dice de verdad qué columnas son del usuario.
-    """
-    return col if col in presentes else canonicos.get(col, col)
-
-
 def _columnas_de_fuentes(
     fuentes: Mapping[str, pd.DataFrame | Sequence[str]],
     canonicos: Mapping[str, str] | None,
     presentes: Collection[str],
 ) -> list[str]:
     """Unión de las columnas de las fuentes, en orden de primera aparición,
-    con el nombre que tienen en la correlativa (``_nombre_efectivo``)."""
+    con el nombre que tienen en la correlativa (``nombre_efectivo``)."""
     canonicos = dict(canonicos or {})
     vistas: dict[str, None] = {}
     for fuente in fuentes.values():
         columnas = fuente.columns if isinstance(fuente, pd.DataFrame) else fuente
         for col in columnas:
-            vistas.setdefault(_nombre_efectivo(str(col), presentes, canonicos), None)
+            vistas.setdefault(nombre_efectivo(str(col), presentes, canonicos), None)
     return list(vistas)
 
 
@@ -353,73 +360,6 @@ def _resolver_colisiones(
             stacklevel=4,
         )
     return correl, renombres, no_recuperables
-
-
-def _recodificar_id_grupo(correl: pd.DataFrame) -> dict[str, Any]:
-    """``ID_GRUPO`` entero. Si viene de texto, entero por primera aparición."""
-    if pd.api.types.is_integer_dtype(correl["ID_GRUPO"]):
-        return {"recodificado": False}
-    etiquetas = correl["ID_GRUPO"].astype("string").to_numpy(dtype=object)
-    orden = np.argsort(correl["ORIGINAL_INDEX"].to_numpy(dtype=np.int64), kind="stable")
-    codigos, unicos = pd.factorize(etiquetas[orden], sort=False)
-    nuevos = np.empty(len(correl), dtype=np.int64)
-    nuevos[orden] = codigos
-    correl["ID_GRUPO"] = nuevos
-    return {
-        "recodificado": True,
-        "desde": "etiquetas de texto (p. ej. C<n>/S<n> por régimen en dedupe)",
-        "regla": "entero por orden de primera aparición en ORIGINAL_INDEX",
-        "n_grupos": len(unicos),
-    }
-
-
-def _texto(serie: pd.Series) -> pd.Series:
-    """Texto sin espacios de borde; nulo se queda nulo (pandas 3 no convierte NaN a 'nan')."""
-    return serie.astype("string").str.strip()
-
-
-def _asignar_id_registro(
-    correl: pd.DataFrame, col_id: str | None
-) -> tuple[pd.Series, dict[str, dict[str, str]]]:
-    src = correl["SRC"].astype("string")
-    fila = src + "-F" + correl["ORIGINAL_INDEX"].astype("int64").astype("string")
-    fuentes = [str(f) for f in src.dropna().unique()]
-    if col_id is None:
-        return fila, {f: {"regla": "fila", "motivo": "sin col_id"} for f in fuentes}
-    if col_id not in correl.columns:
-        raise ValueError(
-            mensaje_accionable(
-                f"col_id='{col_id}' no es una columna de ninguna fuente "
-                f"(hay: {[c for c in correl.columns][:30]}).",
-                "ID_REGISTRO debía construirse con el id nativo y no hay de dónde.",
-                "pase col_id con el nombre real de la columna, o col_id=None para usar "
-                "<SRC>-F<fila>.",
-            )
-        )
-    valores = _texto(correl[col_id])
-    vacio = valores.isna() | (valores == "")
-    repetido = correl.duplicated(subset=["SRC", col_id], keep=False) & ~vacio
-    n_vacios = vacio.groupby(src, sort=False).sum()
-    n_repetidos = repetido.groupby(src, sort=False).sum()
-    usable = (n_vacios == 0) & (n_repetidos == 0)
-    mascara = src.map(usable).fillna(False).astype(bool).to_numpy()
-    id_registro = (src + "-" + valores.fillna("")).where(mascara, fila)
-    info: dict[str, dict[str, str]] = {}
-    for f in fuentes:
-        if bool(usable.get(f, False)):
-            info[f] = {"regla": "col_id", "columna": col_id}
-            continue
-        motivos: list[str] = []
-        if int(n_vacios.get(f, 0)):
-            motivos.append(f"{int(n_vacios[f])} vacío(s)/ausente(s)")
-        if int(n_repetidos.get(f, 0)):
-            motivos.append(f"no es único por fila ({int(n_repetidos[f])} repetido(s))")
-        info[f] = {
-            "regla": "fila",
-            "columna": col_id,
-            "motivo": f"col_id='{col_id}' en la fuente '{f}': " + "; ".join(motivos),
-        }
-    return id_registro, info
 
 
 def _sha16(texto: str) -> str:
@@ -749,22 +689,26 @@ def completar_correlativa(
     correl, renombres, no_recuperables = _resolver_colisiones(correl, columnas_fuente)
     columnas_fuente = [renombres.get(c, c) for c in columnas_fuente]
 
-    info_grupo = _recodificar_id_grupo(correl)
-
     # col_id se da con el nombre de la fuente; en la correlativa puede
     # llamarse distinto (renombre canónico del motor o <col>_FUENTE por
     # colisión). Se resuelve aquí; el reporte lleva el nombre efectivo.
     col_id_efectivo: str | None = None
     if col_id is not None:
-        nombre = _nombre_efectivo(col_id, correl.columns, canonicos)
+        nombre = nombre_efectivo(col_id, correl.columns, canonicos)
         col_id_efectivo = renombres.get(nombre, nombre)
-    id_registro, info_id = _asignar_id_registro(correl, col_id_efectivo)
+    id_registro, info_id = asignar_id_registro(correl, col_id_efectivo)
     repetidos = int(id_registro.duplicated().sum())
     if repetidos:
         raise ContratoSalidaError(
             [f"ID_REGISTRO no es único ({repetidos} repetido(s)) tras aplicar la regla {info_id}."]
         )
     correl["ID_REGISTRO"] = id_registro.astype(str)
+
+    # ID_GRUPO determinista por contenido (F2.3): necesita ID_REGISTRO ya puesto.
+    # L5 ya dejó los ids así (orchestrator._run_L5) y api.linkage los rehízo tras su
+    # postprocesado (matcher y/o colapso exacto), antes de L6; aquí es la red de
+    # seguridad (dedupe trae texto).
+    golden, info_grupo = recodificar_id_grupo(correl, golden, correl["ID_REGISTRO"])
 
     if "SCORE_PAR" in correl.columns and score_par_previo is not None:
         info_score = dict(score_par_previo)
