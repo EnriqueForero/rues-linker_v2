@@ -1312,6 +1312,8 @@ ESCRITORES_PERMITIDOS: dict[str, str] = {
     "flujo/cruce.py": "camino cruce (ejecutar_cruce): F2 lo lleva al estándar.",
     "flujo/insumos.py": "camino cruce: caché de insumos en parquet.",
     "flujo/resultados_disco.py": "camino cruce: resultados en disco; F2 lo lleva al estándar.",
+    "flujo/vinculacion_excel/exportador.py": "Excel de entrega de la vinculación de empresas "
+    "(F3.1): un libro propio con formato, no la carpeta del estándar de linkage().",
     "evaluation/banco.py": "el banco (medición), no el entregable.",
     "evaluation/ground_truth.py": "archivo de pares para revisión humana (medición), no el "
     "entregable (F2.14).",
