@@ -121,12 +121,13 @@ from typing import Any, Literal
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from .. import contrato
 from ..config.auditoria import ParametrosMotor
 from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
-from ..identidad.estable import crosswalk_de_corrida
+from ..identidad.estable import COLUMNA_REGISTROS, crosswalk_de_corrida
 from ..pipeline.errores import ContratoSalidaError, EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
@@ -676,12 +677,14 @@ def exportar_vistas(
         caben = [(v, t) for v, t in vistas if len(t) <= tope]
         hojas = [(safe_sheet_name(v, usados), t) for v, t in caben]
         if hojas:
-            # Una sola hoja DICCIONARIO al final, con la vista (``hoja``) delante;
-            # su nombre se sanea DESPUÉS de las vistas: una vista llamada
-            # DICCIONARIO conserva el suyo.
+            # Una sola hoja DICCIONARIO al final, con la PESTAÑA (``hoja``)
+            # delante: el nombre saneado con que se escribió, no el de la vista
+            # cruda (31 caracteres, desambiguado), para que quien lee encuentre
+            # la pestaña. Su propio nombre se sanea DESPUÉS de las vistas: una
+            # vista llamada DICCIONARIO conserva el suyo.
             con_hoja = [
-                diccionarios[v].assign(hoja=v)
-                for v, _ in caben
+                diccionarios[v].assign(hoja=pestana)
+                for (v, _), (pestana, _) in zip(caben, hojas, strict=True)
                 if v in diccionarios and not diccionarios[v].empty
             ]
             if con_hoja:
@@ -873,10 +876,6 @@ def _entidades_ids_de_grupos(grupos: pd.DataFrame) -> pd.DataFrame:
             cubre ``N_REGISTROS`` (un crosswalk incompleto partiría mal la
             herencia de la corrida siguiente).
     """
-    import pyarrow.compute as pc
-
-    from ..identidad.estable import COLUMNA_REGISTROS
-
     if COLUMNA_REGISTROS not in grupos.columns:
         raise ContratoSalidaError(
             [
@@ -933,11 +932,12 @@ def _parametros(res: ResultadoLinkage, omitidos: list[dict[str, str]]) -> dict[s
             {
                 "artefacto": "parametros.perfil",
                 "motivo": "el resultado no trae la configuración efectiva del motor "
-                "(res.manifiesto['configuracion']: esta ruta no pasa por el "
-                "Orchestrator). Sin ella la corrida no se reproduce desde el "
-                "manifiesto. Use linkage(carpeta_salida=...) o deje "
+                "(res.manifiesto['configuracion']): esta ruta (p. ej. dedupe()) no pasa "
+                "por el Orchestrator y los perfiles por régimen están en "
+                "parametros.llamada. Sin ella la corrida no se reproduce desde las claves "
+                "del motor del manifiesto. Si construye el resultado a mano, deje "
                 "res.manifiesto['configuracion'] = parametros_motor(config).a_dict() "
-                "antes de escribir; F2 unifica los caminos.",
+                "antes de escribir.",
             }
         )
     return {_CLAVE_LLAMADA: dict(res.manifiesto.get("parametros") or {})} | {
@@ -1341,8 +1341,10 @@ def escribir_resultado(
         carpeta_salida: carpeta padre; se crea si no existe.
         nombre: nombre simple (sin separadores) que cierra el nombre de la
             carpeta ``<AAAA-MM-DD_HHMM>_<nombre>``.
-        marca_tiempo: marca de la carpeta; por defecto ``datetime.now()``
-            (hora local, como los nombres de carpeta de v1).
+        marca_tiempo: marca de la carpeta; por defecto
+            ``contrato.marca_de_corrida()`` (UTC con zona: la misma regla de
+            reloj que ``CREATED_AT`` y que ``flujo.importadores``; hasta el
+            pulido de F2 era la hora local naive).
         excel: si False no se escribe ``excel/`` y el manifiesto lo declara.
         figuras: rutas de PNG que se copian a ``figuras/``.
 
@@ -1363,8 +1365,9 @@ def escribir_resultado(
             mismo minuto chocan; la segunda falla sin tocar la primera y, si
             ``_trabajo/`` estaba en la pendiente, lo conserva para reanudar);
             o si la pendiente trae un ``_trabajo/`` que no es el de ``res``
-            (una corrida interrumpida de ``linkage(carpeta_salida=...)``): no
-            se publica como si fuera de esta corrida ni se borra.
+            (una corrida interrumpida de ``linkage()``/``link()``/``dedupe()``
+            con ``carpeta_salida=``): no se publica como si fuera de esta
+            corrida ni se borra.
         ValueError: si ``nombre`` no es un nombre simple.
 
     Dos corridas simultáneas con el mismo ``nombre`` en la misma
@@ -1373,7 +1376,7 @@ def escribir_resultado(
     carpeta_salida = Path(carpeta_salida)
     pendiente = carpeta_pendiente(carpeta_salida, nombre)
     res.validar(estricto=True)
-    marca = marca_tiempo if marca_tiempo is not None else datetime.now()
+    marca = marca_tiempo if marca_tiempo is not None else contrato.marca_de_corrida()
     definitiva = carpeta_salida / _nombre_carpeta(nombre, marca)
     if definitiva.exists():
         raise EscrituraSalidaError(
@@ -1400,12 +1403,13 @@ def escribir_resultado(
             mensaje_accionable(
                 f"hay un {NOMBRE_TRABAJO}/ de otra corrida en {pendiente} y el resultado "
                 f"que se quiere publicar {donde}.",
-                "es de una corrida interrumpida de linkage(carpeta_salida=...); publicarlo "
-                "con este resultado dejaría una carpeta cuyo manifiesto no describe los "
-                "checkpoints que contiene.",
-                f"reanude esa corrida con linkage(carpeta_salida={str(carpeta_salida)!r}, "
-                f"nombre={nombre!r}) o borre {trabajo_pendiente} a mano; si el resultado "
-                f"sí es de esa corrida, su dir_trabajo debe ser {trabajo_pendiente}.",
+                "es de una corrida interrumpida de linkage()/link()/dedupe() con "
+                "carpeta_salida=; publicarlo con este resultado dejaría una carpeta cuyo "
+                "manifiesto no describe los checkpoints que contiene.",
+                f"reanude esa corrida con la misma función, carpeta_salida="
+                f"{str(carpeta_salida)!r} y nombre={nombre!r}, o borre {trabajo_pendiente} "
+                f"a mano; si el resultado sí es de esa corrida, su dir_trabajo debe ser "
+                f"{trabajo_pendiente}.",
             )
         )
     # Restos de una escritura anterior interrumpida a la fuerza (kill): se

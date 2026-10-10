@@ -533,6 +533,9 @@ def escribir_excel_o_leeme(
         La ruta escrita: ``ruta`` o ``ruta.with_name(f"{base}_LEEME.xlsx")``.
 
     Raises:
+        ValueError: si ``hoja`` se llama como la hoja ``DICCIONARIO`` y
+            ``diccionario`` trae filas (choque de nombres de hoja), antes de
+            abrir el libro.
         EscrituraSalidaError: si xlsxwriter rechaza un valor (una cadena de más
             de 32.767 caracteres; un objeto que ni como texto se representa,
             nombrando la columna) o una columna trae fechas con zona horaria
@@ -546,6 +549,21 @@ def escribir_excel_o_leeme(
     tope = _limite(limite)
     if filas_por_lote <= 0:
         raise ValueError("filas_por_lote debe ser > 0.")
+    if (
+        diccionario is not None
+        and not diccionario.empty
+        and hoja.lower() == HOJA_DICCIONARIO.lower()
+    ):
+        raise ValueError(
+            mensaje_accionable(
+                f"la hoja de datos se llama {hoja!r} y el libro lleva además la hoja "
+                f"{HOJA_DICCIONARIO} (diccionario= con filas).",
+                "Excel no admite dos hojas con el mismo nombre (sin distinguir mayúsculas) "
+                "y xlsxwriter fallaría al abrir el libro, sin decir cuál es el choque.",
+                f"renombre la hoja de datos (hoja=) o pase diccionario=None; "
+                f"{HOJA_DICCIONARIO} es el nombre reservado del diccionario.",
+            )
+        )
     es_parquet = isinstance(df, pq.ParquetFile)
     n_filas = df.metadata.num_rows if es_parquet else len(df)
     base = ruta.stem

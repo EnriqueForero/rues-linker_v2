@@ -487,7 +487,10 @@ def test_metodo_union_en_disco_fija_la_divergencia_declarada(tmp_path: Path) -> 
         "A-F3": "identificador",  # Z: sin_pareja reconciliado
         "A-F4": "identificador",
     }
-    assert "METODO_UNION" in DIVERGENCIA_METODO_UNION and "8/30486" in DIVERGENCIA_METODO_UNION
+    # Pulido F2 (hallazgo 28 de F2.5): la constante va literal al manifiesto de cada
+    # generación y no lleva la cifra del banco (una medición puntual, no una
+    # propiedad de la corrida); el comentario del módulo la conserva.
+    assert "30486" not in DIVERGENCIA_METODO_UNION
     # F2.18: la tabla por grupo trae la lista ORDENADA de ID_REGISTRO (REGISTROS),
     # de la que el escritor arma el crosswalk con la misma regla que en pandas.
     grupos = expansion.grupos.sort_values("ID_GRUPO")

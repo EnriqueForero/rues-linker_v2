@@ -67,12 +67,20 @@ def _leer_evidencia(linea: LineaBaseBanco = BANCO_VIGENTE) -> dict:
 # ── La constante y el JSON de evidencia dicen lo mismo ───────────────────
 
 
-def test_la_constante_esta_documentada() -> None:
-    """Una línea base sin fecha ni commit no se puede auditar."""
-    assert isinstance(BANCO_VIGENTE, LineaBaseBanco)
-    assert len(BANCO_VIGENTE.huella) == 64 and int(BANCO_VIGENTE.huella, 16) >= 0
-    assert BANCO_VIGENTE.commit and BANCO_VIGENTE.fecha
-    assert BANCO_VIGENTE.tolerancia_metricas > 0
+#: Todas las líneas base, históricas y vigente: cada una debe seguir documentada
+#: y coincidir con su JSON (la historia tampoco deriva).
+LINEAS_BASE_CONOCIDAS = (BANCO_F0, BANCO_F2)
+
+
+@pytest.mark.parametrize("linea", LINEAS_BASE_CONOCIDAS, ids=lambda lb: lb.evidencia.stem)
+def test_la_constante_esta_documentada(linea: LineaBaseBanco) -> None:
+    """Una línea base sin fecha ni commit no se puede auditar; también las históricas
+    (pulido F2, hallazgo 5 de F2.17): una constante futura con ``commit=""`` fallaría."""
+    assert isinstance(linea, LineaBaseBanco)
+    assert len(linea.huella) == 64 and int(linea.huella, 16) >= 0
+    assert linea.commit and linea.fecha
+    assert linea.tolerancia_metricas > 0
+    assert BANCO_VIGENTE in LINEAS_BASE_CONOCIDAS
 
 
 def test_el_json_de_evidencia_coincide_con_la_constante() -> None:
@@ -217,8 +225,6 @@ def test_la_comparacion_no_deja_pasar_un_nan() -> None:
 
 
 # ── La historia tampoco deriva: cada JSON coincide con su constante ──────
-
-LINEAS_BASE_CONOCIDAS = (BANCO_F0, BANCO_F2)
 
 
 @pytest.mark.parametrize("linea", LINEAS_BASE_CONOCIDAS, ids=lambda lb: lb.evidencia.stem)

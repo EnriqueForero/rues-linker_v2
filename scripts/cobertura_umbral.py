@@ -42,6 +42,7 @@ from typing import Any
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
+from record_linkage.evaluation.banco import PREFIJO_REGIMEN_SIN_IDENTIFICADOR
 from record_linkage.evaluation.cobertura_umbral import (
     armar_tabla,
     escribir_tabla,
@@ -138,7 +139,14 @@ def resumen(tabla: dict[str, Any]) -> str:
     ]
     for fila in tabla["umbrales"]:
         b, e = fila["banco"], fila["escala"]
-        recall_sin = next((v for k, v in b["recall_por_regimen"].items() if k.startswith("SIN")), 0)
+        recall_sin = next(
+            (
+                v
+                for k, v in b["recall_por_regimen"].items()
+                if k.startswith(PREFIJO_REGIMEN_SIN_IDENTIFICADOR)
+            ),
+            0,
+        )
         mayor = e["grupo_mayor_sin_identificador"] if e else {}
         lineas.append(
             f"{fila['umbral']:>7.2f}{b['precision']:>8.4f}{b['recall']:>8.4f}"

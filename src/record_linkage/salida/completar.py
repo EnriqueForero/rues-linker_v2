@@ -97,7 +97,6 @@ import sqlite3
 import warnings
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -608,7 +607,7 @@ def _reparar_metricas_golden(
     else:
         g.loc[sin_metricas, "REQUIRES_REVIEW"] = revisar
     if "CREATED_AT" in g.columns:
-        ahora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ahora = contrato.marca_de_corrida().strftime(contrato.FORMATO_CREATED_AT)
         g.loc[sin_metricas & g["CREATED_AT"].isna(), "CREATED_AT"] = ahora
     return {
         "n": n,

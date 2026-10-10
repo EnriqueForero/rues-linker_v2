@@ -96,7 +96,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1124,9 +1124,10 @@ def ejecutar(
 
 def _marca_de_corrida(marca_tiempo: datetime | None = None) -> str:
     """``CREATED_AT`` del golden en el formato del contrato (``AAAA-MM-DD HH:MM:SS``):
-    ``marca_tiempo`` si se inyectó, si no la hora UTC en que se fijó la corrida."""
-    marca = marca_tiempo if marca_tiempo is not None else datetime.now(timezone.utc)
-    return marca.strftime("%Y-%m-%d %H:%M:%S")
+    ``marca_tiempo`` si se inyectó, si no ``contrato.marca_de_corrida()`` (la regla
+    de reloj del estándar, UTC)."""
+    marca = marca_tiempo if marca_tiempo is not None else contrato.marca_de_corrida()
+    return marca.strftime(contrato.FORMATO_CREATED_AT)
 
 
 def construir_entregables(
@@ -2148,16 +2149,18 @@ def deduplicar_importadores(
         excel: escribir ``excel/`` (completo o LEEME; nunca recorte).
         marca_tiempo: UNA marca para toda la corrida: ``CREATED_AT`` del golden
             (vía :func:`ejecutar`) y, si se escribe, el nombre de la carpeta y
-            ``manifest.marca_tiempo``. ``None`` lee el reloj (UTC) una sola vez
-            aquí, así que dos corridas con la misma ``marca_tiempo`` dan el
-            mismo golden y la carpeta nunca lleva otra hora que el golden.
+            ``manifest.marca_tiempo``. ``None`` lee el reloj del estándar
+            (``contrato.marca_de_corrida()``, UTC, el mismo de ``linkage()``)
+            una sola vez aquí, así que dos corridas con la misma
+            ``marca_tiempo`` dan el mismo golden y la carpeta nunca lleva otra
+            hora que el golden.
 
     Returns:
         ``ResultadoImportadores``. Revise ``.todo_ok`` ANTES de usar nada:
         si una invariante falla, el resultado no es utilizable.
     """
     cfg = cfg or ConfigImportadores()
-    marca = marca_tiempo if marca_tiempo is not None else datetime.now(timezone.utc)
+    marca = marca_tiempo if marca_tiempo is not None else contrato.marca_de_corrida()
     prep = preparar(df, cfg)
     sugerencias = sugerir_alias_pais(
         prep.loc[prep.PAIS_METODO == "sin_clasificar", "PAIS_NORMALIZADO"],

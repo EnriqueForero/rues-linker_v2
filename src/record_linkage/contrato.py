@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -59,6 +60,7 @@ __all__ = [
     "COLUMNAS_METRICAS_GOLDEN",
     "COLUMNAS_REVISION",
     "COLUMNAS_TECNICAS",
+    "FORMATO_CREATED_AT",
     "METODOS_UNION",
     "METODOS_UNION_F1",
     "NIVELES_CONFIANZA",
@@ -73,12 +75,34 @@ __all__ = [
     "esquema_golden",
     "esquema_revision",
     "familia_tipo",
+    "marca_de_corrida",
     "revision_vacia",
 ]
 
 #: Versión del contrato. Cambia solo cuando cambia una columna fija, su tipo
 #: o su orden; se escribe en ``manifest.json`` y en el diccionario.
 VERSION_CONTRATO = "1.0"
+
+#: Formato de ``CREATED_AT`` en el golden (texto, sin zona: la zona es UTC
+#: por la regla de reloj de :func:`marca_de_corrida`).
+FORMATO_CREATED_AT = "%Y-%m-%d %H:%M:%S"
+
+
+def marca_de_corrida() -> datetime:
+    """La hora de una corrida: UNA regla de reloj para todo el estándar.
+
+    UTC con zona horaria (``datetime.now(timezone.utc)``). La leen el
+    escritor (nombre de la carpeta ``<AAAA-MM-DD_HHMM>_<nombre>`` y
+    ``manifest.marca_tiempo``, que lleva ``+00:00``), ``flujo.importadores``
+    (carpeta y ``CREATED_AT``) y ``salida.completar`` (``CREATED_AT`` del golden
+    que el motor no fijó). Hasta el pulido de F2 (hallazgo 25 de F2.6) el
+    escritor usaba hora local naive y los otros dos UTC: dos corridas
+    simultáneas quedaban en carpetas con 5 horas de diferencia en Colombia y
+    un manifiesto llevaba zona y el otro no. Quien quiera otra marca la pasa
+    en ``marca_tiempo=``; las pruebas la fijan con ``monkeypatch`` aquí.
+    """
+    return datetime.now(timezone.utc)
+
 
 #: Columnas que acompañan a toda tabla del diccionario, en este orden.
 COLUMNAS_DICCIONARIO: tuple[str, ...] = (

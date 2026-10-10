@@ -350,6 +350,32 @@ def _ids_por_registro(marco: pd.DataFrame) -> dict[tuple[str, int], int]:
     }
 
 
+def _exigir_declaracion_del_postprocesado(res: ResultadoLinkage, dir_trabajo: Path) -> dict:
+    """Lo que ``api.linkage`` declara tras el postprocesado debe ser verificable
+    desde el entregable, sin depender de coincidencias del fixture (pulido F2,
+    hallazgo 12 de F2.3): la regla es la de L4/L5, el número de grupos es el de
+    la correlativa, ``recodificado`` acompaña a ``valores_cambiados``, el id
+    final es el que la regla produce sobre las claves finales, y L6 y
+    ``completar`` no tienen nada que cambiar."""
+    correl = res.correlativa
+    declarado = res.metricas["preprocessing"]["id_grupo_tras_postprocesado"]
+    assert declarado["regla"].startswith("entero")
+    assert declarado["n_grupos"] == correl["ID_GRUPO"].nunique()
+    assert declarado["recodificado"] is (declarado["valores_cambiados"] > 0)
+    esperado = id_grupo_por_clave_minima(
+        correl["ID_GRUPO"].to_numpy(), correl["ID_REGISTRO"].to_numpy()
+    )
+    assert correl["ID_GRUPO"].tolist() == esperado.tolist()
+    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
+    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
+    assert set(correl["ID_GRUPO"]) == set(range(correl["ID_GRUPO"].nunique()))
+    l6 = dir_trabajo / "L6_reporting"
+    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
+        _ids_por_registro(correl)
+    )
+    return declarado
+
+
 def test_trabajo_y_reportes_llevan_los_ids_del_entregable_cuando_l5_renumera(
     tmp_path: Path,
 ) -> None:
@@ -428,19 +454,16 @@ def test_con_colapso_exacto_los_reportes_llevan_los_ids_del_entregable(
     correl = res.correlativa
     assert len(correl) == 45  # 40 únicas + 5 restauradas
     assert res.metricas["preprocessing"]["exact_duplicate_collapse"]["CRM"]["collapsed_rows"] == 3
-    assert "recodificado" in res.metricas["preprocessing"]["id_grupo_tras_postprocesado"]
     # Con duplicados restaurados CODIGO ya no es única: la regla cae a la fila.
     reglas = res.manifiesto["completar"]["id_registro"]
     assert {f: r["regla"] for f, r in reglas.items()} == {"CRM": "fila", "ADUANAS": "fila"}
 
-    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
-    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
-    assert set(correl["ID_GRUPO"]) == set(range(correl["ID_GRUPO"].nunique()))
-
+    declarado = _exigir_declaracion_del_postprocesado(res, dir_trabajo)
+    if col_id == "CODIGO":
+        # Por construcción: la clave pasa de <SRC>-<CODIGO> a <SRC>-F<n> y el
+        # orden lexicográfico de las claves cambia; la recodificación no es no-op.
+        assert declarado["valores_cambiados"] > 0
     l6 = dir_trabajo / "L6_reporting"
-    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
-        _ids_por_registro(correl)
-    )
     grupos_entregable = set(correl["ID_GRUPO"].tolist())
     for nombre in ("reporte_casos_revision.xlsx", "reporte_estadisticas_grupos.xlsx"):
         for _, hoja in pd.read_excel(l6 / nombre, sheet_name=None).items():
@@ -487,25 +510,16 @@ def test_con_matcher_los_reportes_llevan_los_ids_del_entregable(
             carpeta_salida=str(tmp_path / "salida"),
             nombre="matcher",
         )
-    correl = res.correlativa
     assert res.metricas["matcher_stats"]["n_clusters_split"] > 0  # el matcher sí separó
 
-    assert res.manifiesto["completar"]["id_grupo"]["recodificado"] is False
-    assert res.manifiesto["completar"]["id_grupo"]["valores_cambiados"] == 0
-    assert set(correl["ID_GRUPO"]) == set(range(correl["ID_GRUPO"].nunique()))
-
-    l6 = dir_trabajo / "L6_reporting"
-    assert _ids_por_registro(pd.read_parquet(l6 / "tabla_correlativa.parquet")) == (
-        _ids_por_registro(correl)
-    )
-
-    # Declarado en memoria y en el manifest.json escrito (hallazgo 2 de la ronda 3).
-    declarado = res.metricas["preprocessing"]["id_grupo_tras_postprocesado"]
-    assert declarado["regla"].startswith("entero")
-    # Con col_id=None los ids max+1 del matcher sí se rehacen (8 cambios); con
-    # 'CODIGO' coinciden con el rango lexicográfico de las claves CRM-A9xx y la
-    # regla no cambia nada: por eso la versión anterior «pasaba» en ese caso.
-    assert declarado["recodificado"] is (col_id is None)
+    # Declarado en memoria y en el manifest.json escrito (hallazgo 2 de la ronda 3),
+    # y verificable desde el entregable: el matcher deja ids max+1 que no salen de
+    # la regla, así que la recodificación cambia al menos los ids de los subgrupos
+    # separados salvo que coincidan con el rango lexicográfico (en este fixture
+    # pasa con 'CODIGO'); por eso no se afirma «recodificado» por parametrización,
+    # sino que lo declarado sea coherente con el resultado y que L6 y completar
+    # no tengan nada que cambiar.
+    declarado = _exigir_declaracion_del_postprocesado(res, dir_trabajo)
     manifest = json.loads(
         next((tmp_path / "salida").glob("*_matcher/manifest.json")).read_text(encoding="utf-8")
     )

@@ -506,6 +506,10 @@ def test_marca_tiempo_inyectable_en_la_fachada_fija_golden_y_carpeta(tmp_path: P
     assert manifest["marca_tiempo"] == MARCA.isoformat(timespec="seconds")
 
 
+def _sin_reloj(metricas: pd.DataFrame) -> pd.DataFrame:
+    return metricas[metricas["indicador"] != "segundos de ejecución"].reset_index(drop=True)
+
+
 def test_ensamblar_resultado_arma_lo_mismo_que_la_fachada() -> None:
     """El 07 corre las etapas una a una (para cronometrarlas) y arma el resultado
     con ``ensamblar_resultado``: hoja ``REVISION`` de v1 llena, manifiesto y
@@ -538,4 +542,7 @@ def test_ensamblar_resultado_arma_lo_mismo_que_la_fachada() -> None:
     assert r.golden.equals(fachada.golden)
     assert r.correlativa.equals(fachada.correlativa)
     assert r.revision_grupos.equals(fachada.revision_grupos)
-    assert r.metricas.equals(fachada.metricas)
+    # Sin la fila de reloj (pulido F2, hallazgo 27 de F2.6): «segundos de
+    # ejecución» es round() de cada corrida y bajo carga una cruza 0,5 s.
+    assert _sin_reloj(r.metricas).equals(_sin_reloj(fachada.metricas))
+    assert "segundos de ejecución" in set(r.metricas["indicador"])

@@ -81,12 +81,14 @@ def test_dentro_solo_pasa_el_warning_y_al_salir_vuelve_el_info() -> None:
 
 
 @pytest.mark.usefixtures("sin_rastro")
-@pytest.mark.parametrize("tope_previo", [logging.NOTSET, logging.DEBUG])
+@pytest.mark.parametrize("tope_previo", [logging.NOTSET, logging.DEBUG, logging.CRITICAL])
 def test_restaura_exactamente_el_tope_previo(tope_previo: int) -> None:
-    """No vuelve a NOTSET a ciegas: devuelve el valor que había (p. ej. DEBUG)."""
+    """No vuelve a NOTSET a ciegas: devuelve el valor que había (p. ej. DEBUG). Y un
+    contexto cuyo contrato es «callar» no destapa nada: con un tope previo mayor que
+    INFO (CRITICAL) lo conserva (pulido F2, hallazgo 16 de F2.13)."""
     logging.disable(tope_previo)
     with silenciar_pipeline():
-        assert logging.root.manager.disable == logging.INFO
+        assert logging.root.manager.disable == max(tope_previo, logging.INFO)
     assert logging.root.manager.disable == tope_previo
 
 

@@ -238,10 +238,16 @@ class ConfigCoberturaSinIdentificador:
                     "use True o False.",
                 )
             )
-        if not isinstance(self.umbral, (int, float)) or not 0.0 < float(self.umbral) <= 1.0:
+        # ``bool`` es subclase de ``int``: ``umbral=True`` pasaba como 1,0 y
+        # cortaba todo nombre no idéntico sin que el perfil lo dijera.
+        if (
+            isinstance(self.umbral, bool)
+            or not isinstance(self.umbral, (int, float))
+            or not 0.0 < float(self.umbral) <= 1.0
+        ):
             raise ValueError(
                 mensaje_accionable(
-                    f"{CLAVE_PERFIL}.umbral={self.umbral!r} fuera de (0, 1].",
+                    f"{CLAVE_PERFIL}.umbral={self.umbral!r} no es un número en (0, 1].",
                     "es la similitud mínima nombre–líder en escala 0–1; fuera de ese "
                     "rango no corta nada o lo corta todo.",
                     "use un valor como 0.80 (medido en ADR-0011); 2·umbral − 1 es la "
@@ -321,6 +327,9 @@ class ReporteCoberturaSinIdentificador:
         grupo_mayor_antes: filas del grupo examinado más grande antes.
         grupo_mayor_despues: filas del grupo más grande que salió de ellos.
         nombres_distintos: tamaño del vocabulario con que se midió el IDF.
+        filas_sin_nombre: filas de los grupos examinados con ``NOMBRE_LIMPIO``
+            vacío: no alcanzan a ningún líder y quedan en estrella propia
+            (dejar sin unir; ADR-0011, «lo que no se resolvió»).
     """
 
     umbral: float
@@ -332,6 +341,7 @@ class ReporteCoberturaSinIdentificador:
     grupo_mayor_antes: int = 0
     grupo_mayor_despues: int = 0
     nombres_distintos: int = 0
+    filas_sin_nombre: int = 0
 
     @property
     def hubo_cambios(self) -> bool:
@@ -459,12 +469,24 @@ def aplicar_cobertura_sin_identificador(
         return df.copy(deep=False), reporte
 
     filas_por_grupo = rep.groupby("g", sort=False)["masa"].sum()
-    reporte = ReporteCoberturaSinIdentificador(
-        umbral=config.umbral,
-        grupos_sin_identificador=n_grupos_sin_id,
-        grupos_examinados=len(filas_por_grupo),
-        grupo_mayor_antes=int(filas_por_grupo.max()),
-    )
+    filas_sin_nombre = int(rep.loc[rep["nombre"] == "", "masa"].sum())
+
+    def _reporte(
+        *, partidos: int, creados: int, reasignados: int, mayor_despues: int, comparador: Any
+    ) -> ReporteCoberturaSinIdentificador:
+        """El reporte completo, escrito una vez: con y sin cortes (hallazgo 18 de F2.1)."""
+        return ReporteCoberturaSinIdentificador(
+            umbral=config.umbral,
+            grupos_sin_identificador=n_grupos_sin_id,
+            grupos_examinados=len(filas_por_grupo),
+            grupos_partidos=partidos,
+            grupos_creados=creados,
+            registros_reasignados=reasignados,
+            grupo_mayor_antes=int(filas_por_grupo.max()),
+            grupo_mayor_despues=mayor_despues,
+            nombres_distintos=int(getattr(getattr(comparador, "pesos_idf", None), "documentos", 0)),
+            filas_sin_nombre=filas_sin_nombre,
+        )
 
     if comparador is None:
         corpus = pd.Series(np.unique(nombres[nombres != ""]))
@@ -494,7 +516,15 @@ def aplicar_cobertura_sin_identificador(
     conserva = ~masa_estrella.duplicated("g", keep="first")
     nuevas = masa_estrella[~conserva].sort_values(["g", "estrella"], kind="stable")
     if nuevas.empty:
-        return df.copy(deep=False), reporte
+        # Se examinó y nada se partió: el grupo mayor de después es el de antes
+        # (no «0 filas», que era lo que iba al log y al manifiesto).
+        return df.copy(deep=False), _reporte(
+            partidos=0,
+            creados=0,
+            reasignados=0,
+            mayor_despues=int(filas_por_grupo.max()),
+            comparador=comparador,
+        )
 
     siguiente = int(pd.to_numeric(pd.Series(grupos), errors="coerce").max()) + 1
     masa_estrella["destino"] = masa_estrella["g"]
@@ -514,17 +544,11 @@ def aplicar_cobertura_sin_identificador(
     salida = df.copy(deep=False)
     salida[columna_grupo] = nuevo.to_numpy()
 
-    partidos = int(nuevas["g"].nunique())
-    mayor_despues = int(masa_estrella["masa"].max())
-    reporte = ReporteCoberturaSinIdentificador(
-        umbral=config.umbral,
-        grupos_sin_identificador=n_grupos_sin_id,
-        grupos_examinados=len(filas_por_grupo),
-        grupos_partidos=partidos,
-        grupos_creados=len(nuevas),
-        registros_reasignados=len(cambian),
-        grupo_mayor_antes=int(filas_por_grupo.max()),
-        grupo_mayor_despues=mayor_despues,
-        nombres_distintos=int(getattr(getattr(comparador, "pesos_idf", None), "documentos", 0)),
+    reporte = _reporte(
+        partidos=int(nuevas["g"].nunique()),
+        creados=len(nuevas),
+        reasignados=len(cambian),
+        mayor_despues=int(masa_estrella["masa"].max()),
+        comparador=comparador,
     )
     return salida, reporte

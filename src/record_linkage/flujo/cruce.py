@@ -56,7 +56,7 @@ from ..golden.columnas_finales import (
     COLUMNAS_FINALES,
     faltantes,
 )
-from ..identidad.estable import cargar_corrida_anterior
+from ..identidad.estable import cargar_corrida_anterior, exigir_nombres_sin_separador
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -66,7 +66,12 @@ from ..ingestion import (
     resumir_universo,
 )
 from ..matching import MatchingProfile
-from ..pipeline.errores import ColumnasArrastreError, ContratoSalidaError, mensaje_accionable
+from ..pipeline.errores import (
+    ColumnasArrastreError,
+    ContratoSalidaError,
+    CorridaAnteriorError,
+    mensaje_accionable,
+)
 from ..resultado import ResultadoLinkage
 from ..utils.almacenamiento import es_ruta_fuse
 from ..utils.logger import CustomLogger
@@ -233,6 +238,9 @@ class ConfigCruce:
         nombres = [f.name for f in self.fuentes]
         if len(set(nombres)) != len(nombres):
             raise ValueError(f"Nombres de fuente duplicados: {nombres}.")
+        # Un nombre con «|» lo rechazaría linkage() antes de L1, pero después de
+        # la ingesta (lo caro con DuckDB): la misma regla, al construirse.
+        exigir_nombres_sin_separador(nombres)
         if self.filas_smoke < 0:
             raise ValueError("ConfigCruce.filas_smoke no puede ser negativo.")
         motor_ingesta = str(self.motor_ingesta).strip().lower()
@@ -2097,10 +2105,12 @@ def _exigir_corrida_anterior_con_pandas(motor_ingesta: str, corrida_anterior: Pa
     que publica ids nuevos en silencio.
 
     Raises:
-        ValueError: si ``motor_ingesta`` es ``'duckdb'`` (mensaje accionable).
+        CorridaAnteriorError: si ``motor_ingesta`` es ``'duckdb'`` (mensaje
+            accionable). Es la excepción de F2.4 (ADR-0012) para todo fallo de
+            carga o uso de ``corrida_anterior``, no un ``ValueError`` genérico.
     """
     if motor_ingesta == "duckdb":
-        raise ValueError(
+        raise CorridaAnteriorError(
             mensaje_accionable(
                 f"corrida_anterior={str(corrida_anterior)!r} con motor_ingesta='duckdb'.",
                 "la expansión DuckDB recalcula los ENT- por contenido de las filas "
@@ -2357,6 +2367,9 @@ def _ejecutar_cruce_medido(
                 collapse_exact_duplicates=(
                     config.colapsar_duplicados_exactos and not compactaciones
                 ),
+                # La herencia sobre filas_smoke cuesta milisegundos y un crosswalk
+                # que tropiece en _heredar falla aquí, no tras la corrida completa.
+                corrida_anterior=config.corrida_anterior,
             )
         log.info(f"   🔬 Smoke test OK ({time.time() - inicio:.1f}s) — se procede al total")
 

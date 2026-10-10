@@ -80,13 +80,21 @@ parametrizada exige que cada JSON siga coincidiendo con su constante.
 «FALLA» es el del comparador de regresión (exige que ninguna métrica baje) y no
 el de la compuerta F2, que se juzga por macro-F1 y FP sobre negativos.
 
+> **Nota (2026-10-10, pulido de F2):** `corrida_base_f2.json` registra
+> `recursos.segundos_total = 113,52` (L2 en 71,5 s) porque la máquina estaba
+> cargada al medir; una corrida limpia del mismo commit tarda ≈ 70–75 s con la
+> misma huella `5bfed0d1…`. Mientras ese JSON no se remida, `--comparar base_f2
+> <nueva>` usa 113,5 s como base de tiempo (criterio ≤ ×1,2 = 136 s), una
+> compuerta de tiempo holgada. Remedirlo y sustituir el JSON es decisión del
+> coordinador (commit propio).
+
 El determinismo entre procesos (dos `PYTHONHASHSEED` distintos → misma huella)
 no deja JSON: lo verifica `tests/test_determinismo_linkage_procesos.py` en cada
 corrida.
 
 ```bash
 python scripts/banco.py --etiqueta base_f0                       # ≈ 55 s
-python scripts/banco.py --etiqueta base_f2                       # ≈ 75 s (F2.1: + cobertura por estrellas)
+python scripts/banco.py --etiqueta base_f2                       # ≈ 70–75 s en máquina sin carga (F2.1: + cobertura por estrellas)
 python scripts/banco.py --comparar base_f0 base_f2                # el cambio declarado de F2.1
 python scripts/conformidad.py --etiqueta base                     # y --corroborar --etiqueta corroborado
 python scripts/escala.py --etiqueta base_f0                       # 139k + 463k, decenas de minutos

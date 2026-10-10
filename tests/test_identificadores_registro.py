@@ -3,8 +3,9 @@
 ``salida/identificadores_registro.py`` es el único sitio donde se construye la
 clave por registro (``<SRC>-<id nativo>`` o ``<SRC>-F<ORIGINAL_INDEX>``) y el
 entero de grupo determinista (posición lexicográfica del menor ``ID_REGISTRO``
-del grupo). L4 (``engine/clusterer.py``) y ``salida/completar.py`` lo llaman;
-ninguno copia la regla.
+del grupo). L4 (``engine/clusterer.py`` vía ``orchestrator._run_L4``), el cierre
+de L5 (``orchestrator._run_L5``), ``api.linkage`` tras su postprocesado y
+``salida/completar.py`` lo llaman; ninguno copia la regla.
 """
 
 from __future__ import annotations

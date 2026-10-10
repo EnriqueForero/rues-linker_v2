@@ -244,6 +244,11 @@ def elegir_umbral(
         )
     elegido = min(candidatos, key=_clave_menos_une_mal)
     por_macro = max(candidatos, key=lambda p: (p.banco.macro_f1, p.banco.precision))
+    # Ante un empate exacto de macro-F1 con el elegido, la «alternativa» es el
+    # propio elegido: ``max`` devolvía el primer candidato y el motivo decía
+    # «habría elegido X (0.8900 frente a 0.8900) a cambio de 0 FP más».
+    if math.isclose(por_macro.banco.macro_f1, elegido.banco.macro_f1, abs_tol=1e-12):
+        por_macro = elegido
     sin_escala = [p.umbral for p in candidatos if p.escala is None]
     motivo = (
         f"entre {', '.join(f'{p.umbral:g}' for p in candidatos)} (pasan la compuerta) gana el que "
@@ -373,8 +378,15 @@ def _verificar_umbral(ajustes: Any, umbral: float, etiqueta: str) -> None:
     if isinstance(medido, Mapping) and "umbral" in medido:
         if not math.isclose(float(medido["umbral"]), umbral, abs_tol=1e-9):
             raise ValueError(
-                f"la corrida {etiqueta!r} se midió con umbral {medido['umbral']} y la tabla "
-                f"la asigna a {umbral}; corrija las etiquetas del barrido."
+                mensaje_accionable(
+                    f"la corrida {etiqueta!r} se midió con umbral {medido['umbral']} y la "
+                    f"tabla la asigna a {umbral}.",
+                    "la tabla de decisión atribuiría a un umbral las cifras de otro y la "
+                    "regla elegiría sobre datos falsos.",
+                    f"corrija --etiquetas {umbral:g}=<etiqueta medida con ese umbral> o "
+                    f"vuelva a correr scripts/banco.py --etiqueta {etiqueta} --ajuste "
+                    f"{CLAVE_PERILLA}.umbral={umbral:g}.",
+                )
             )
 
 

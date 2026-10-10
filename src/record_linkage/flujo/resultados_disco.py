@@ -101,13 +101,16 @@ _ID_ENTIDAD_ENT_SQL = (
 #: ``sin_pareja`` que la expansión cambia; un representante que es el ÚNICO
 #: con la base del grupo (sus copias exactas colapsaron antes de ``completar``)
 #: queda ``nombre`` aquí y ``identificador`` por pandas, que expande antes.
-#: Medido en el banco de 30.486 filas: 346 filas diferían entre motores, 338
-#: eran ``sin_pareja`` reconciliado y estas son las 8 residuales.
-#: ``tests/test_disk_results_v016.py`` fija el caso; unificarlo exige ponderar
-#: ``completar`` por copias, fuera de este módulo.
+#: Medido en el banco de 30.486 filas (octubre de 2026): 346 filas diferían
+#: entre motores, 338 eran ``sin_pareja`` reconciliado y estas son las 8
+#: residuales. La cifra queda AQUÍ, no en la constante: la constante va
+#: literal a ``invariantes.divergencia_declarada`` de cada ``manifest.json`` y
+#: una medición puntual del banco no es una propiedad de la corrida (pulido
+#: F2, hallazgo 28 de F2.5). ``tests/test_disk_results_v016.py`` fija el caso;
+#: unificarlo exige ponderar ``completar`` por copias, fuera de este módulo.
 DIVERGENCIA_METODO_UNION = (
     "METODO_UNION: representante único con la base del grupo cuyas copias exactas "
-    "colapsaron queda 'nombre' (pandas: 'identificador'); 8/30486 filas en el banco"
+    "colapsaron queda 'nombre' (pandas: 'identificador')"
 )
 
 #: Qué hacer cuando una invariante de la expansión falla: nunca es del usuario.

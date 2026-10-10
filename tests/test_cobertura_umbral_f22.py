@@ -127,10 +127,15 @@ def test_parsear_ajustes_vive_en_la_libreria_y_anida_las_claves_con_punto() -> N
 
 
 def test_parsear_ajustes_falla_rapido_ante_un_par_sin_igual_o_una_clave_mixta() -> None:
-    with pytest.raises(ValueError, match="CLAVE=VALOR"):
+    """Los tres rechazos viven en src/ y llevan el formato de ``mensaje_accionable``
+    (pulido F2, hallazgo 6 de F2.2); el orden ``a.b=2 a=1`` tampoco pisa el
+    diccionario en silencio (hallazgo 21 de F2.1)."""
+    with pytest.raises(ValueError, match=r"(?s)CLAVE=VALOR.*Qué hacer"):
         parsear_ajustes(["umbral"])
-    with pytest.raises(ValueError, match="escalar y diccionario"):
+    with pytest.raises(ValueError, match=r"(?s)escalar y diccionario.*Qué hacer"):
         parsear_ajustes(["a=1", "a.b=2"])
+    with pytest.raises(ValueError, match=r"(?s)escalar y diccionario.*Qué hacer"):
+        parsear_ajustes(["a.b=2", "a=1"])
 
 
 def test_el_script_del_banco_reutiliza_el_parseador_de_la_libreria() -> None:
@@ -351,6 +356,20 @@ def test_a_igual_fp_sobre_negativos_desempata_la_precision() -> None:
     assert cu.elegir_umbral(puntos[:2]).umbral == 0.80
 
 
+def test_con_empate_exacto_de_macro_f1_la_alternativa_es_el_elegido() -> None:
+    """Pulido F2 (hallazgo 7 de F2.2): ``max`` devolvía el primer candidato ante un
+    empate exacto y el motivo decía «habría elegido 0.75 (0.8900 frente a 0.8900) a
+    cambio de 0 FP más»: la alternativa es el propio elegido y el motivo no miente."""
+    puntos = [
+        _punto(0.75, macro_f1=0.89, fp_negativos=250, precision=0.95),
+        _punto(0.80, macro_f1=0.89, fp_negativos=250, precision=0.95),
+    ]
+    decision = cu.elegir_umbral(puntos)
+    assert decision.umbral == 0.80
+    assert decision.alternativa_mayor_macro_f1 == decision.umbral
+    assert "habría elegido" not in decision.motivo
+
+
 def test_sin_escala_la_compuerta_del_grupo_mayor_no_se_evalua_pero_se_declara() -> None:
     puntos = [_punto(0.70, grupo_mayor=None), _punto(0.80, grupo_mayor=None)]
     decision = cu.elegir_umbral(puntos)
@@ -495,7 +514,7 @@ def test_el_script_falla_si_la_corrida_no_se_midio_con_el_umbral_que_se_le_atrib
 ) -> None:
     script = cargar_script("cobertura_umbral")
     _corrida_falsa_con_umbral("mio", 0.75).guardar(tmp_path)
-    with pytest.raises(ValueError, match=r"se midió con umbral 0\.75"):
+    with pytest.raises(ValueError, match=r"(?s)se midió con umbral 0\.75.*Qué hacer"):
         script.main(["--evidencia", str(tmp_path), "--umbrales", "0.80", "--etiquetas", "0.80=mio"])
 
 
@@ -561,4 +580,10 @@ def test_la_regla_reproduce_la_decision_registrada(tabla: dict[str, Any]) -> Non
     assert decision.alternativa_mayor_macro_f1 == tabla["decision"]["alternativa_mayor_macro_f1"]
     assert sorted(d.umbral for d in decision.descartados) == sorted(
         d["umbral"] for d in tabla["decision"]["descartados"]
+    )
+    # Pulido F2 (hallazgo 8 de F2.2): también el texto registrado; si la redacción
+    # de la regla cambia, el JSON del repositorio no se queda con un motivo viejo.
+    assert decision.motivo == tabla["decision"]["motivo"]
+    assert sorted((d.umbral, d.motivo) for d in decision.descartados) == sorted(
+        (d["umbral"], d["motivo"]) for d in tabla["decision"]["descartados"]
     )

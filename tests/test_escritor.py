@@ -66,12 +66,13 @@ import hashlib
 import json
 import logging
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
+from apoyo_excel import hojas_del_libro
 from openpyxl import load_workbook
 from test_contrato_salida import _correr_linkage, _silencio, conjunto_sintetico
 
@@ -302,17 +303,6 @@ def _filas_diccionario(carpeta: Path, tabla: str) -> list[list[object]]:
     return [list(filas.columns), *filas.to_numpy(dtype=object).tolist()]
 
 
-def _hojas(ruta: Path) -> dict[str, list[list[object]]]:
-    libro = load_workbook(ruta, read_only=True, data_only=False)
-    try:
-        return {
-            hoja.title: [list(fila) for fila in hoja.iter_rows(values_only=True)]
-            for hoja in libro.worksheets
-        }
-    finally:
-        libro.close()
-
-
 def test_cada_excel_lleva_la_hoja_diccionario_de_su_tabla(
     res: ResultadoLinkage, tmp_path: Path
 ) -> None:
@@ -322,19 +312,19 @@ def test_cada_excel_lleva_la_hoja_diccionario_de_su_tabla(
     significado · origen; los nombres de columna de los datos no cambian."""
     man = escribir_resultado(res, tmp_path, "prueba", marca_tiempo=MARCA)
     for tabla, df in (("correlativa", res.correlativa), ("golden", res.golden)):
-        hojas = _hojas(man.carpeta / "excel" / f"{tabla}.xlsx")
+        hojas = hojas_del_libro(man.carpeta / "excel" / f"{tabla}.xlsx")
         assert list(hojas) == [tabla, "DICCIONARIO"], tabla
         assert hojas[tabla][0] == list(df.columns)  # los nombres canónicos, sin alias
         assert hojas["DICCIONARIO"] == _filas_diccionario(man.carpeta, tabla), tabla
         # Toda columna de la hoja de datos está explicada.
         explicadas = {fila[0] for fila in hojas["DICCIONARIO"][1:]}
         assert set(df.columns) <= explicadas, tabla
-    correl = _hojas(man.carpeta / "excel" / "correlativa.xlsx")["DICCIONARIO"]
+    correl = hojas_del_libro(man.carpeta / "excel" / "correlativa.xlsx")["DICCIONARIO"]
     por_columna = {fila[0]: fila for fila in correl[1:]}
     assert por_columna["CIUDAD"][3] == "fuente"  # columna de la fuente, con su origen
     assert por_columna["ID_REGISTRO_FUENTE"][3] == "fuente"  # renombrada por colisión
     assert por_columna["SRC"][1] == "FUENTE"  # alias en español, solo en el diccionario
-    golden = _hojas(man.carpeta / "excel" / "golden.xlsx")["DICCIONARIO"]
+    golden = hojas_del_libro(man.carpeta / "excel" / "golden.xlsx")["DICCIONARIO"]
     assert {fila[0]: fila[1] for fila in golden[1:]}["PRIMARY_SOURCE"] == "FUENTE_PRINCIPAL"
     # El manifiesto no cambia de forma: el Excel sigue siendo un artefacto, sin omitidos.
     assert {a["ruta"] for a in man.artefactos} >= {"excel/correlativa.xlsx", "excel/golden.xlsx"}
@@ -360,7 +350,7 @@ def test_hoja_diccionario_se_neutraliza_como_los_datos(tmp_path: Path) -> None:
         df, ruta, hoja="correlativa", diccionario=escritor.hoja_diccionario(dicc, "correlativa")
     )
     assert escrito == ruta
-    hojas = _hojas(ruta)
+    hojas = hojas_del_libro(ruta)
     assert list(hojas) == ["correlativa", "DICCIONARIO"]
     assert hojas["correlativa"][0] == ["'=COL", "B"]
     assert hojas["DICCIONARIO"] == [
@@ -371,13 +361,66 @@ def test_hoja_diccionario_se_neutraliza_como_los_datos(tmp_path: Path) -> None:
     # Sin diccionario (los alias de v1 de L6) el libro no cambia: una sola hoja.
     ruta2 = tmp_path / "sin.xlsx"
     escritor.escribir_excel_o_leeme(df, ruta2, hoja="datos")
-    assert list(_hojas(ruta2)) == ["datos"]
+    assert list(hojas_del_libro(ruta2)) == ["datos"]
     # Un diccionario vacío tampoco deja una hoja sin filas.
     ruta3 = tmp_path / "vacio.xlsx"
     escritor.escribir_excel_o_leeme(
         df, ruta3, hoja="datos", diccionario=escritor.hoja_diccionario(dicc, "golden")
     )
-    assert list(_hojas(ruta3)) == ["datos"]
+    assert list(hojas_del_libro(ruta3)) == ["datos"]
+
+
+def test_una_sola_regla_de_reloj_para_la_carpeta_el_manifiesto_y_created_at(
+    res: ResultadoLinkage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pulido F2 (hallazgo 25 de F2.6): el escritor usaba ``datetime.now()`` local y
+    ``flujo.importadores``/``salida.completar`` UTC: dos relojes para el mismo nombre
+    de carpeta. Ahora los tres leen ``contrato.marca_de_corrida()`` (UTC con zona)."""
+    from record_linkage.flujo import importadores
+    from record_linkage.salida import completar
+
+    real = contrato.marca_de_corrida()
+    assert real.tzinfo is not None and real.utcoffset() == timezone.utc.utcoffset(None)
+
+    fija = datetime(2026, 10, 10, 21, 30, 59, tzinfo=timezone.utc)
+    monkeypatch.setattr(contrato, "marca_de_corrida", lambda: fija)
+    man = escribir_resultado(res, tmp_path, "reloj", excel=False)
+    assert man.carpeta.name == "2026-10-10_2130_reloj"
+    assert man.marca_tiempo == "2026-10-10T21:30:59+00:00"
+    assert importadores._marca_de_corrida() == "2026-10-10 21:30:59"
+    # Ninguno de los tres lee el reloj por su cuenta.
+    for modulo in (escritor, importadores, completar):
+        fuente = Path(modulo.__file__).read_text(encoding="utf-8")
+        assert "datetime.now(" not in fuente, modulo.__name__
+        assert "contrato.marca_de_corrida()" in fuente, modulo.__name__
+
+
+def test_escribir_excel_o_leeme_rechaza_una_hoja_de_datos_llamada_diccionario(
+    tmp_path: Path,
+) -> None:
+    """Pulido F2 (hallazgo 2 de F2.16): con ``diccionario`` la hoja ``DICCIONARIO`` va
+    al final; si la hoja de datos se llama igual, xlsxwriter lanzaba un
+    ``DuplicateWorksheetName`` crudo. Ahora falla antes de abrir el libro, con qué
+    hacer, y no deja archivo."""
+    df = pd.DataFrame({"A": [1]})
+    dicc = pd.DataFrame(
+        {
+            "tabla": ["x"],
+            "columna": ["A"],
+            "significado": ["Una columna."],
+            "origen": ["fuente"],
+            "alias_es": ["A"],
+        }
+    )
+    ruta = tmp_path / "x.xlsx"
+    with pytest.raises(ValueError, match=r"(?s)DICCIONARIO.*Qué hacer"):
+        escritor.escribir_excel_o_leeme(
+            df, ruta, hoja="diccionario", diccionario=escritor.hoja_diccionario(dicc, "x")
+        )
+    assert not ruta.exists()
+    # Sin diccionario (o vacío) ese nombre de hoja sigue siendo válido.
+    escritor.escribir_excel_o_leeme(df, ruta, hoja="DICCIONARIO")
+    assert list(hojas_del_libro(ruta)) == ["DICCIONARIO"]
 
 
 def test_hoja_diccionario_selecciona_por_tabla_o_por_columnas() -> None:
@@ -512,7 +555,10 @@ def test_sin_configuracion_lo_declara_en_omitidos(res: ResultadoLinkage, tmp_pat
     assert [o["artefacto"] for o in omitidos] == ["parametros.perfil"]
     motivo = omitidos[0]["motivo"]
     assert "no trae la configuración" in motivo
-    assert "linkage(carpeta_salida=" in motivo and "parametros_motor(config).a_dict()" in motivo
+    # Pulido F2 (hallazgo 23 de F2.7): dedupe()/link() publican por la misma
+    # pendiente; el remedio no puede ser «use linkage(carpeta_salida=...)».
+    assert "linkage(" not in motivo
+    assert "parametros.llamada" in motivo and "parametros_motor(config).a_dict()" in motivo
     # Lo mismo que se escribió se vuelve a leer.
     texto = json.loads((man.carpeta / "manifest.json").read_text(encoding="utf-8"))
     assert texto["parametros"]["perfil"] is None
@@ -610,8 +656,6 @@ def test_columna_de_la_fuente_con_listas_se_publica_con_excel_como_texto(
     assert man.verificar() == []
     assert "excel/correlativa.xlsx" in {a["ruta"] for a in man.artefactos}
     assert [o["artefacto"] for o in man.omitidos] == []
-    from openpyxl import load_workbook
-
     libro = load_workbook(man.carpeta / "excel" / "correlativa.xlsx", read_only=True)
     try:
         hoja = libro["correlativa"]

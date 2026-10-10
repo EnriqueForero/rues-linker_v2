@@ -69,6 +69,7 @@ from record_linkage.identidad.estable import (
     cargar_corrida_anterior,
     crosswalk_de_corrida,
     exigir_fuentes_sin_separador,
+    exigir_nombres_sin_separador,
     localizar_crosswalk,
 )
 from record_linkage.pipeline.errores import (
@@ -659,6 +660,33 @@ def test_validar_rechaza_un_crosswalk_que_no_coincide_con_la_correlativa() -> No
     sin_registros = base.drop(columns=[COLUMNA_REGISTROS])
     fallos = _resultado_con_crosswalk(grupos, identidad, sin_registros).validar().fallos
     assert any("entidades_ids: faltan" in f for f in fallos), fallos
+
+
+def test_config_cruce_rechaza_un_nombre_de_fuente_con_separador_al_construirse(
+    tmp_path: Path,
+) -> None:
+    """Pulido F2 (hallazgo 13 de F2.4): un ``SourceSpec.name`` con ``|`` solo lo
+    rechazaba ``exigir_fuentes_sin_separador`` dentro de ``linkage()``, después de la
+    ingesta (lo caro en DuckDB). Ahora ``ConfigCruce`` falla al construirse, con la
+    misma excepción y el mismo texto, y sin crear el workspace."""
+    from record_linkage.flujo.cruce import ConfigCruce
+    from record_linkage.ingestion import ColumnType, SourceSpec
+
+    fuente = tmp_path / "f.csv"
+    fuente.write_text("NIT,RAZON_SOCIAL\n900111222,ACME\n", encoding="utf-8")
+    spec = SourceSpec(
+        name="A|B",
+        path=fuente,
+        column_mapping={"NIT": "NIT", "RAZON_SOCIAL": "RAZON_SOCIAL"},
+        column_types={"NIT": ColumnType.IDENTIFIER},
+    )
+    with pytest.raises(IdRegistroInvalidoError, match=r"(?s)'A\|B'.*Qué hacer"):
+        ConfigCruce(fuentes=[spec], workspace=tmp_path / "ws")
+    assert not (tmp_path / "ws").exists()
+    # La regla es una: la función pública que linkage() también usa.
+    with pytest.raises(IdRegistroInvalidoError, match=r"'A\|B'"):
+        exigir_nombres_sin_separador(["OK", "A|B"])
+    exigir_nombres_sin_separador(["OK", "OTRA"])
 
 
 def test_config_cruce_valida_corrida_anterior(tmp_path: Path) -> None:

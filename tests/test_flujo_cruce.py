@@ -34,7 +34,11 @@ from record_linkage.flujo import (
 from record_linkage.flujo.reportes import reportar_cruce_por_fuente
 from record_linkage.flujo.resultados_disco import DIVERGENCIA_METODO_UNION
 from record_linkage.ingestion import DuckDBIngestionSettings
-from record_linkage.pipeline.errores import ContratoSalidaError, EscrituraSalidaError
+from record_linkage.pipeline.errores import (
+    ContratoSalidaError,
+    CorridaAnteriorError,
+    EscrituraSalidaError,
+)
 from record_linkage.resultado import ResultadoLinkage
 from record_linkage.salida.completar import bases_del_motor, grupos_con_bases_distintas
 
@@ -1214,7 +1218,12 @@ def test_corrida_anterior_exige_el_motor_pandas_y_lo_dice(fuentes_csv, tmp_path:
     antes de cargar nada."""
     primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
     for modo in ("disco", "dataframe"):
-        with pytest.raises(ValueError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
+        # CorridaAnteriorError (ADR-0012), no un ValueError genérico: quien
+        # capture ese error para tratar el parámetro ve también este caso
+        # (pulido F2, hallazgo 31 de F2.18).
+        with pytest.raises(
+            CorridaAnteriorError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"
+        ):
             config_cruce(
                 fuentes_csv,
                 tmp_path / modo,
@@ -1229,7 +1238,7 @@ def test_corrida_anterior_exige_el_motor_pandas_y_lo_dice(fuentes_csv, tmp_path:
         umbral_filas_disco=1,  # fuerza DuckDB al resolver
         corrida_anterior=primera.carpeta,
     )
-    with pytest.raises(ValueError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
+    with pytest.raises(CorridaAnteriorError, match=r"(?s)corrida_anterior.*motor_ingesta='pandas'"):
         ejecutar_cruce(auto)
     assert not (tmp_path / "auto" / "trabajo").exists() or not any(
         (tmp_path / "auto" / "trabajo").rglob("*.parquet")
@@ -1285,6 +1294,39 @@ def test_cruce_pandas_publica_el_crosswalk_con_sus_retiros(fuentes_csv, tmp_path
     # leer_resultado devuelve texto con nan (parquet → pandas); el contenido es el mismo.
     pd.testing.assert_frame_equal(leido.entidades_ids, segunda.entidades_ids, check_dtype=False)
     assert leido.validar().ok, leido.validar().fallos
+
+
+def test_el_smoke_test_tambien_recibe_corrida_anterior(
+    fuentes_csv, tmp_path: Path, monkeypatch
+) -> None:
+    """Pulido F2 (hallazgo 14 de F2.4): el smoke existe para fallar temprano con una
+    muestra; si solo la corrida total heredaba, un crosswalk que tropieza en
+    ``_heredar`` se descubría tras la corrida completa. Las DOS llamadas a
+    ``linkage()`` reciben ``corrida_anterior`` cuando ``ConfigCruce`` lo trae."""
+    import record_linkage.flujo.cruce as modulo
+
+    primera = ejecutar_cruce(config_cruce(fuentes_csv, tmp_path / "p1", nombre="primera"))
+    llamadas: list[dict] = []
+    linkage_real = modulo.linkage
+
+    def linkage_espia(sources, **kwargs):
+        llamadas.append(kwargs)
+        return linkage_real(sources, **kwargs)
+
+    monkeypatch.setattr(modulo, "linkage", linkage_espia)
+    segunda = ejecutar_cruce(
+        config_cruce(
+            fuentes_csv,
+            tmp_path / "p2",
+            nombre="segunda",
+            filas_smoke=1,
+            corrida_anterior=primera.carpeta,
+        )
+    )
+    assert segunda.validar().ok, segunda.validar().fallos
+    assert len(llamadas) == 2
+    assert [k["corrida_anterior"] for k in llamadas] == [primera.carpeta, primera.carpeta]
+    assert llamadas[0]["work_dir"].endswith("_smoke")
 
 
 def test_una_generacion_de_disco_sirve_como_corrida_anterior(fuentes_csv, tmp_path: Path) -> None:

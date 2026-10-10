@@ -285,7 +285,7 @@ def _expand_exact_correlative(
 
 
 def _trabajo_en_pendiente(
-    carpeta_salida: Path | None, nombre: str, dir_trabajo: str | None
+    carpeta_salida: str | Path | None, nombre: str, dir_trabajo: str | None
 ) -> str | None:
     """Tramo común de ``linkage``/``dedupe``/``link`` ANTES de correr (F2.7).
 
@@ -305,7 +305,7 @@ def _trabajo_en_pendiente(
     return dir_trabajo
 
 
-def _publicar(res: ResultadoLinkage, carpeta_salida: Path | None, nombre: str) -> None:
+def _publicar(res: ResultadoLinkage, carpeta_salida: str | Path | None, nombre: str) -> None:
     """Tramo común DESPUÉS de correr (F2.7): escribe la carpeta del estándar.
 
     Única puerta de ``api`` al escritor (``exporters.escritor.escribir_resultado``).
@@ -341,7 +341,7 @@ def linkage(
     collapse_exact_duplicates: bool = False,
     consume_sources: bool = False,
     col_id: str | None = None,
-    carpeta_salida: Path | None = None,
+    carpeta_salida: str | Path | None = None,
     nombre: str = "linkage",
     corrida_anterior: Path | str | None = None,
 ) -> ResultadoLinkage:
@@ -412,7 +412,10 @@ def linkage(
             contrato (tras el motor); un valor que contenga ``|`` —o un
             nombre de fuente que lo contenga— falla ANTES de L1 con
             ``IdRegistroInvalidoError`` y no deja ``work_dir`` (``|`` es el
-            separador de ``REGISTROS`` en ``entidades_ids.parquet``).
+            separador de ``REGISTROS`` en ``entidades_ids.parquet``); se
+            rechaza aunque la columna no resulte única en esa fuente (el
+            fallback ``<SRC>-F<fila>`` no se evalúa ahí: la unicidad la decide
+            ``completar`` tras el motor), y el mensaje ofrece ``col_id=None``.
         carpeta_salida: si se da, al terminar se escribe la carpeta del
             estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
             (``exporters.escritor.escribir_resultado``: parquet, csv,
@@ -943,7 +946,7 @@ def dedupe(
     profile_sin_nit: str | None = None,
     output_dir: str | None = None,
     col_id: str | None = None,
-    carpeta_salida: Path | None = None,
+    carpeta_salida: str | Path | None = None,
     nombre: str = "dedupe",
 ) -> ResultadoLinkage:
     """Deduplica UNA tabla por la ruta canónica de producción (F1.1).
@@ -1131,7 +1134,7 @@ def link(
     skip_reporting: bool | None = None,
     collapse_exact_duplicates: bool = False,
     col_id: str | None = None,
-    carpeta_salida: Path | None = None,
+    carpeta_salida: str | Path | None = None,
     nombre: str = "link",
 ) -> ResultadoLinkage:
     """Cruza DOS tablas (record linkage A↔B) sobre el Orchestrator (F1.1).

@@ -78,7 +78,7 @@ Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -104,6 +104,7 @@ __all__ = [
     "cargar_corrida_anterior",
     "crosswalk_de_corrida",
     "exigir_fuentes_sin_separador",
+    "exigir_nombres_sin_separador",
     "localizar_crosswalk",
 ]
 
@@ -368,6 +369,24 @@ def _ejemplos(valores: pd.Series) -> str:
     return ", ".join(repr(v) for v in valores.astype("string").head(_EJEMPLOS_EN_ERROR))
 
 
+def exigir_nombres_sin_separador(nombres: Iterable[str]) -> None:
+    """Falla si un nombre de fuente contiene ``|`` (la mitad «nombres» de la regla).
+
+    La llama :func:`exigir_fuentes_sin_separador` antes de L1 y
+    ``flujo.cruce.ConfigCruce`` al construirse (pulido F2, hallazgo 13 de
+    F2.4): con DuckDB la ingesta es lo caro y un ``SourceSpec.name`` con ``|``
+    se descubría después de ella. Misma excepción y mismo texto en los dos
+    sitios.
+    """
+    con_sep = [nombre for nombre in nombres if SEPARADOR_REGISTROS in str(nombre)]
+    if con_sep:
+        lista = ", ".join(repr(n) for n in con_sep)
+        raise _error_separador(
+            f"el nombre de fuente {lista} contiene {SEPARADOR_REGISTROS!r} "
+            f"(sources= / nombre_a= / nombre_b= / SourceSpec.name)."
+        )
+
+
 def exigir_fuentes_sin_separador(fuentes: Mapping[str, pd.DataFrame], col_id: str | None) -> None:
     """Falla ANTES de L1 si un nombre de fuente o un valor de ``col_id`` contiene ``|``.
 
@@ -375,16 +394,13 @@ def exigir_fuentes_sin_separador(fuentes: Mapping[str, pd.DataFrame], col_id: st
     las fuentes ya materializadas, antes de construir el motor: es un dato de
     entrada y la corrida entera no debe perderse al cierre por él. Solo se mira
     ``col_id`` en las fuentes que traen esa columna (donde no está,
-    ``salida.completar`` usa ``<SRC>-F<fila>`` y lo dice en el manifiesto).
+    ``salida.completar`` usa ``<SRC>-F<fila>`` y lo dice en el manifiesto), y
+    se rechaza aunque la columna no resulte única en esa fuente: el fallback
+    ``<SRC>-F<fila>`` no se evalúa aquí (la unicidad la decide ``completar``
+    tras el motor), así que el mensaje ofrece ``col_id=None`` o otra columna.
     Vectorizado por fuente.
     """
-    con_sep = [nombre for nombre in fuentes if SEPARADOR_REGISTROS in str(nombre)]
-    if con_sep:
-        lista = ", ".join(repr(n) for n in con_sep)
-        raise _error_separador(
-            f"el nombre de fuente {lista} contiene {SEPARADOR_REGISTROS!r} "
-            f"(sources= / nombre_a= / nombre_b=)."
-        )
+    exigir_nombres_sin_separador(fuentes)
     if col_id is None:
         return
     for nombre, df in fuentes.items():

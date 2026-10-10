@@ -149,6 +149,48 @@ def test_sin_grupos_que_examinar_devuelve_los_mismos_grupos_y_un_reporte_vacio()
     assert "sin grupos" in reporte.resumen()
 
 
+def test_un_grupo_examinado_sin_corte_reporta_el_grupo_mayor_de_despues() -> None:
+    """Pulido F2 (hallazgo 18 de F2.1): el retorno temprano «nada que partir» devolvía
+    el reporte a medio construir (grupo mayor 3 → 0 filas) y eso iba al log y al
+    manifiesto."""
+    df = pd.DataFrame(
+        {
+            "ID_GRUPO": [1, 1, 1],
+            "NOMBRE_LIMPIO": ["ANDARIEGA NORTE", "ANDARIEGA SUR", "ANDARIEGA ESTE"],
+            "NIT_BASE": ["", "", ""],
+            "NIT_VALID": [0, 0, 0],
+        }
+    )
+    salida, reporte = aplicar_cobertura_sin_identificador(
+        df, config=_config(), comparador=ComparadorPrefijo()
+    )
+    assert salida["ID_GRUPO"].tolist() == [1, 1, 1]
+    assert reporte.grupos_examinados == 1 and reporte.grupos_partidos == 0
+    assert reporte.grupo_mayor_despues == reporte.grupo_mayor_antes == 3
+    assert "→ 0 filas" not in reporte.resumen()
+
+
+def test_una_fila_sin_nombre_queda_en_estrella_propia_y_el_reporte_la_cuenta() -> None:
+    """Pulido F2 (hallazgo 19 de F2.1): la conducta declarada en ADR-0011 («lo que no
+    se resolvió») queda fijada: la fila sin nombre no alcanza a ningún líder y se
+    queda sola (dejar sin unir), y el reporte dice cuántas hubo."""
+    df = pd.DataFrame(
+        {
+            "ID_GRUPO": [1, 1, 1],
+            "NOMBRE_LIMPIO": ["ANDARIEGA COMERCIAL", "ANDARIEGA COMERCIAL", ""],
+            "NIT_BASE": ["", "", ""],
+            "NIT_VALID": [0, 0, 0],
+        }
+    )
+    salida, reporte = aplicar_cobertura_sin_identificador(
+        df, config=_config(), comparador=ComparadorPrefijo()
+    )
+    assert salida["ID_GRUPO"].tolist() == [1, 1, 2]
+    assert reporte.grupos_partidos == 1
+    assert reporte.filas_sin_nombre == 1
+    assert "filas_sin_nombre" in reporte.como_dict()
+
+
 def test_exige_las_columnas_con_mensaje_accionable() -> None:
     with pytest.raises(KeyError, match="NOMBRE_LIMPIO"):
         aplicar_cobertura_sin_identificador(
@@ -204,6 +246,7 @@ def test_desde_perfil_acepta_ausente_booleano_y_diccionario() -> None:
         {"activa": True, "regla_lider": "mediana"},
         {"umbral": 1.5},
         {"umbral": 0.0},
+        {"umbral": True},  # bool es int: se aceptaba como 1,0 (pulido F2, hallazgo 20)
         "0.8",
     ],
 )
@@ -377,6 +420,12 @@ def test_banco_parsea_ajustes_anidados_con_punto() -> None:
     }
     with pytest.raises(ValueError, match="escalar y diccionario"):
         banco.parsear_ajustes(["a=1", "a.b=2"])
+    # El orden inverso pisaba el diccionario en silencio ({'a': 1}); pulido F2,
+    # hallazgo 21 de F2.1.
+    with pytest.raises(ValueError, match="escalar y diccionario"):
+        banco.parsear_ajustes(["a.b=2", "a=1"])
     # Desde la línea de comandos el error sigue siendo un SystemExit legible.
     with pytest.raises(SystemExit):
         banco.main(["--etiqueta", "x", "--ajuste", "a=1", "a.b=2"])
+    with pytest.raises(SystemExit):
+        banco.main(["--etiqueta", "x", "--ajuste", "a.b=2", "a=1"])

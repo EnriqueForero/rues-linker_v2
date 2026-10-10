@@ -38,7 +38,7 @@ etiquetar. Regla 3 del CLAUDE.md: una regla se escribe una vez.
    mismos ids. El contrato no cambia (`ID_GRUPO` sigue siendo `int64`;
    versión 1.0).
 
-3. **Dónde se aplica (tres veces, una función):** en L4 (el motor etiqueta
+3. **Dónde se aplica (hasta cuatro veces, una función):** en L4 (el motor etiqueta
    así desde `clusters.parquet`); **al cierre de L5** (`orchestrator._run_L5`,
    después del cannot-link, que renumera con `max+1` por orden de aparición, y
    de la consolidación por NIT, que fusiona), con la misma clave que L4

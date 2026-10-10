@@ -30,6 +30,7 @@ from .ground_truth import ConfigGroundTruth, GroundTruthGenerator
 from .pairwise import (
     MetricasParesEtiquetados,
     PairwiseMetrics,
+    esta_revisado,
     evaluar_pares,
     evaluar_pares_etiquetados,
     validar_etiquetas,
@@ -42,6 +43,7 @@ __all__ = [
     "GroundTruthGenerator",
     "MetricasParesEtiquetados",
     "PairwiseMetrics",
+    "esta_revisado",
     "evaluar_pares",
     "evaluar_pares_etiquetados",
     "graficar_convergencia",

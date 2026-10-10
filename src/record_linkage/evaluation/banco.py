@@ -44,6 +44,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ..pipeline.errores import mensaje_accionable
 from ..pipeline.metricas import RUTA_CANDIDATES_DB, RUTA_SCORED_DB, contar_filas_sqlite
 
 __all__ = [
@@ -638,7 +639,10 @@ def silenciar_pipeline() -> Iterator[None]:
     qué callar. Bajar el nivel de los registradores conocidos no basta: cada
     componente construye su `CustomLogger` al vuelo, le fija INFO y corta la
     propagación, así que lo que de verdad calla es `logging.disable(INFO)`,
-    que se restaura al salir. Los WARNING y superiores siguen pasando.
+    que se restaura al salir. Los WARNING y superiores siguen pasando, salvo
+    que el proceso ya los tuviera apagados: el tope queda en
+    ``max(tope previo, INFO)``, porque un contexto cuyo contrato es «callar»
+    no destapa nada (pulido F2, hallazgo 16 de F2.13).
     """
     import logging
 
@@ -648,7 +652,7 @@ def silenciar_pipeline() -> Iterator[None]:
         niveles[nombre] = registrador.level
         registrador.setLevel(logging.WARNING)
     tope_anterior = logging.root.manager.disable
-    logging.disable(logging.INFO)
+    logging.disable(max(tope_anterior, logging.INFO))
     try:
         yield
     finally:
@@ -840,23 +844,46 @@ def parsear_ajustes(pares: Sequence[str]) -> dict[str, object]:
 
     Raises:
         ValueError: ante un par sin ``=`` o una clave usada a la vez como
-            escalar y como diccionario.
+            escalar y como diccionario, en cualquier orden (``a=1 a.b=2`` y
+            ``a.b=2 a=1``: la segunda forma pisaba el diccionario en silencio
+            hasta el pulido de F2). Mensaje con qué pasó · por qué importa ·
+            qué hacer.
     """
     salida: dict[str, object] = {}
     for par in pares:
         if "=" not in par:
-            raise ValueError(f"--ajuste espera CLAVE=VALOR, recibió {par!r}")
+            raise ValueError(
+                mensaje_accionable(
+                    f"--ajuste espera CLAVE=VALOR y recibió {par!r}.",
+                    "sin el signo igual no se sabe qué perilla se quiere mover ni a qué valor.",
+                    "escriba CLAVE=VALOR, p. ej. cobertura_sin_identificador.umbral=0.75 "
+                    "o lsh_threshold=0.4.",
+                )
+            )
         clave, _, bruto = par.partition("=")
         valor = _valor_ajuste(bruto)
         if "." not in clave:
+            if isinstance(salida.get(clave), dict):
+                raise _error_clave_mixta(clave, clave, salida[clave])
             salida[clave] = valor
             continue
         padre, _, hija = clave.partition(".")
         anidado = salida.setdefault(padre, {})
         if not isinstance(anidado, dict):
-            raise ValueError(
-                f"--ajuste {clave!r}: '{padre}' ya recibió un valor escalar ({anidado!r}); "
-                f"no puede ser a la vez escalar y diccionario."
-            )
+            raise _error_clave_mixta(clave, padre, anidado)
         anidado[hija] = valor
     return salida
+
+
+def _error_clave_mixta(clave: str, padre: str, previo: object) -> ValueError:
+    """Una clave de ``--ajuste`` no puede ser a la vez escalar y diccionario."""
+    return ValueError(
+        mensaje_accionable(
+            f"--ajuste {clave!r}: '{padre}' ya recibió {previo!r} y no puede ser a la vez "
+            "escalar y diccionario.",
+            "uno de los dos valores se perdería en silencio y la corrida se mediría con "
+            "una perilla distinta de la que dice la etiqueta.",
+            f"use solo '{padre}=<valor>' (apaga o fija la perilla entera) o solo "
+            f"'{padre}.<clave>=<valor>' (una clave anidada), no ambas.",
+        )
+    )

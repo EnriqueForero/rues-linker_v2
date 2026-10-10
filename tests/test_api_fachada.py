@@ -184,8 +184,12 @@ def test_dedupe_con_carpeta_salida_escribe_el_estandar(tmp_path: Path) -> None:
     # Dónde se escribe no es un parámetro del motor: no entra en hash_parametros
     # (igual que en linkage()); el nombre va en la cabecera del manifiesto.
     assert "carpeta_salida" not in man["parametros"]["llamada"]
-    omitidos = {o["artefacto"] for o in man["omitidos"]}
+    omitidos = {o["artefacto"]: o["motivo"] for o in man["omitidos"]}
     assert "golden.parquet" in omitidos
+    # Pulido F2 (hallazgo 23 de F2.7): el motivo no remite a linkage(): dedupe()
+    # no pasa por el Orchestrator y sus perfiles están en parametros.llamada.
+    assert "linkage(" not in omitidos["parametros.perfil"]
+    assert "parametros.llamada" in omitidos["parametros.perfil"]
 
     leido = leer_resultado(carpeta)
     assert leido.validar().ok
