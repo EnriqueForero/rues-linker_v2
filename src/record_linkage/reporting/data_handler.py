@@ -173,10 +173,15 @@ class DataHandler:
 
     def _basic_cleanup(self, df: pd.DataFrame) -> pd.DataFrame:
         """Limpieza básica de datos."""
-        # Convertir a string
+        # Convertir a string. El nulo se materializa como "" ANTES de convertir:
+        # en pandas 2, ``Series(["a", pd.NA], dtype="string").astype(str)`` deja
+        # el literal "<NA>", que el reemplazo de más abajo no reconoce, y una
+        # razón social vacía pasaría a llamarse «<NA>» (un NIT vacío, a ser el
+        # texto «<NA>» en el entregable). pandas 3 conserva el nulo. El "" vuelve
+        # a ser nulo en el reemplazo: misma semántica en las dos versiones.
         for col in ["NIT", "RAZON_SOCIAL"]:
             if col in df.columns:
-                df[col] = df[col].astype(str)
+                df[col] = df[col].where(df[col].notna(), "").astype(str)
 
         # Eliminar espacios extra
         # (v2.1.0) Explicitar `object` y `str` separadamente para pandas 3.0:
