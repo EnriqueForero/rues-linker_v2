@@ -38,6 +38,7 @@ from ..golden.columnas_finales import (
     faltantes,
     faltantes_en,
 )
+from ..identidad.estable import cargar_corrida_anterior
 from ..ingestion import (
     DuckDBCompactionResult,
     DuckDBIngestionSettings,
@@ -148,6 +149,9 @@ class ConfigCruce:
             sigue al motor resuelto: disco con DuckDB, DataFrame con pandas.
         preservar_payload: conserva fuera del matcher las columnas no usadas
             para comparar y las re-adjunta por fila física al publicar.
+        corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
+            de la corrida previa desde la que los grupos sin identificador
+            heredan su ``ID_ENTIDAD`` (F2.4). Se valida al construirse.
     """
 
     fuentes: list[SourceSpec]
@@ -181,6 +185,8 @@ class ConfigCruce:
     #: por mapear DEPARTAMENTO los representantes pasaron de 19.407 a 32.745.
     #: Solo aplica al motor de ingesta pandas (DuckDB usa ``preservar_payload``).
     separar_columnas_extra: bool = True
+    #: F2.4 — herencia de ``ID_ENTIDAD`` desde el crosswalk de la corrida previa.
+    corrida_anterior: Path | str | None = None
 
     def __post_init__(self) -> None:
         if not self.fuentes:
@@ -239,6 +245,11 @@ class ConfigCruce:
             )
         if not isinstance(self.preservar_payload, bool):
             raise TypeError("preservar_payload debe ser bool.")
+        if self.corrida_anterior is not None:
+            # Falla al construirse, no tras cuarenta minutos de corrida: lee y
+            # valida el crosswalk (existe, trae REGISTROS, ids únicos), no solo
+            # la ruta. Es un parquet pequeño; linkage() lo vuelve a leer.
+            cargar_corrida_anterior(Path(self.corrida_anterior))
         if self.perfil_multicampo is not None and not isinstance(
             self.perfil_multicampo, (str, MatchingProfile)
         ):
@@ -2197,6 +2208,7 @@ def _ejecutar_cruce_medido(
             skip_reporting=True,
             collapse_exact_duplicates=(config.colapsar_duplicados_exactos and not compactaciones),
             consume_sources=True,
+            corrida_anterior=config.corrida_anterior,
         )
     segundos_link = time.time() - inicio_link
     # F1.9: linkage() devuelve ResultadoLinkage (contrato 1.0); las claves del
@@ -2345,6 +2357,9 @@ def _ejecutar_cruce_medido(
             "motor_ingesta": config.motor_ingesta,
             "modo_resultado": config.modo_resultado,
             "preservar_payload": config.preservar_payload,
+            "corrida_anterior": (
+                str(config.corrida_anterior) if config.corrida_anterior is not None else None
+            ),
             "duckdb_settings": (
                 asdict(config.duckdb_settings) if config.duckdb_settings is not None else None
             ),

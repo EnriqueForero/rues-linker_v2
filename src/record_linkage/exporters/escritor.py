@@ -9,7 +9,7 @@ forma exacta del estándar de salida (``ESTANDAR_SALIDA``)::
     ├── correlativa.parquet        una fila por registro de entrada (LA tabla)
     ├── golden.parquet             una fila por entidad (se omite si res.golden es None)
     ├── enlaces.parquet            solo vinculación (si res.enlaces no es None)
-    ├── entidades_ids.parquet      crosswalk ID_ENTIDAD ↔ ID_GRUPO de esta corrida
+    ├── entidades_ids.parquet      crosswalk ID_ENTIDAD ↔ ID_GRUPO (+ REGISTROS y retiros, F2.4)
     ├── revision.csv               pares por decidir (forma del archivo de decisiones)
     ├── diccionario.csv            tabla · columna · tipo · significado · origen · alias_es
     ├── manifest.json              contrato, versión, huellas, parámetros, conteos, métricas…
@@ -126,6 +126,7 @@ import pyarrow.parquet as pq
 from .. import contrato
 from ..config.auditoria import ParametrosMotor
 from ..evaluation.banco import _fases_desde_manifiesto, _rss_por_fase
+from ..identidad.estable import crosswalk_de_corrida
 from ..pipeline.errores import EscrituraSalidaError, mensaje_accionable
 from ..pipeline.metricas import metricas_de_corrida
 from ..resultado import ResultadoLinkage
@@ -811,21 +812,17 @@ def _relativizar_rutas(valor: Any, base: Path) -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _entidades_ids(correl: pd.DataFrame) -> pd.DataFrame:
-    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (``RETIRADO_EN`` vacío)."""
-    grupos = (
-        correl.groupby("ID_GRUPO", sort=True)
-        .agg(ID_ENTIDAD=("ID_ENTIDAD", "first"), N_REGISTROS=("ID_ENTIDAD", "size"))
-        .reset_index()
-    )
-    return pd.DataFrame(
-        {
-            "ID_ENTIDAD": grupos["ID_ENTIDAD"].astype("string"),
-            "ID_GRUPO": grupos["ID_GRUPO"].astype("int64"),
-            "N_REGISTROS": grupos["N_REGISTROS"].astype("int64"),
-            "RETIRADO_EN": pd.Series(pd.NA, index=grupos.index, dtype="string"),
-        }
-    )
+def _entidades_ids(res: ResultadoLinkage) -> pd.DataFrame:
+    """Crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de esta corrida (F2.4).
+
+    El que calculó ``identidad.estable`` (con ``REGISTROS`` y los retiros) si
+    el resultado lo trae; si no (resultado construido a mano o leído de una
+    carpeta sin él), se deriva de la correlativa con la misma función, sin
+    retiros. Una regla, un sitio.
+    """
+    if res.entidades_ids is not None:
+        return res.entidades_ids
+    return crosswalk_de_corrida(res.correlativa)
 
 
 def _conteos(res: ResultadoLinkage) -> dict[str, Any]:
@@ -1113,7 +1110,7 @@ def _escribir_en(
         _escribir_parquet(res.enlaces, ruta, contrato.ENLACES)
         _registrar(artefactos, carpeta, ruta)
 
-    entidades_ids = _entidades_ids(res.correlativa)
+    entidades_ids = _entidades_ids(res)
     ruta = carpeta / "entidades_ids.parquet"
     _escribir_parquet(entidades_ids, ruta, contrato.ENTIDADES_IDS)
     _registrar(artefactos, carpeta, ruta)
@@ -1336,6 +1333,19 @@ def _aplicar_alias(df: pd.DataFrame, diccionario: pd.DataFrame, tabla: str, alia
         df.rename(columns=mapa, inplace=True)
 
 
+def _leer_entidades_ids(ruta: Path) -> pd.DataFrame:
+    """Lee el crosswalk con ``ID_GRUPO`` como ``Int64`` (nulo donde no aplica).
+
+    ``pd.read_parquet`` devuelve ``float64`` si la columna trae algún nulo e
+    ``int64`` si no: el mismo archivo cambiaría de tipo según su contenido.
+    Mismo tipo que ``identidad.estable.cargar_corrida_anterior``.
+    """
+    ids = pd.read_parquet(ruta)
+    if "ID_GRUPO" in ids.columns:
+        ids["ID_GRUPO"] = ids["ID_GRUPO"].astype("Int64")
+    return ids
+
+
 def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
     """Lee una carpeta del estándar y devuelve el ``ResultadoLinkage``.
 
@@ -1422,6 +1432,8 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         **man.metricas,
         **man.conteos,
     }
+    ruta_ids = carpeta / "entidades_ids.parquet"
+    entidades_ids = _leer_entidades_ids(ruta_ids) if ruta_ids.is_file() else None
     return ResultadoLinkage(
         correlativa=correlativa,
         golden=golden,
@@ -1431,4 +1443,5 @@ def leer_resultado(ruta: Path, alias: str | None = None) -> ResultadoLinkage:
         revision=revision,
         diccionario=diccionario,
         dir_trabajo=dir_trabajo,
+        entidades_ids=entidades_ids,
     )

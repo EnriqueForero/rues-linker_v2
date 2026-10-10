@@ -343,6 +343,7 @@ def linkage(
     col_id: str | None = None,
     carpeta_salida: Path | None = None,
     nombre: str = "linkage",
+    corrida_anterior: Path | str | None = None,
 ) -> ResultadoLinkage:
     """Ejecuta deduplicación + record linkage multi-fuente en una sola llamada.
 
@@ -407,7 +408,11 @@ def linkage(
             primaria). Si existe y es única y no vacía en una fuente,
             ``ID_REGISTRO`` = ``<SRC>-<valor>`` en esa fuente; si no (o si es
             None), ``<SRC>-F<ORIGINAL_INDEX>`` y el manifiesto dice por qué.
-            Un nombre que no existe en ninguna fuente falla de inmediato.
+            Un nombre que no existe en ninguna fuente falla al completar el
+            contrato (tras el motor); un valor que contenga ``|`` —o un
+            nombre de fuente que lo contenga— falla ANTES de L1 con
+            ``IdRegistroInvalidoError`` y no deja ``work_dir`` (``|`` es el
+            separador de ``REGISTROS`` en ``entidades_ids.parquet``).
         carpeta_salida: si se da, al terminar se escribe la carpeta del
             estándar ``<carpeta_salida>/<AAAA-MM-DD_HHMM>_<nombre>/``
             (``exporters.escritor.escribir_resultado``: parquet, csv,
@@ -421,6 +426,14 @@ def linkage(
             ``VERSION_RETIRO_ALIAS_V1``).
         nombre: cierra el nombre de la carpeta del estándar; un nombre simple
             (sin separadores). Default ``"linkage"``.
+        corrida_anterior: carpeta del estándar (o su ``entidades_ids.parquet``)
+            de la corrida previa desde la que los grupos SIN identificador
+            heredan su ``ID_ENTIDAD`` (``ENT-…``) por mayor solapamiento de
+            ``ID_REGISTRO`` (``identidad.estable``, F2.4, ADR-0012). Se valida
+            ANTES de L1 (``CorridaAnteriorError`` si no sirve). El manifiesto
+            declara la ruta y la huella usadas (``completar.id_entidad.herencia``)
+            y el crosswalk nuevo lleva los retiros (``RETIRADO_EN``). Sin ella
+            los ``ENT-…`` son nuevos y deterministas por contenido.
 
     Returns:
         ``ResultadoLinkage`` (contrato 1.0, ``record_linkage.contrato``), ya
@@ -473,10 +486,13 @@ def linkage(
 
     from .config.auditoria import parametros_motor
     from .config.profiles import crear_config_orchestrator
+    from .identidad.estable import cargar_corrida_anterior, exigir_fuentes_sin_separador
     from .pipeline.orchestrator import Orchestrator
 
     if consume_sources and not isinstance(sources, dict):
         raise TypeError("consume_sources=True requiere sources como dict mutable")
+    # Falla AHORA si la corrida anterior no sirve para heredar, no tras L1…L5.
+    anterior = cargar_corrida_anterior(corrida_anterior) if corrida_anterior is not None else None
     work_dir = _trabajo_en_pendiente(carpeta_salida, nombre, work_dir)
     owned_sources = sources if consume_sources else None
 
@@ -487,6 +503,9 @@ def linkage(
         col_ciudad=col_ciudad,
         extra_features=extra_features,
     )
+    # Falla AHORA si un nombre de fuente o un valor de col_id lleva '|' (no
+    # cabría en REGISTROS del crosswalk), no al cierre tras L1…L5 (F2.4).
+    exigir_fuentes_sin_separador(sources, col_id)
 
     source_order = list(sources)
     # Un ``set`` no tiene orden estable entre procesos. Ordenar por el orden
@@ -513,6 +532,7 @@ def linkage(
             "matcher_max_pairs": matcher_max_pairs,
             "skip_reporting": skip_reporting,
             "collapse_exact_duplicates": collapse_exact_duplicates,
+            "corrida_anterior": str(corrida_anterior) if corrida_anterior is not None else None,
         },
         sources,
     )
@@ -693,6 +713,7 @@ def linkage(
         canonicos=canonicos,
         score_par_previo=info_score_par,
         prioridad_fuentes=orchestrator.prioridad_fuentes,
+        corrida_anterior=anterior,
     )
     # F1.12: los parámetros EFECTIVOS del motor (perfil con sus overrides,
     # LSH, scoring, pesos y la prioridad real del golden) van al manifiesto;
@@ -796,6 +817,7 @@ def _armar_resultado(
         revision=revision,
         diccionario=diccionario,
         dir_trabajo=dir_trabajo,
+        entidades_ids=reporte.entidades_ids,
     )
     resultado.validar(estricto=True)
     return resultado
@@ -982,6 +1004,8 @@ def dedupe(
         TypeError | ValueError: preflight accionable (qué pasó / por qué
             importa / qué hacer); ``ValueError`` también si ``nombre`` no es
             un nombre simple.
+        IdRegistroInvalidoError: un valor de ``col_id`` contiene ``|`` (ver
+            ``linkage``); se rechaza antes del motor y sin crear ``output_dir``.
 
     Ejemplo:
         >>> import pandas as pd, record_linkage as rl
@@ -993,8 +1017,10 @@ def dedupe(
     import tempfile
 
     from .deduplication.auto import deduplicate_auto
+    from .identidad.estable import exigir_fuentes_sin_separador
 
     _preflight(df, [col_nit, col_name], "df")
+    exigir_fuentes_sin_separador({"df": df}, col_id)
     output_dir = _trabajo_en_pendiente(carpeta_salida, nombre, output_dir)
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="rues_linker_dedupe_")

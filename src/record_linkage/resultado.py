@@ -117,6 +117,9 @@ class ResultadoLinkage:
         metricas: conteos de la corrida y estadísticas del pipeline.
         dir_trabajo: carpeta con L1…L5 (``_trabajo/``), donde quedan las
             columnas técnicas que salen del entregable.
+        entidades_ids: crosswalk ``ID_ENTIDAD ↔ ID_GRUPO`` de la corrida con
+            los retiros (``identidad.estable``, F2.4); None si la ruta no lo
+            calculó (el escritor lo deriva de la correlativa, sin retiros).
     """
 
     correlativa: pd.DataFrame
@@ -127,6 +130,7 @@ class ResultadoLinkage:
     revision: pd.DataFrame = field(default_factory=contrato.revision_vacia)
     diccionario: pd.DataFrame = field(default_factory=_diccionario_vacio)
     dir_trabajo: Path | None = None
+    entidades_ids: pd.DataFrame | None = None
 
     # ── Resumen ──────────────────────────────────────────────────────────
     def resumen(self) -> str:
@@ -148,7 +152,11 @@ class ResultadoLinkage:
         golden sin NaN en métricas y una fila por ``ID_GRUPO`` de la
         correlativa, ``ID_ENTIDAD`` no nulo y consistente (un ``ID_GRUPO`` ↔
         un ``ID_ENTIDAD``), ``METODO_UNION`` dentro del vocabulario y
-        ``CONFIANZA`` (cuando no es nula) dentro de ALTA · MEDIA · BAJA.
+        ``CONFIANZA`` (cuando no es nula) dentro de ALTA · MEDIA · BAJA. Si
+        trae ``entidades_ids`` (F2.4, ADR-0012): ``ID_ENTIDAD`` único y no
+        nulo, ``ID_GRUPO`` sin nulos, todo ``RETIRADO_EN`` no nulo es un
+        ``ID_ENTIDAD`` activo del mismo crosswalk y las entidades activas son
+        exactamente los pares ``ID_GRUPO ↔ ID_ENTIDAD`` de la correlativa.
 
         Args:
             estricto: si True y hay fallos, lanza ``ContratoSalidaError`` con
@@ -161,6 +169,8 @@ class ResultadoLinkage:
         if self.enlaces is not None:
             fallos += _validar_columnas(self.enlaces, contrato.ENLACES, "enlaces")
         fallos += _validar_columnas(self.revision, contrato.REVISION, "revision", solo_orden=True)
+        if self.entidades_ids is not None:
+            fallos += _validar_entidades_ids(self.entidades_ids, self.correlativa)
         reporte = ReporteValidacion(ok=not fallos, fallos=fallos)
         if estricto and not reporte.ok:
             raise ContratoSalidaError(reporte.fallos)
@@ -371,4 +381,58 @@ def _validar_golden(g: pd.DataFrame, c: pd.DataFrame) -> list[str]:
                 fallos.append(
                     f"golden: {distintos} ID_GRUPO con ID_ENTIDAD distinto del de la correlativa."
                 )
+    return fallos
+
+
+def _validar_entidades_ids(x: pd.DataFrame, c: pd.DataFrame) -> list[str]:
+    """Invariantes del crosswalk que publica ADR-0012 (§3): aquí, no solo en una prueba."""
+    fallos = _validar_columnas(x, contrato.ENTIDADES_IDS, "entidades_ids")
+    if not {"ID_ENTIDAD", "ID_GRUPO", "RETIRADO_EN"} <= set(x.columns):
+        return fallos
+    nulos = int(x["ID_ENTIDAD"].isna().sum())
+    if nulos:
+        fallos.append(f"entidades_ids: ID_ENTIDAD tiene {nulos} nulo(s).")
+    repetidos = int(x["ID_ENTIDAD"].duplicated().sum())
+    if repetidos:
+        fallos.append(
+            f"entidades_ids: ID_ENTIDAD repetido {repetidos} vez/veces; el crosswalk "
+            f"tiene una fila por entidad (activa o retirada)."
+        )
+    nulos = int(x["ID_GRUPO"].isna().sum())
+    if nulos:
+        fallos.append(
+            f"entidades_ids: ID_GRUPO tiene {nulos} nulo(s); toda fila (también una "
+            f"retirada) apunta al grupo de su sobreviviente."
+        )
+    retirada = x["RETIRADO_EN"].notna()
+    activas = x[~retirada]
+    sin_destino = x.loc[retirada, "RETIRADO_EN"]
+    sin_destino = sin_destino[~sin_destino.isin(set(activas["ID_ENTIDAD"].dropna()))]
+    if len(sin_destino):
+        fallos.append(
+            f"entidades_ids: {len(sin_destino)} RETIRADO_EN que no son un ID_ENTIDAD activo "
+            f"del mismo crosswalk (p. ej. {sin_destino.head(5).tolist()}); un id retirado "
+            f"se resuelve con un solo salto."
+        )
+    enteros = pd.api.types.is_integer_dtype
+    if (
+        {"ID_GRUPO", "ID_ENTIDAD"} <= set(c.columns)
+        and enteros(c["ID_GRUPO"].dtype)
+        and enteros(activas["ID_GRUPO"].dtype)
+        and not activas["ID_GRUPO"].isna().any()
+    ):
+        # Mismos tipos a los dos lados (int64 + object): Int64 y string Arrow
+        # compararían por valor igual, pero el set de pares no debe depender.
+        tipos = {"ID_GRUPO": "int64", "ID_ENTIDAD": object}
+        pares = c[["ID_GRUPO", "ID_ENTIDAD"]].drop_duplicates().astype(tipos)
+        en_correl = pd.MultiIndex.from_frame(pares)
+        en_crosswalk = pd.MultiIndex.from_frame(activas[["ID_GRUPO", "ID_ENTIDAD"]].astype(tipos))
+        sobran = en_crosswalk.difference(en_correl)
+        faltan = en_correl.difference(en_crosswalk)
+        if len(sobran) or len(faltan):
+            fallos.append(
+                f"entidades_ids: las entidades activas no coinciden con los pares "
+                f"ID_GRUPO ↔ ID_ENTIDAD de la correlativa ({len(sobran)} sobran, p. ej. "
+                f"{sobran[:3].tolist()}; {len(faltan)} faltan, p. ej. {faltan[:3].tolist()})."
+            )
     return fallos

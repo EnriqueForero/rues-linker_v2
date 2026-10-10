@@ -24,9 +24,13 @@ las dos tablas con la forma del estándar (``contrato.py``):
   que cambiar algo (en ``linkage()``, con o sin postprocesado: False).
 * ``ID_ENTIDAD`` = ``NIT-<base sin DV>`` si el grupo adopta un identificador
   válido (``matching.identificadores.base_canonica`` con al menos
-  ``LONGITUD_MINIMA_BASE`` dígitos); si no, ``ENT-<16 hex de SHA-256 de los
-  ID_REGISTRO del grupo ordenados>``: determinista por contenido. La
-  herencia entre corridas (``entidades_ids.parquet``) la añade F2.4.
+  ``LONGITUD_MINIMA_BASE`` dígitos); si no, ``ENT-…`` heredado de la corrida
+  anterior (``corrida_anterior=``, mayor solapamiento de ``ID_REGISTRO``) o,
+  sin herencia, ``ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo
+  ordenados>``: determinista por contenido. La regla, el crosswalk de la
+  corrida (``ReporteCompletar.entidades_ids``) y los retiros viven en
+  ``identidad/estable.py`` (F2.4, ADR-0012); aquí solo se decide qué grupos
+  llevan ``NIT-…``.
   Medido (F1.9): el motor puede dejar DOS grupos con el mismo ``NIT_FINAL``
   (en ``dataset_sintetico_p2_extra_features.csv`` pasa con 900111222 y
   800333444: nombres que no alcanzan el umbral). Como el contrato exige un
@@ -89,7 +93,6 @@ Author: Claude (asesor de Enrique Forero)  ·  Date: 2026-10-06  ·  Version: 0.
 
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 import warnings
 from collections.abc import Collection, Mapping, Sequence
@@ -104,6 +107,7 @@ import pandas as pd
 from .. import contrato
 from ..engine.scorer import _a_booleano
 from ..golden.metricas import COLUMNAS_METRICAS_GRUPO, metricas_de_calidad, metricas_de_grupo
+from ..identidad.estable import CorridaAnterior, asignar_id_entidad, cargar_corrida_anterior
 from ..matching.identificadores import bases_validas
 from ..pipeline.errores import ContratoSalidaError, mensaje_accionable
 from .identificadores_registro import (
@@ -167,8 +171,10 @@ class ReporteCompletar:
             por contenido, que es lo normal en ``linkage()``; True desde texto
             en ``dedupe`` o tras el colapso exacto).
         id_entidad: cuántos grupos recibieron ``NIT-…`` y cuántos ``ENT-…``,
-            y los grupos que comparten NIT con otro y por eso se desplazaron
-            a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo).
+            los grupos que comparten NIT con otro y por eso se desplazaron
+            a ``ENT-…`` (el motor los dejó separados; ver docstring del módulo)
+            y, en ``herencia``, lo que ``identidad.estable`` hizo con la
+            corrida anterior (ruta, huella, heredadas, nuevas, retiradas…).
         identificador: de dónde salió la base de cada registro (``NIT_BASE``/
             ``NIT_VALID`` del motor, o la columna de la fuente si no vienen),
             cómo se eligió la base del grupo, ``grupos_sin_fila_de_nit_final``
@@ -183,6 +189,10 @@ class ReporteCompletar:
         columnas_fuente: las columnas de la fuente en el orden de salida.
         prioridad_fuentes: prioridad con la que se repara ``PRIMARY_SOURCE``
             (la del Orchestrator: ``source_quality_weights`` del perfil).
+        entidades_ids: el crosswalk de la corrida (``contrato.ENTIDADES_IDS``,
+            con los retiros). Es una tabla: no va al manifiesto (``a_dict``),
+            ``api._armar_resultado`` la pasa a ``ResultadoLinkage.entidades_ids``
+            y el escritor la publica como ``entidades_ids.parquet``.
     """
 
     renombres: dict[str, str] = field(default_factory=dict)
@@ -198,6 +208,7 @@ class ReporteCompletar:
     columnas_tecnicas_retiradas: list[str] = field(default_factory=list)
     columnas_fuente: list[str] = field(default_factory=list)
     prioridad_fuentes: list[str] = field(default_factory=list)
+    entidades_ids: pd.DataFrame | None = field(default=None, repr=False)
 
     def a_dict(self) -> dict[str, Any]:
         return {
@@ -362,10 +373,6 @@ def _resolver_colisiones(
     return correl, renombres, no_recuperables
 
 
-def _sha16(texto: str) -> str:
-    return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:16]
-
-
 def bases_del_motor(nit_base: np.ndarray, nit_valid: np.ndarray) -> np.ndarray:
     """Base de cada registro según el MOTOR: ``NIT_BASE`` donde ``NIT_VALID``.
 
@@ -497,7 +504,8 @@ def _grupos_principales_por_nit(
     n_grupos = int(correl["ID_GRUPO"].nunique())
     info: dict[str, Any] = {
         "regla": "NIT-<base sin DV> si el grupo adopta un identificador válido; si no, "
-        "ENT-<16 hex de SHA-256 de los ID_REGISTRO del grupo ordenados>",
+        "ENT-… heredado de la corrida anterior o, sin herencia, ENT-<16 hex de SHA-256 "
+        "de los ID_REGISTRO del grupo ordenados> (identidad/estable.py)",
         "grupos_nit": int(len(por_grupo) - len(desplazados)),
         "grupos_ent": int(n_grupos - len(por_grupo) + len(desplazados)),
         "nit_compartido": {
@@ -506,24 +514,6 @@ def _grupos_principales_por_nit(
         },
     }
     return principal, info
-
-
-def _id_entidad(correl: pd.DataFrame, base_grupo: pd.Series, grupo_valido: np.ndarray) -> pd.Series:
-    """``NIT-<base>`` para grupos con identificador válido; ``ENT-<sha16>`` para el resto."""
-    con_nit = pd.Series("NIT-", index=correl.index, dtype="string") + base_grupo.astype("string")
-    sin = correl.loc[~grupo_valido, ["ID_GRUPO", "ID_REGISTRO"]]
-    if len(sin):
-        claves = (
-            sin.sort_values(["ID_GRUPO", "ID_REGISTRO"], kind="stable")
-            .groupby("ID_GRUPO", sort=False)["ID_REGISTRO"]
-            .agg("|".join)
-        )
-        # Una llamada por grupo sin identificador, no por fila.
-        ent = "ENT-" + claves.map(_sha16)
-        surrogado = correl["ID_GRUPO"].map(ent).astype("string")
-    else:
-        surrogado = pd.Series(pd.NA, index=correl.index, dtype="string")
-    return con_nit.where(grupo_valido, surrogado)
 
 
 def _completar_golden(
@@ -644,6 +634,7 @@ def completar_correlativa(
     canonicos: Mapping[str, str] | None = None,
     score_par_previo: dict[str, Any] | None = None,
     prioridad_fuentes: Sequence[str] | None = None,
+    corrida_anterior: CorridaAnterior | Path | str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, ReporteCompletar]:
     """Lleva la correlativa (y el golden, si hay) al contrato 1.0.
 
@@ -665,6 +656,11 @@ def completar_correlativa(
         prioridad_fuentes: prioridad de fuentes del golden (la de L5), solo
             para reparar ``PRIMARY_SOURCE`` en filas del golden que lleguen
             sin métricas; por defecto, el orden de ``fuentes``.
+        corrida_anterior: crosswalk ``entidades_ids.parquet`` de la corrida
+            previa (carpeta del estándar, el archivo, o ya cargado con
+            ``identidad.estable.cargar_corrida_anterior``) desde el que los
+            grupos sin identificador heredan su ``ENT-…``; None → ids nuevos,
+            deterministas por contenido.
 
     Returns:
         ``(correlativa, golden, reporte)``. No muta ``correl`` ni ``golden``:
@@ -723,7 +719,13 @@ def completar_correlativa(
     base_fila = base_fila.mask(base_fila == "", pd.NA)
     base_canonica_grupo = base_fila.groupby(correl["ID_GRUPO"], sort=False).transform("first")
     grupo_principal, info_entidad = _grupos_principales_por_nit(correl, base_canonica_grupo)
-    correl["ID_ENTIDAD"] = _id_entidad(correl, base_canonica_grupo, grupo_principal).astype(str)
+    if corrida_anterior is not None and not isinstance(corrida_anterior, CorridaAnterior):
+        corrida_anterior = cargar_corrida_anterior(corrida_anterior)
+    identidad = asignar_id_entidad(
+        correl, base_canonica_grupo, grupo_principal, corrida_anterior=corrida_anterior
+    )
+    correl["ID_ENTIDAD"] = identidad.id_entidad.astype(str)
+    info_entidad["herencia"] = identidad.reporte
 
     # METODO_UNION y QA de identificador: la regla del motor (NIT_BASE donde
     # NIT_VALID; base del grupo = NIT_BASE de quien aportó NIT_FINAL).
@@ -798,5 +800,6 @@ def completar_correlativa(
         columnas_tecnicas_retiradas=tecnicas,
         columnas_fuente=fuente_salida,
         prioridad_fuentes=prioridad,
+        entidades_ids=identidad.entidades_ids,
     )
     return correl, golden, reporte
