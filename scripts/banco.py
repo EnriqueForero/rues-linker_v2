@@ -95,23 +95,45 @@ def _parsear_variables(especificaciones: list[str] | None) -> tuple[object, ...]
     return tuple(salida)
 
 
+def _valor_ajuste(bruto: str) -> object:
+    """Infiere el tipo de un valor de ``--ajuste``: bool, int, float o texto."""
+    if bruto.lower() in {"true", "false"}:
+        return bruto.lower() == "true"
+    try:
+        return int(bruto)
+    except ValueError:
+        try:
+            return float(bruto)
+        except ValueError:
+            return bruto
+
+
 def _parsear_ajustes(pares: list[str]) -> dict[str, object]:
-    """Convierte ``clave=valor`` en un diccionario con tipos inferidos."""
+    """Convierte ``clave=valor`` en un diccionario con tipos inferidos.
+
+    Una clave con punto apunta a una perilla anidada (F2.1):
+    ``cobertura_sin_identificador.umbral=0.70`` produce
+    ``{"cobertura_sin_identificador": {"umbral": 0.70}}``; varias claves con
+    el mismo prefijo se funden en el mismo diccionario. Las claves que no se
+    nombran las completa el perfil (``ConfigCoberturaSinIdentificador``).
+    """
     salida: dict[str, object] = {}
     for par in pares:
         if "=" not in par:
             raise SystemExit(f"--ajuste espera CLAVE=VALOR, recibió {par!r}")
         clave, _, bruto = par.partition("=")
-        if bruto.lower() in {"true", "false"}:
-            salida[clave] = bruto.lower() == "true"
-        else:
-            try:
-                salida[clave] = int(bruto)
-            except ValueError:
-                try:
-                    salida[clave] = float(bruto)
-                except ValueError:
-                    salida[clave] = bruto
+        valor = _valor_ajuste(bruto)
+        if "." not in clave:
+            salida[clave] = valor
+            continue
+        padre, _, hija = clave.partition(".")
+        anidado = salida.setdefault(padre, {})
+        if not isinstance(anidado, dict):
+            raise SystemExit(
+                f"--ajuste {clave!r}: '{padre}' ya recibió un valor escalar ({anidado!r}); "
+                f"no puede ser a la vez escalar y diccionario."
+            )
+        anidado[hija] = valor
     return salida
 
 
