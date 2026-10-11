@@ -137,3 +137,6 @@ secrets.json
 !tests/data/ground_truth_grande.csv
 !tests/data/oraculo_scorer_p1_1.pkl
 !tests/data_sintetica/dataset_sintetico_p2_extra_features.csv
+
+# Arnés de paridad de la vinculación: motor original extraído, insumos y referencias (trae marcas reales).
+.oraculo_vinculacion/
