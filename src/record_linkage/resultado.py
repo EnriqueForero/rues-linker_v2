@@ -281,8 +281,9 @@ def _validar_columnas(
     return fallos
 
 
-def _validar_correlativa(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[str]:
-    fallos = _validar_columnas(c, contrato.CORRELATIVA, "correlativa")
+def _validar_ids_de_registro_y_grupo(c: pd.DataFrame) -> list[str]:
+    """``ID_REGISTRO`` sin nulos y único; ``ID_GRUPO`` sin nulos."""
+    fallos: list[str] = []
     if "ID_REGISTRO" in c.columns:
         nulos = int(c["ID_REGISTRO"].isna().sum())
         if nulos:
@@ -300,33 +301,52 @@ def _validar_correlativa(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[st
                 f"correlativa: ID_GRUPO tiene {nulos} nulo(s); una fila sin grupo no pertenece "
                 f"a ninguna entidad y el resultado es inutilizable."
             )
+    return fallos
+
+
+def _validar_filas_contra_entradas(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[str]:
+    """Una fila de correlativa por registro de entrada (``manifiesto['entradas']``)."""
     entradas = manifiesto.get("entradas")
-    if isinstance(entradas, dict) and entradas:
-        n_entrada = sum(int(e.get("filas", 0)) for e in entradas.values() if isinstance(e, dict))
-        if n_entrada != len(c):
+    if not (isinstance(entradas, dict) and entradas):
+        return []
+    n_entrada = sum(int(e.get("filas", 0)) for e in entradas.values() if isinstance(e, dict))
+    if n_entrada == len(c):
+        return []
+    return [
+        f"correlativa: trae {len(c)} filas y la entrada tuvo {n_entrada} "
+        f"(manifiesto['entradas']); debe haber una fila por registro de entrada."
+    ]
+
+
+def _validar_id_entidad_de_correlativa(c: pd.DataFrame) -> list[str]:
+    """``ID_ENTIDAD`` sin nulos y en correspondencia uno a uno con ``ID_GRUPO``."""
+    if "ID_ENTIDAD" not in c.columns:
+        return []
+    fallos: list[str] = []
+    nulos = int(c["ID_ENTIDAD"].isna().sum())
+    if nulos:
+        fallos.append(f"correlativa: ID_ENTIDAD tiene {nulos} nulo(s).")
+    if "ID_GRUPO" in c.columns and len(c):
+        por_grupo = c.groupby("ID_GRUPO", sort=False)["ID_ENTIDAD"].nunique(dropna=False)
+        malos = por_grupo[por_grupo != 1]
+        if len(malos):
             fallos.append(
-                f"correlativa: trae {len(c)} filas y la entrada tuvo {n_entrada} "
-                f"(manifiesto['entradas']); debe haber una fila por registro de entrada."
+                f"correlativa: {len(malos)} ID_GRUPO con más de un ID_ENTIDAD "
+                f"(p. ej. {malos.index[:5].tolist()}); un ID_GRUPO ↔ un ID_ENTIDAD."
             )
-    if "ID_ENTIDAD" in c.columns:
-        nulos = int(c["ID_ENTIDAD"].isna().sum())
-        if nulos:
-            fallos.append(f"correlativa: ID_ENTIDAD tiene {nulos} nulo(s).")
-        if "ID_GRUPO" in c.columns and len(c):
-            por_grupo = c.groupby("ID_GRUPO", sort=False)["ID_ENTIDAD"].nunique(dropna=False)
-            malos = por_grupo[por_grupo != 1]
-            if len(malos):
-                fallos.append(
-                    f"correlativa: {len(malos)} ID_GRUPO con más de un ID_ENTIDAD "
-                    f"(p. ej. {malos.index[:5].tolist()}); un ID_GRUPO ↔ un ID_ENTIDAD."
-                )
-            por_entidad = c.groupby("ID_ENTIDAD", sort=False)["ID_GRUPO"].nunique()
-            malos = por_entidad[por_entidad != 1]
-            if len(malos):
-                fallos.append(
-                    f"correlativa: {len(malos)} ID_ENTIDAD repartidos en más de un ID_GRUPO "
-                    f"(p. ej. {malos.index[:5].tolist()})."
-                )
+        por_entidad = c.groupby("ID_ENTIDAD", sort=False)["ID_GRUPO"].nunique()
+        malos = por_entidad[por_entidad != 1]
+        if len(malos):
+            fallos.append(
+                f"correlativa: {len(malos)} ID_ENTIDAD repartidos en más de un ID_GRUPO "
+                f"(p. ej. {malos.index[:5].tolist()})."
+            )
+    return fallos
+
+
+def _validar_vocabularios_de_correlativa(c: pd.DataFrame) -> list[str]:
+    """``METODO_UNION`` y ``CONFIANZA`` dentro del vocabulario del contrato."""
+    fallos: list[str] = []
     if "METODO_UNION" in c.columns:
         fuera = sorted(set(c["METODO_UNION"].dropna().unique()) - set(contrato.METODOS_UNION))
         if fuera:
@@ -341,6 +361,15 @@ def _validar_correlativa(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[st
                 f"correlativa: CONFIANZA trae valores fuera de {list(contrato.NIVELES_CONFIANZA)}: "
                 f"{fuera}."
             )
+    return fallos
+
+
+def _validar_correlativa(c: pd.DataFrame, manifiesto: dict[str, Any]) -> list[str]:
+    fallos = _validar_columnas(c, contrato.CORRELATIVA, "correlativa")
+    fallos += _validar_ids_de_registro_y_grupo(c)
+    fallos += _validar_filas_contra_entradas(c, manifiesto)
+    fallos += _validar_id_entidad_de_correlativa(c)
+    fallos += _validar_vocabularios_de_correlativa(c)
     return fallos
 
 

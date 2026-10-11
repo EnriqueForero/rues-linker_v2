@@ -157,6 +157,21 @@ def test_segundo_elemento_son_las_conexiones_no_triviales(
     assert orden == sorted(orden)
 
 
+def _texto_nulable(tabla: pd.DataFrame) -> pd.DataFrame:
+    """La misma tabla con todo el texto como ``string``.
+
+    El mismo archivo parquet se lee como ``object`` en pandas 2 y como ``str`` en
+    pandas 3, y la tabla que retorna la función conserva ``string``: se compara
+    el CONTENIDO (valores y nulos), no la representación que cada versión elige.
+    """
+    salida = tabla.copy()
+    for columna in salida.columns:
+        dtype = salida[columna].dtype
+        if pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.StringDtype):
+            salida[columna] = salida[columna].astype("string")
+    return salida
+
+
 def test_salidas_pasan_por_el_escritor_unico(
     df_single_source_with_duplicates: pd.DataFrame,
     tmp_path,
@@ -197,7 +212,9 @@ def test_salidas_pasan_por_el_escritor_unico(
     esquema_correl = pq.read_schema(rutas["correlativa"])
     assert not esquema_correl.metadata or b"contrato" not in esquema_correl.metadata
     leida = pd.read_parquet(rutas["correlativa"])
-    pd.testing.assert_frame_equal(leida, correlativa.reset_index(drop=True))
+    pd.testing.assert_frame_equal(
+        _texto_nulable(leida), _texto_nulable(correlativa.reset_index(drop=True))
+    )
     assert {"NIT_OK", "NIT_BASE", "NOMBRE_LIMPIO"} <= set(leida.columns)
 
 

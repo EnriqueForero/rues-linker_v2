@@ -2,7 +2,7 @@
   "etiqueta": "base_f2",
   "version": "0.22.4",
   "perfil": "produccion_estandar",
-  "marca_tiempo": "2026-10-10T15:26:01",
+  "marca_tiempo": "2026-10-10T19:32:25",
   "entorno": {
     "python": "3.11.15",
     "pandas": "3.0.6",
@@ -66,28 +66,34 @@
         "pares": 19305.0
       }
     },
-    "macro_f1": 0.8803
+    "macro_f1": 0.8803,
+    "grupo_mayor_sin_identificador": {
+      "filas": 16,
+      "entidades": 1,
+      "grupos": 3547,
+      "grupos_grandes": 0
+    }
   },
   "recursos": {
-    "segundos_total": 113.52,
+    "segundos_total": 67.48,
     "segundos_por_fase": {
-      "L1_prep": 2.54,
-      "L2_lsh_candidates": 71.53,
-      "L3_scoring": 15.2,
-      "L4_clustering": 0.9,
-      "L5_golden": 18.81
+      "L1_prep": 1.26,
+      "L2_lsh_candidates": 43.9,
+      "L3_scoring": 7.8,
+      "L4_clustering": 0.49,
+      "L5_golden": 11.64
     },
     "rss_por_fase": {
-      "L1_prep": 285.1,
-      "L2_lsh_candidates": 449.0,
-      "L3_scoring": 488.0,
-      "L4_clustering": 458.6,
-      "L5_golden": 453.5
+      "L1_prep": 289.4,
+      "L2_lsh_candidates": 453.7,
+      "L3_scoring": 501.2,
+      "L4_clustering": 455.3,
+      "L5_golden": 457.3
     },
-    "rss_pico_mib": 488.0,
-    "rss_inicial_mib": 236.6,
-    "muestras_rss": 440,
-    "bytes_disco": 19357329,
+    "rss_pico_mib": 501.2,
+    "rss_inicial_mib": 241.4,
+    "muestras_rss": 263,
+    "bytes_disco": 19359124,
     "candidatos": 968673,
     "pares_scoreados": 41737,
     "candidatos_por_valido": 23.2
@@ -102,5 +108,5 @@
     "perfil_multicampo": null,
     "semilla": 42
   },
-  "nota": "F2: cobertura por estrellas activa por defecto en produccion_estandar (umbral 0,80, ADR-0011)"
+  "nota": "F2: cobertura por estrellas activa por defecto en produccion_estandar (umbral 0,80, ADR-0011). Remedida en máquina quieta sobre main 059f80b."
 }

@@ -1546,3 +1546,236 @@ el mismo patrón que F1 retiró de la suite y los reportes. Queda para el pulido
 | trinquete | PASA; el techo baja: `except` sin relanzar 121 → 103, mypy 108 → 102 (complejidad ≥ 20: 11, tras sacar `_resolver_matching_profile` de `linkage()`, que había subido a 23) |
 | 139k con reporting (`linkage(carpeta_salida=…)`) | carpeta del estándar publicada y leída (`validar()` ok): 139.028 filas, 54.450 grupos, 18 archivos del estándar (Excel completo de 139k filas, 10 figuras), 19 artefactos de L6, `omitidos: []`, L6 48,6 s |
 | CI | **verde** en `646651d` ([run 37533795449](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/37533795449)): lint con trinquete estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete de deuda, build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 102 errores = techo) |
+
+## IT-29 · F2, calidad y unificación del motor: estrellas en `linkage()`, identidad estable, un estándar en los cinco caminos (sin publicar)
+
+Tercera fase del plan «v2 → producción», sobre `main` con F0 y F1 ya mezcladas
+(PR #1 y #2, 2026-10-07). Dieciocho tareas (F2.1–F2.18, tres de ellas nacidas de
+decisiones de Enrique del 2026-10-07), cada una en su rama con prueba primero,
+revisor escéptico y hasta dos rondas de corrección, integradas en
+`claude/f2-motor` y mezcladas en `main` por el PR #3 (2026-10-10). Es la primera fase que toca el motor (L1…L5), y lo hace de
+la única manera permitida: detrás de una perilla cuyo cambio de valor por
+defecto se declara, se mide antes y después, y mueve la línea base con ADR.
+
+### Lo que entró (y cómo se demostró)
+
+| tarea | antes | ahora |
+|---|---|---|
+| F2.1 | `linkage()` encadenaba por nombre empresas distintas sin identificador (a 139k, precisión 0,34 y un grupo de 630 filas con 198 entidades) | cobertura por estrellas en L5 solo para grupos sin identificador válido (`engine/cobertura.py`, ADR-0011); `produccion_estandar` activa con umbral 0,80; banco: FP sobre negativos 287 → 246, precisión 0,9385 → 0,9557, macro-F1 0,8920 → 0,8803; 139k: precisión 0,99, grupo mayor 13 |
+| F2.2 | el umbral era un número propuesto | barrido 0,70–0,88 en banco y 139k (`docs/evidencia/cobertura_umbral.json`); `elegir_umbral` aplica la compuerta F2 y, entre los que pasan, el que menos une mal → 0,80 (la alternativa por macro-F1, 0,75, queda registrada) |
+| F2.3 | `ID_GRUPO` era la posición mínima del grupo: una fila nueva al principio renumeraba todo | entero por contenido (posición del menor `ID_REGISTRO` del grupo), una regla en `salida/identificadores_registro.py` aplicada al cierre de L5, tras colapso/matcher y en `completar`; reordenar la entrada no cambia nada (ADR-0013); huella intacta |
+| F2.4 | `ENT-<hash>` cambiaba si el grupo ganaba o perdía una fila; sin memoria entre corridas | `identidad/estable.py`: herencia por mayor solapamiento desde `entidades_ids.parquet` de la corrida anterior, crosswalk con `REGISTROS` y `RETIRADO_EN`, `validar()` lo exige; `|` en `col_id` se rechaza antes de L1 (ADR-0012) |
+| F2.5 | `flujo.cruce` escribía `golden.parquet`/`metadatos_corrida.json` a su manera | `ejecutar_cruce` devuelve `ResultadoLinkage` y escribe con el escritor único; modo disco con generaciones de la forma del estándar; su divergencia de `METODO_UNION` queda declarada en el manifiesto, no escondida |
+| F2.6 | `flujo.importadores` entregaba `CORRELATIVA/GOLDEN/PAISES/REVISION` sin `ID_GRUPO`/`ID_ENTIDAD` | tablas del estándar con `ID_IMPORTADOR`/`ID_EMPRESA_GLOBAL` como adicionales; `REVISION` de v1 + `REVISION_PARES`; golden determinista (`CREATED_AT` inyectable); huella ADR-0009 igual |
+| F2.7 | solo `linkage()` escribía la carpeta del estándar | `dedupe()` y `link()` con `carpeta_salida=`/`nombre=`; tramo común escrito una vez |
+| F2.8 | código muerto con pruebas humo | `deduplicate_dataframe` y `deduplicate_large_dataset_colab` retirados (cero usos medidos) |
+| F2.9 | el `Orchestrator` usaba `RecordLinkagePipeline` como fábrica de tres componentes | `pipeline/componentes.py`; `RecordLinkagePipeline` deprecado; `AjustesDeduplicacion` en `deduplicate_unified` para los scripts de calibración |
+| F2.10 | `deduplicate_unified` decía devolver `(tabla, stats)` y devolvía dos tablas; `validate_against_legacy` no validaba nada | contrato real declarado; `correlativa.parquet` + `conexiones.parquet` por el escritor (`contrato.CONEXIONES`); el flag falla en vez de mentir |
+| F2.11 | seis notebooks con una copia local del exportador | `exportar_vistas`, función libre; `to_excel/to_csv` alias con aviso |
+| F2.12 | tres copias de la regla de `CONFIANZA` | una (`golden/metricas.confianza_de_grupo`) en los cinco caminos; undécima invariante de importadores |
+| F2.13 | los 43 casos de conformidad solo corrían por `dedupe_esquema` | `--camino linkage` y `flujo_cruce` con veredicto por caso en `docs/CONFORMIDAD.md` §4 y evidencia anclada a prueba |
+| F2.14 | F2.8 había retirado `optimization/` y `GroundTruthGenerator` | decisión de Enrique: la funcionalidad se conserva sin duplicar reglas; `OrchestratorOptimizer` único optimizador (espacio configurable, `macro_f1`, validación cruzada por grupos, `ajustes_perfil`); `GroundTruthGenerator` restaurado vectorizado y reproducible |
+| F2.15 | — | notebook 12: optimizar parámetros con Optuna, delgado sobre la librería; `docs/OPTIMIZACION.md` |
+| F2.16 | los equipos abrían un Excel sin saber qué era cada columna | hoja `DICCIONARIO` en cada libro, desde el mismo diccionario que `diccionario.csv` |
+| F2.17 | `BANCO_F0` dejó de describir el tronco | `BANCO_F2` vigente; la F0 queda como historia con prueba de que su JSON y su constante siguen coincidiendo |
+| F2.18 | F2.5 y F2.6 nacieron antes que F2.3/F2.4 | importadores y el modo disco del cruce sobre las reglas únicas de `ID_REGISTRO`/`ID_GRUPO`/`ID_ENTIDAD` |
+
+### Decisiones que no eran obvias
+
+1. **0,80 y no 0,75.** Con 0,75 el banco da mejor macro-F1 (0,8906 frente a
+   0,8803) y recall sin identificador 0,63 frente a 0,58, cifra que el texto del
+   plan pedía (≥ 0,62). Pero une mal más veces: 264 frente a 246 FP sobre
+   negativos en el banco y 92 frente a 34 a 139k. La regla de Enrique («unir
+   dos empresas distintas duele más que dejar sin unir»), confirmada el
+   2026-10-07, decide por 0,80. La desviación del recall queda escrita en la
+   ADR-0011 y en `cobertura_umbral.json`; no se esconde.
+2. **Conservar la funcionalidad, no el módulo.** Enrique pidió conservar
+   Optuna y el ground truth. `optimization/` era la copia del notebook,
+   deprecada desde v3.2.7 y con un reemplazo ya mantenido y probado
+   (`OrchestratorOptimizer`). Restaurarlo habría sido tener dos optimizadores.
+   Se restauró `GroundTruthGenerator` (reescrito sin bucles por par y con
+   semilla) y se completó el optimizador mantenido. Si Enrique quiere el módulo
+   literal, es una decisión suya que esta bitácora deja abierta.
+3. **Nombres canónicos en todos los archivos; alias solo para humanos.**
+   Enrique pidió «lo que dé mejores resultados». Dos nombres para la misma
+   columna en archivos distintos es la fuente de confusión más cara que hay;
+   el Excel gana la hoja `DICCIONARIO` y `leer_resultado(alias_es=True)` sigue
+   para analistas. Snowflake no lee hoy los nombres de v1: el plazo de retiro
+   de alias no cambia.
+4. **La línea base F0 no se reescribe.** Un cambio declarado del motor crea
+   una línea base nueva (`BANCO_F2`, JSON nuevo, constante nueva) y la anterior
+   queda como historia con su propia prueba. Reescribir `corrida_base_f0.json`
+   habría borrado la evidencia de lo que el motor hacía antes.
+5. **Los hallazgos medios de un revisor no se cierran porque otro revisor
+   apruebe.** Tras un reinicio del contenedor, las re-revisiones se ejecutaron
+   desde cero y tres ramas (F2.3, F2.4, F2.13) recibieron una aprobación que
+   no conocía el hallazgo medio de la ronda anterior. Se relanzó la revisión
+   con esos hallazgos como entrada: los tres se confirmaron y se corrigieron
+   (ID_GRUPO distinto en L6 tras colapsar duplicados exactos; el `|` rechazado
+   tarde; `silenciar_pipeline` sin prueba).
+
+### Lo que la integración enseñó
+
+Las ramas se desarrollaron en paralelo sobre el mismo tronco y cuatro de ellas
+tocaban `contrato.py`, `escritor.py`, `api.py` y `completar.py`. Los conflictos
+textuales se resolvieron a mano (nueve mezclas con conflicto); las roturas
+semánticas (F2.5 y F2.6 contra las reglas de F2.3/F2.4) no las detecta `git`
+sino la suite: tres pruebas y un `import` caídos en el tronco, cerrados en
+F2.18 con prueba. Lección para F3: cuando dos tareas comparten un módulo,
+una parte de la otra.
+
+Incidentes de proceso: dos límites de uso del modelo y dos reinicios del
+contenedor mataron agentes en vuelo. La reanudación desde caché re-ejecutó
+revisores y un implementador con `base_rama` borró con `reset --hard` un
+commit ya hecho (recuperado por `reflog`). Regla nueva: un agente que parte de
+otra rama no resetea si ya hay commits propios.
+
+### Lo que el CI encontró después del merge
+
+El PR #3 se mezcló el 2026-10-10 con dos jobs en rojo que la compuerta local no
+había corrido, y `main` quedó rojo hasta el PR de cierre:
+
+* **Lint, paso estricto.** Dos funciones nuevas superaban la complejidad 15:
+  `exportar_vistas` (F2.16 le añadió el diccionario) y `_validar_correlativa`
+  (F2.4 le añadió el crosswalk). La compuerta local corrió `ruff check`, que no
+  ve C901 porque está declarado «external», pero no `scripts/reglas_estrictas.py`.
+  Se refactorizaron en funciones de un solo propósito, sin `noqa` y sin cambiar
+  mensajes ni orden.
+* **Python 3.10 (pandas 2.3), tres pruebas.** Dos eran una degradación silenciosa
+  heredada, no de F2.5: `DataHandler._basic_cleanup` convertía NIT y
+  RAZON_SOCIAL con `astype(str)` y luego reemplazaba «nan», «None», «NULL» y «»
+  por nulo; con pandas 2, un nulo de texto nulable pasa a ser el literal «<NA>»,
+  que ese reemplazo no reconoce. El NIT vacío salía como el TEXTO «<NA>» en la
+  correlativa del camino `cruce` y sus grupos como `ENT-…` en vez de `NIT-…`.
+  Se materializa el nulo antes de convertir (la convención del resto de la
+  librería) con prueba en dos dtypes que falla en 3.10 antes del cambio. La
+  tercera comparaba la representación de pandas (`object` contra `string`), no
+  el contenido. No se midió si el nombre «<NA>» unía filas sin nombre con
+  pandas 2: la partición del banco se mide con pandas 3.
+
+Lección: la compuerta de una fase corre el paso estricto y la matriz de 3.10
+**antes** de pedir el merge. Los dos entornos ya existen en la máquina de trabajo
+y el guion de la compuerta los incluye. El CI de GitHub no es un trámite posterior.
+
+### Un hallazgo de calidad que F2 deja a la vista
+
+Los 43 casos de conformidad corrían solo por `dedupe_esquema`. Con F2.13 corren
+también por `linkage()` y por `flujo.cruce`, y el primer veredicto por caso del
+camino de producción no es limpio: **23 de los 27 casos firmes de deduplicación
+aprueban** (`dedupe_esquema`: 27/27) y 13/13 en cruce. Reprueban C20 (datos
+faltantes, NIT o nombre nulo), C23 (score en la frontera del threshold), C24
+(stopwords críticas) y MC01 (el multicampo salva la ausencia de NIT). No es una
+regresión de F2: antes ningún caso tenía veredicto por `linkage()`, y
+`flujo.cruce` da exactamente la misma partición que `linkage()`. Es la
+diferencia de calidad más concreta entre el motor multicampo y el perfil
+`produccion_estandar`. Queda como decisión de F5: cerrar los cuatro en el perfil
+de producción o declararlos límite del motor.
+
+### Compuerta F2 sobre `main` (059f80b) y la rama de cierre
+
+| compuerta | resultado |
+|---|---|
+| `ruff check` / `ruff format --check` | limpio (363 archivos) |
+| mypy del anillo | 34 archivos sin errores |
+| suite rápida | CI del PR #3 sobre 1f6938f: 3.11 y 3.12 verdes; 3.10 con 2.474 pasadas y 3 fallos (corregidos arriba). Tras el arreglo: 423 pruebas relacionadas en verde en 3.10 y 343 en 3.11 |
+| banco (`--datos benchmark_institucional`) | huella `5bfed0d1…`; P 0,9557, R 0,7927, F1 0,8666, macro-F1 0,8803 (≥ 0,880), 246 FP sobre negativos (≤ 287); 67,5 s remedido sin carga |
+| conformidad `dedupe_esquema` sin y con `--corroborar` | 27/27 + 13/13 firmes en los dos modos; C09 y C21 aprueban solo con `--corroborar` (frontera declarada sin él) |
+| conformidad `linkage` y `flujo.cruce` | 23/27 + 13/13, iguales en los dos caminos; reprueban C20, C23, C24, MC01 (ver arriba) |
+| contrato en los cinco caminos | `tests/test_contrato_salida.py` verde en 3.11 y 3.10 |
+| determinismo entre procesos | `tests/test_determinismo_linkage_procesos.py` en la suite rápida; verde en el CI |
+| escala 139k / 463k (`--comparar base_f0 f2 --holgura-segundos 2`) | tiempo total +6,5 % / +4,2 %, memoria −3 % / −4 %, candidatos idénticos; **L5 +13,1 s / +16,0 s**: el costo declarado de la cobertura por estrellas. Grupo mayor sin identificador: 13 y 14 filas (≤ 50), 0 grupos ≥ 50. El comparador automático dice FALLA por la huella distinta (declarada) y por L5; la compuerta F2 se juzga por tiempo total, memoria y grupo mayor: pasa. Medido con un agente de pulido en paralelo |
+| trinquete de deuda | PASA; el techo baja: `print` 180 → 152, `os_path` 124 → 117, mypy 102 → 80, `except` 103 → 101; complejidad ≥ 20 se mantiene en 11 |
+| reglas estrictas (`--base 16e6e49`, el `main` previo a F2) | PASA: ningún archivo añade violaciones y tres las reducen |
+| CI | PR #3: Lint y Python 3.10 rojos (causas arriba), el resto verde; PR de cierre: PENDIENTE |
+
+### Pendiente para F5 (anotado para que no se pierda)
+
+* Los cuatro casos firmes que `linkage()` reprueba (C20, C23, C24, MC01).
+* Barrido de `astype(str)` sobre columnas que pueden traer nulos: con pandas 2
+  deja «<NA>». Hay sitios sin `fillna` previo, p. ej. `matching/motor_bloqueo.py`
+  (longitud de la llave) y `golden/selector.py`; cada uno exige una prueba que
+  falle en 3.10 antes de tocarlo.
+* Una columna extra con tipos mezclados en `deduplicate_unified` pierde en
+  silencio los valores que no son texto (L1 la convierte a `str`).
+* Veredicto «cambio declarado» en los comparadores de banco y escala: hoy dicen
+  FALLA ante cualquier huella distinta, incluso cuando el cambio está en una ADR.
+* La opción amplia del hallazgo 15 del pulido (no rechazar «|» en `col_id` si la
+  columna no se usa) y los bajos que el pulido no aplicó.
+
+### Estado al cierre
+
+F2 está mezclada en `main` (PR #3, 059f80b). El PR de cierre corrige el CI de
+`main` (paso estricto y 3.10), remide la línea base del banco sin carga, fija el
+techo de deuda, añade la evidencia de escala y documenta la fase. Siguen:
+F3 (vinculación dentro de la librería, 0.23.0), F4 (escala) y F5/F6 (ingeniería
+y release 1.0). Pendientes de Enrique: borrar las ramas ya mezcladas
+(`claude/f2-motor`, `claude/f2/t8`, `t10`, `t11`, `t12`) desde GitHub, la lista
+de archivos y columnas que abre cada equipo (V6) y el notebook VPI de Caro.
+
+
+## IT-30 · F3, la vinculación dentro de la librería: el motor del notebook 10 extraído con paridad (sin publicar)
+
+Cuarta fase del plan «v2 → producción». Objetivo: que el motor `vinculador_empresas` 1.0.0, que vivía en una celda `%%writefile`
+del notebook 10 (2.984 líneas, 60 funciones y clases), viva en la librería con pruebas, y que los notebooks solo configuren. Esta
+iteración **cierra el hito F3.1** (extracción con paridad) en la rama `claude/f3-vinculacion`, **sin mezclar en `main`**. F3.1b a F3.7
+quedan pendientes. Se cerró aquí por una decisión de costo de Enrique (2026-10-11), no porque la fase esté completa.
+
+### Lo que entró (y cómo se demostró)
+
+| pieza | qué es | evidencia |
+|---|---|---|
+| F3.0 oráculo | insumos inventados en 4 escenarios (`tests/apoyo_vinculacion.py`) y las huellas del motor ORIGINAL (`tests/lineas_base_vinculacion.py`) | iguales en Python 3.10 + pandas 2.3 y Python 3.11 + pandas 3.0, y con la librería 0.22.4 y la de F2 |
+| A | `lectura.py`, `normalizar.py` | 234 casos; 100 % de líneas y ramas; diferencial aleatorio 0 diferencias |
+| B | `comparar.py`, `decisiones.py`, `deduplicar.py` | 307 casos; fuzz 0 diferencias; 228 mutantes |
+| C | `candidatos.py`, `clasificar.py`, `vinculos.py`, `web.py`, `validacion.py` | 216 casos; 187 mutantes; fuzz 0 diferencias |
+| D | `tablas.py` y las hojas (`tabla_*`, `pares`, `empresas`) | 210 casos; fixture parquet de estado real; 121 mutantes |
+| E | `flujo/vinculacion_excel/` (Excel de 16 hojas) | 54 casos; Excel celda por celda (valor y estilo) |
+| coordinador | `config`, `constantes`, `resultado`, `calidad`, `controles`, `resumen`, `ejecutar`; `registrar_locale_compuesto`; arnés `scripts/oraculo_vinculacion/` | `tests/test_vinculacion_paridad.py` (85 casos) |
+
+**La compuerta:** `ejecutar` y el Excel contra el motor original, 15 tablas + `resumen` + `por_pais` + avisos + Excel, en 4 escenarios y 2 entornos
+→ **IDÉNTICO**. Un solo cambio declarado: una celda del RESUMEN (fila 16, `LECTURA`) nombraba dos empresas reales y ahora usa marcas inventadas;
+deshaciendo ese texto sale la huella del original en los 4 escenarios.
+
+### Decisiones que no eran obvias
+
+1. **Paridad antes que arreglos.** Se encontraron ≈ 90 comportamientos dudosos del original (`docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md`), algunos graves
+   (un identificador ausente en Parquet se lee como `'NA'` y vincula empresas distintas como EMPRESA/A; «J Martinez» se une con «A Martinez»; «Ltda» no tiene forma legal
+   reconocida). **Ninguno se arregló al portar**: se conservan y se marcan `# Hallazgo F3:` para que la prueba de paridad siga siendo una comparación limpia. Cada arreglo es
+   un commit aparte, con su prueba y su declaración (`docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`). Costo: el paquete nuevo hereda hoy los defectos del viejo.
+2. **Arnés híbrido en lugar de «reescribir y comparar al final».** El motor original corre con las piezas nuevas sustituidas de a una; cuando falla, dice qué tabla, columna y fila
+   difieren. Eso permitió que cinco agentes trabajaran en paralelo sobre módulos distintos y se integraran sin sorpresas.
+3. **El oráculo no se copia: se reconstruye.** El motor original trae marcas reales de empresas, que el repositorio no puede contener. `extraer_oraculo.py` lo saca del commit
+   `bab03c2` y verifica su SHA-256 (`b4484359…`). Las cinco frases con marcas reales que el paquete reescribe viven fuera de git.
+4. **Los 4 escenarios no bastan.** La mutación mostró que el arnés deja pasar «IDÉNTICO» a entre 3 y 7 de cada 10 mutantes de los módulos que ejercen ramas raras; los mata una prueba unitaria
+   cuyos valores salen de ejecutar el original. La protección es la suma: arnés + pruebas unitarias + huellas congeladas + fuzz diferencial.
+5. **La revisión independiente con un modelo más fuerte encontró lo que la evidencia automática no veía.** Tres revisores (lectura/normalización, comparar/decisiones, deduplicación)
+   hallaron una diferencia no declarada (`sha256_archivo` con una ruta con barra final: el original reventaba AL FINAL de la corrida), tres diferencias con entradas malformadas y 18 defectos del
+   original sin catalogar, dos de ellos graves. **Falta** esa revisión para candidatos/clasificación, vínculos/web/validación, calidad/controles/resumen/ejecutar y tablas.
+6. **El motor original deja una FALLA que el paquete conserva.** La invariante «todo vínculo automático A tiene todas las palabras alineadas» falla en los 4 escenarios porque
+   `evidencia_extra` sube a EMPRESA/A un par por identificador comparable sin mirar las palabras ni el país (hallazgo C1). `res.todo_ok` es `False` en los insumos inventados, igual que en el original.
+
+### Lo que la integración enseñó
+
+- `from tests import apoyo_…` funcionaba con `python -m pytest` y **fallaba con el `pytest` simple que usa el CI**: el paquete `tests` no está en `sys.path`. Convención del repositorio: módulos de apoyo hermanos (`import apoyo_cruce`).
+- Dos paquetes tocaron el mismo diccionario (`ESCRITORES_PERMITIDOS` de `tests/test_escritor.py`): conflicto trivial, resuelto conservando ambas entradas. La prueba exige registrar todo módulo que escriba.
+- El caché de mypy engaña: una corrida con caché tibia mostró 73 errores y otra, con caché frío, 0. Comprobar siempre con `--cache-dir` nuevo.
+- La guarda de nombres reales (`tests/test_sin_nombres_reales.py`, con hashes) atrapó dos frases con marcas reales en una cadena que va al Excel, que los agentes habían dejado «para no romper la paridad». Se resolvieron con una tabla de textos declarados.
+- Los agentes hicieron `git commit --amend` después de avisar que habían terminado (dejaron commits colgantes). Mezclar siempre la punta de la rama que reporta el informe final, no el primer hash que se vio.
+
+### Costo (para decidir cuánto seguir)
+
+Tokens de subagentes reportados en F3.1, sin contar al coordinador ni al agente del Excel: ≈ 3,2 M (lectura/normalización 0,46 M; comparar/decisiones/deduplicar 0,79 M; candidatos…validación 0,44 M;
+tablas 0,46 M; tres revisiones independientes 1,05 M). El resto de F3 en el mismo estilo costaría varias veces más; ver «modo económico» en `docs/REANUDAR.md`.
+
+### Pendiente (anotado para que no se pierda)
+
+* F3.1b (nivel 1: 24 arreglos declarados), F3.2, F3.3 (`vincular_empresas` → `ResultadoLinkage`), F3.4 (decisiones unificadas), F3.5/F3.6 (notebooks 10 y 09), F3.7 (ADR-0014, `docs/VINCULACION.md`, skill, sin versión ni tag).
+* Revisión independiente de equivalencia de los módulos restantes (encargo en `docs/vinculacion/REVISION_EQUIVALENCIA.md`).
+* Comparar contra los datos reales del piloto con la huella `9e3950f469ae0523`: faltan `referencia_revision_2026-09-24.csv`, `decisiones_revision_2026-09-29.csv` y el Excel de la entrega del 5-oct.
+* La vista VPI y el «notebook 11»: dependen del Excel de Caro, que Enrique dejó para el final (2026-10-11).
+* Verificar si el fallo único de `tests/test_contrato_salida.py::test_id_entidad_nit_y_ent[cruce_disco]` bajo carga es intermitente de la suite (pasa suelto).
+
+### Estado al cierre
+
+La rama `claude/f3-vinculacion` (empujada) trae el motor completo, con paridad demostrada en Python 3.10 + pandas 2 y Python 3.11 + pandas 3, y la documentación para retomar (`docs/REANUDAR.md`).
+No hay PR abierto para ella; el PR #4 (cierre de F2) espera el merge de Enrique. Plan ≈ 51 %, F3 ≈ 38 %. Sin versión ni tag.

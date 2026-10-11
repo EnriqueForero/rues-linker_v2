@@ -547,6 +547,146 @@ def _vistas_validadas(tablas: Mapping[str, pd.DataFrame]) -> list[tuple[str, pd.
     return vistas
 
 
+def _exigir_opciones_de_vistas(
+    nombre: str | None, libro: bool, formato: str, diccionario: pd.DataFrame | None
+) -> None:
+    """Fail-fast de las opciones de ``exportar_vistas``, antes de tocar el disco."""
+    if formato not in ("auto", "csv"):
+        raise ValueError(
+            mensaje_accionable(
+                f"exportar_vistas: formato {formato!r} desconocido.",
+                "Un formato que no se conoce no se ignora en silencio.",
+                'Use formato="auto" (xlsx si cabe, csv.gz si no) o formato="csv".',
+            )
+        )
+    if libro and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: libro=True no se combina con formato="csv".',
+                "Un libro es un .xlsx con una hoja por vista; un CSV no tiene hojas.",
+                'Quite libro=True para un .csv por vista, o use formato="auto".',
+            )
+        )
+    if libro and nombre is None:
+        raise ValueError(
+            mensaje_accionable(
+                "exportar_vistas: libro=True necesita nombre.",
+                "El libro se llama <carpeta>/<nombre>.xlsx; sin nombre no hay archivo.",
+                "Pase nombre='<tronco del archivo>' (sin extensión ni rutas).",
+            )
+        )
+    if diccionario is not None and formato == "csv":
+        raise ValueError(
+            mensaje_accionable(
+                'exportar_vistas: diccionario= no se combina con formato="csv".',
+                "La hoja DICCIONARIO va dentro de cada .xlsx; un CSV no tiene hojas.",
+                'Quite diccionario= para csv, o use formato="auto" y recibirá la hoja.',
+            )
+        )
+    if nombre is not None:
+        validate_leaf_name(nombre, "nombre")
+
+
+def _vista_a_csv_gz(
+    vista: str, tabla: pd.DataFrame, carpeta: Path, prefijo: str, tope: int
+) -> Path:
+    """Una vista que no cabe en Excel va COMPLETA a ``<prefijo><vista>.csv.gz``: nunca un recorte."""
+    ruta = carpeta / f"{prefijo}{vista}.csv.gz"
+    escribir_csv_gz(tabla, ruta)
+    logger.info(
+        "exportar_vistas: la vista %r no cabe en Excel (%s > %s filas); va completa a %s",
+        vista,
+        miles(len(tabla)),
+        miles(tope),
+        ruta.name,
+    )
+    return ruta
+
+
+def _vistas_a_csv(
+    vistas: list[tuple[str, pd.DataFrame]], carpeta: Path, prefijo: str
+) -> list[Path]:
+    """``formato="csv"``: un ``<prefijo><vista>.csv`` plano por vista, sin límite."""
+    escritas: list[Path] = []
+    for vista, tabla in vistas:
+        ruta = carpeta / f"{prefijo}{vista}.csv"
+        prepare_spreadsheet_data(tabla).to_csv(ruta, index=False)
+        escritas.append(ruta)
+    return escritas
+
+
+def _diccionario_del_libro(
+    caben: list[tuple[str, pd.DataFrame]],
+    hojas: list[tuple[str, pd.DataFrame]],
+    diccionarios: dict[str, pd.DataFrame],
+) -> pd.DataFrame | None:
+    """La UNA hoja DICCIONARIO de un libro, con la PESTAÑA (``hoja``) delante.
+
+    La pestaña es el nombre saneado con que se escribió la vista, no el de la
+    vista cruda (31 caracteres, desambiguado), para que quien lee encuentre la
+    hoja. ``None`` si ninguna vista tiene columnas explicadas.
+    """
+    con_hoja = [
+        diccionarios[v].assign(hoja=pestana)
+        for (v, _), (pestana, _) in zip(caben, hojas, strict=True)
+        if v in diccionarios and not diccionarios[v].empty
+    ]
+    if not con_hoja:
+        return None
+    union = pd.concat(con_hoja, ignore_index=True)
+    return union[["hoja", *(c for c in union.columns if c != "hoja")]]
+
+
+def _vistas_a_libro(
+    vistas: list[tuple[str, pd.DataFrame]],
+    carpeta: Path,
+    nombre: str,
+    prefijo: str,
+    diccionarios: dict[str, pd.DataFrame],
+    tope: int,
+) -> list[Path]:
+    """``libro=True``: UN ``<nombre>.xlsx`` con lo que cabe y un ``.csv.gz`` por vista que no."""
+    escritas: list[Path] = []
+    # Primero el libro (lo que cabe), después los .csv.gz de lo que no cabe.
+    usados: set[str] = set()
+    caben = [(v, t) for v, t in vistas if len(t) <= tope]
+    hojas = [(safe_sheet_name(v, usados), t) for v, t in caben]
+    if hojas:
+        # El nombre de la hoja DICCIONARIO se sanea DESPUÉS de las vistas: una
+        # vista llamada DICCIONARIO conserva el suyo.
+        union = _diccionario_del_libro(caben, hojas, diccionarios)
+        if union is not None:
+            hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), union))
+        ruta = carpeta / f"{nombre}.xlsx"
+        _escribir_libro(hojas, ruta)
+        escritas.append(ruta)
+    escritas += [_vista_a_csv_gz(v, t, carpeta, prefijo, tope) for v, t in vistas if len(t) > tope]
+    return escritas
+
+
+def _vistas_sueltas(
+    vistas: list[tuple[str, pd.DataFrame]],
+    carpeta: Path,
+    prefijo: str,
+    diccionarios: dict[str, pd.DataFrame],
+    tope: int,
+) -> list[Path]:
+    """Un archivo por vista, en el orden en que llegaron: ``.xlsx`` si cabe, ``.csv.gz`` si no."""
+    escritas: list[Path] = []
+    for vista, tabla in vistas:
+        if len(tabla) > tope:
+            escritas.append(_vista_a_csv_gz(vista, tabla, carpeta, prefijo, tope))
+            continue
+        usados: set[str] = set()
+        hojas = [(safe_sheet_name(vista, usados), tabla)]
+        if vista in diccionarios and not diccionarios[vista].empty:
+            hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), diccionarios[vista]))
+        ruta = carpeta / f"{prefijo}{vista}.xlsx"
+        _escribir_libro(hojas, ruta)
+        escritas.append(ruta)
+    return escritas
+
+
 def exportar_vistas(
     tablas: Mapping[str, pd.DataFrame],
     carpeta: str | Path,
@@ -599,40 +739,7 @@ def exportar_vistas(
     Hasta F2.11 vivía copiada en los notebooks 01–04 y como
     ``PipelineResult.to_excel``/``to_csv`` (hoy alias de esta función).
     """
-    if formato not in ("auto", "csv"):
-        raise ValueError(
-            mensaje_accionable(
-                f"exportar_vistas: formato {formato!r} desconocido.",
-                "Un formato que no se conoce no se ignora en silencio.",
-                'Use formato="auto" (xlsx si cabe, csv.gz si no) o formato="csv".',
-            )
-        )
-    if libro and formato == "csv":
-        raise ValueError(
-            mensaje_accionable(
-                'exportar_vistas: libro=True no se combina con formato="csv".',
-                "Un libro es un .xlsx con una hoja por vista; un CSV no tiene hojas.",
-                'Quite libro=True para un .csv por vista, o use formato="auto".',
-            )
-        )
-    if libro and nombre is None:
-        raise ValueError(
-            mensaje_accionable(
-                "exportar_vistas: libro=True necesita nombre.",
-                "El libro se llama <carpeta>/<nombre>.xlsx; sin nombre no hay archivo.",
-                "Pase nombre='<tronco del archivo>' (sin extensión ni rutas).",
-            )
-        )
-    if diccionario is not None and formato == "csv":
-        raise ValueError(
-            mensaje_accionable(
-                'exportar_vistas: diccionario= no se combina con formato="csv".',
-                "La hoja DICCIONARIO va dentro de cada .xlsx; un CSV no tiene hojas.",
-                'Quite diccionario= para csv, o use formato="auto" y recibirá la hoja.',
-            )
-        )
-    if nombre is not None:
-        validate_leaf_name(nombre, "nombre")
+    _exigir_opciones_de_vistas(nombre, libro, formato, diccionario)
     vistas = _vistas_validadas(tablas)
     # La hoja DICCIONARIO de cada vista se selecciona ANTES de escribir: un
     # diccionario con otra forma falla aquí, sin dejar archivos a medias.
@@ -650,64 +757,14 @@ def exportar_vistas(
 
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
-    escritas: list[Path] = []
     if formato == "csv":
-        for vista, tabla in vistas:
-            ruta = carpeta / f"{prefijo}{vista}.csv"
-            prepare_spreadsheet_data(tabla).to_csv(ruta, index=False)
-            escritas.append(ruta)
+        escritas = _vistas_a_csv(vistas, carpeta, prefijo)
         logger.info("exportar_vistas: %d vistas en %s (csv)", len(escritas), carpeta)
         return escritas
-
-    def _csv_gz(vista: str, tabla: pd.DataFrame) -> Path:
-        ruta = carpeta / f"{prefijo}{vista}.csv.gz"
-        escribir_csv_gz(tabla, ruta)
-        logger.info(
-            "exportar_vistas: la vista %r no cabe en Excel (%s > %s filas); va completa a %s",
-            vista,
-            miles(len(tabla)),
-            miles(tope),
-            ruta.name,
-        )
-        return ruta
-
     if libro:
-        # Primero el libro (lo que cabe), después los .csv.gz de lo que no cabe.
-        usados: set[str] = set()
-        caben = [(v, t) for v, t in vistas if len(t) <= tope]
-        hojas = [(safe_sheet_name(v, usados), t) for v, t in caben]
-        if hojas:
-            # Una sola hoja DICCIONARIO al final, con la PESTAÑA (``hoja``)
-            # delante: el nombre saneado con que se escribió, no el de la vista
-            # cruda (31 caracteres, desambiguado), para que quien lee encuentre
-            # la pestaña. Su propio nombre se sanea DESPUÉS de las vistas: una
-            # vista llamada DICCIONARIO conserva el suyo.
-            con_hoja = [
-                diccionarios[v].assign(hoja=pestana)
-                for (v, _), (pestana, _) in zip(caben, hojas, strict=True)
-                if v in diccionarios and not diccionarios[v].empty
-            ]
-            if con_hoja:
-                union = pd.concat(con_hoja, ignore_index=True)
-                union = union[["hoja", *(c for c in union.columns if c != "hoja")]]
-                hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), union))
-            ruta = carpeta / f"{nombre}.xlsx"
-            _escribir_libro(hojas, ruta)
-            escritas.append(ruta)
-        escritas += [_csv_gz(v, t) for v, t in vistas if len(t) > tope]
+        escritas = _vistas_a_libro(vistas, carpeta, str(nombre), prefijo, diccionarios, tope)
     else:
-        # Un archivo por vista, en el orden en que llegaron.
-        for vista, tabla in vistas:
-            if len(tabla) <= tope:
-                ruta = carpeta / f"{prefijo}{vista}.xlsx"
-                usados = set()
-                hojas = [(safe_sheet_name(vista, usados), tabla)]
-                if vista in diccionarios and not diccionarios[vista].empty:
-                    hojas.append((safe_sheet_name(HOJA_DICCIONARIO, usados), diccionarios[vista]))
-                _escribir_libro(hojas, ruta)
-                escritas.append(ruta)
-            else:
-                escritas.append(_csv_gz(vista, tabla))
+        escritas = _vistas_sueltas(vistas, carpeta, prefijo, diccionarios, tope)
     logger.info("exportar_vistas: %d archivos en %s", len(escritas), carpeta)
     return escritas
 
