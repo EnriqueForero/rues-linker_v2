@@ -1711,3 +1711,71 @@ F3 (vinculación dentro de la librería, 0.23.0), F4 (escala) y F5/F6 (ingenier�
 y release 1.0). Pendientes de Enrique: borrar las ramas ya mezcladas
 (`claude/f2-motor`, `claude/f2/t8`, `t10`, `t11`, `t12`) desde GitHub, la lista
 de archivos y columnas que abre cada equipo (V6) y el notebook VPI de Caro.
+
+
+## IT-30 · F3, la vinculación dentro de la librería: el motor del notebook 10 extraído con paridad (sin publicar)
+
+Cuarta fase del plan «v2 → producción». Objetivo: que el motor `vinculador_empresas` 1.0.0, que vivía en una celda `%%writefile`
+del notebook 10 (2.984 líneas, 60 funciones y clases), viva en la librería con pruebas, y que los notebooks solo configuren. Esta
+iteración **cierra el hito F3.1** (extracción con paridad) en la rama `claude/f3-vinculacion`, **sin mezclar en `main`**. F3.1b a F3.7
+quedan pendientes. Se cerró aquí por una decisión de costo de Enrique (2026-10-11), no porque la fase esté completa.
+
+### Lo que entró (y cómo se demostró)
+
+| pieza | qué es | evidencia |
+|---|---|---|
+| F3.0 oráculo | insumos inventados en 4 escenarios (`tests/apoyo_vinculacion.py`) y las huellas del motor ORIGINAL (`tests/lineas_base_vinculacion.py`) | iguales en Python 3.10 + pandas 2.3 y Python 3.11 + pandas 3.0, y con la librería 0.22.4 y la de F2 |
+| A | `lectura.py`, `normalizar.py` | 234 casos; 100 % de líneas y ramas; diferencial aleatorio 0 diferencias |
+| B | `comparar.py`, `decisiones.py`, `deduplicar.py` | 307 casos; fuzz 0 diferencias; 228 mutantes |
+| C | `candidatos.py`, `clasificar.py`, `vinculos.py`, `web.py`, `validacion.py` | 216 casos; 187 mutantes; fuzz 0 diferencias |
+| D | `tablas.py` y las hojas (`tabla_*`, `pares`, `empresas`) | 210 casos; fixture parquet de estado real; 121 mutantes |
+| E | `flujo/vinculacion_excel/` (Excel de 16 hojas) | 54 casos; Excel celda por celda (valor y estilo) |
+| coordinador | `config`, `constantes`, `resultado`, `calidad`, `controles`, `resumen`, `ejecutar`; `registrar_locale_compuesto`; arnés `scripts/oraculo_vinculacion/` | `tests/test_vinculacion_paridad.py` (85 casos) |
+
+**La compuerta:** `ejecutar` y el Excel contra el motor original, 15 tablas + `resumen` + `por_pais` + avisos + Excel, en 4 escenarios y 2 entornos
+→ **IDÉNTICO**. Un solo cambio declarado: una celda del RESUMEN (fila 16, `LECTURA`) nombraba dos empresas reales y ahora usa marcas inventadas;
+deshaciendo ese texto sale la huella del original en los 4 escenarios.
+
+### Decisiones que no eran obvias
+
+1. **Paridad antes que arreglos.** Se encontraron ≈ 90 comportamientos dudosos del original (`docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md`), algunos graves
+   (un identificador ausente en Parquet se lee como `'NA'` y vincula empresas distintas como EMPRESA/A; «J Martinez» se une con «A Martinez»; «Ltda» no tiene forma legal
+   reconocida). **Ninguno se arregló al portar**: se conservan y se marcan `# Hallazgo F3:` para que la prueba de paridad siga siendo una comparación limpia. Cada arreglo es
+   un commit aparte, con su prueba y su declaración (`docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`). Costo: el paquete nuevo hereda hoy los defectos del viejo.
+2. **Arnés híbrido en lugar de «reescribir y comparar al final».** El motor original corre con las piezas nuevas sustituidas de a una; cuando falla, dice qué tabla, columna y fila
+   difieren. Eso permitió que cinco agentes trabajaran en paralelo sobre módulos distintos y se integraran sin sorpresas.
+3. **El oráculo no se copia: se reconstruye.** El motor original trae marcas reales de empresas, que el repositorio no puede contener. `extraer_oraculo.py` lo saca del commit
+   `bab03c2` y verifica su SHA-256 (`b4484359…`). Las cinco frases con marcas reales que el paquete reescribe viven fuera de git.
+4. **Los 4 escenarios no bastan.** La mutación mostró que el arnés deja pasar «IDÉNTICO» a entre 3 y 7 de cada 10 mutantes de los módulos que ejercen ramas raras; los mata una prueba unitaria
+   cuyos valores salen de ejecutar el original. La protección es la suma: arnés + pruebas unitarias + huellas congeladas + fuzz diferencial.
+5. **La revisión independiente con un modelo más fuerte encontró lo que la evidencia automática no veía.** Tres revisores (lectura/normalización, comparar/decisiones, deduplicación)
+   hallaron una diferencia no declarada (`sha256_archivo` con una ruta con barra final: el original reventaba AL FINAL de la corrida), tres diferencias con entradas malformadas y 18 defectos del
+   original sin catalogar, dos de ellos graves. **Falta** esa revisión para candidatos/clasificación, vínculos/web/validación, calidad/controles/resumen/ejecutar y tablas.
+6. **El motor original deja una FALLA que el paquete conserva.** La invariante «todo vínculo automático A tiene todas las palabras alineadas» falla en los 4 escenarios porque
+   `evidencia_extra` sube a EMPRESA/A un par por identificador comparable sin mirar las palabras ni el país (hallazgo C1). `res.todo_ok` es `False` en los insumos inventados, igual que en el original.
+
+### Lo que la integración enseñó
+
+- `from tests import apoyo_…` funcionaba con `python -m pytest` y **fallaba con el `pytest` simple que usa el CI**: el paquete `tests` no está en `sys.path`. Convención del repositorio: módulos de apoyo hermanos (`import apoyo_cruce`).
+- Dos paquetes tocaron el mismo diccionario (`ESCRITORES_PERMITIDOS` de `tests/test_escritor.py`): conflicto trivial, resuelto conservando ambas entradas. La prueba exige registrar todo módulo que escriba.
+- El caché de mypy engaña: una corrida con caché tibia mostró 73 errores y otra, con caché frío, 0. Comprobar siempre con `--cache-dir` nuevo.
+- La guarda de nombres reales (`tests/test_sin_nombres_reales.py`, con hashes) atrapó dos frases con marcas reales en una cadena que va al Excel, que los agentes habían dejado «para no romper la paridad». Se resolvieron con una tabla de textos declarados.
+- Los agentes hicieron `git commit --amend` después de avisar que habían terminado (dejaron commits colgantes). Mezclar siempre la punta de la rama que reporta el informe final, no el primer hash que se vio.
+
+### Costo (para decidir cuánto seguir)
+
+Tokens de subagentes reportados en F3.1, sin contar al coordinador ni al agente del Excel: ≈ 3,2 M (lectura/normalización 0,46 M; comparar/decisiones/deduplicar 0,79 M; candidatos…validación 0,44 M;
+tablas 0,46 M; tres revisiones independientes 1,05 M). El resto de F3 en el mismo estilo costaría varias veces más; ver «modo económico» en `docs/REANUDAR.md`.
+
+### Pendiente (anotado para que no se pierda)
+
+* F3.1b (nivel 1: 24 arreglos declarados), F3.2, F3.3 (`vincular_empresas` → `ResultadoLinkage`), F3.4 (decisiones unificadas), F3.5/F3.6 (notebooks 10 y 09), F3.7 (ADR-0014, `docs/VINCULACION.md`, skill, sin versión ni tag).
+* Revisión independiente de equivalencia de los módulos restantes (encargo en `docs/vinculacion/REVISION_EQUIVALENCIA.md`).
+* Comparar contra los datos reales del piloto con la huella `9e3950f469ae0523`: faltan `referencia_revision_2026-09-24.csv`, `decisiones_revision_2026-09-29.csv` y el Excel de la entrega del 5-oct.
+* La vista VPI y el «notebook 11»: dependen del Excel de Caro, que Enrique dejó para el final (2026-10-11).
+* Verificar si el fallo único de `tests/test_contrato_salida.py::test_id_entidad_nit_y_ent[cruce_disco]` bajo carga es intermitente de la suite (pasa suelto).
+
+### Estado al cierre
+
+La rama `claude/f3-vinculacion` (empujada) trae el motor completo, con paridad demostrada en Python 3.10 + pandas 2 y Python 3.11 + pandas 3, y la documentación para retomar (`docs/REANUDAR.md`).
+No hay PR abierto para ella; el PR #4 (cierre de F2) espera el merge de Enrique. Plan ≈ 51 %, F3 ≈ 38 %. Sin versión ni tag.

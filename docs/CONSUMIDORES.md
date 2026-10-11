@@ -625,3 +625,15 @@ pytest tests/test_scripts_tecnicas_contrato.py -W error::DeprecationWarning:<los
   `tests/test_scripts_tecnicas_contrato.py`; si un script nuevo lee una columna
   técnica, debe pasar por `salida.tecnicas.adjuntar_tecnicas`, no por la
   correlativa entregada.
+
+## Notas fechadas
+
+### 2026-10-11 (Enrique): VPI, notebook 11 y archivos del piloto
+
+- **Excel de Caro / formato VPI:** se deja **para el final** de F3. Enrique indica que ya compartió material sin etiquetarlo como de Caro; al llegar a F3.3 se releen las matrices
+  «VPI» del Drive (hoja por hoja) con la hipótesis de que alguna es el formato, sin pedir un archivo nuevo y sin inventar columnas. La vista VPI sigue **VACÍA** hasta entonces.
+- **«Notebook 11»:** solo existe en el plan («notebooks 01–11», F3.5 «10 y 11 delgados»); no existe en el repositorio, el Drive ni el zip entregado el 2026-10-10. Se interpreta como el notebook VPI de
+  Caro (que Enrique confirmó que no existe). Recomendación vigente: no crearlo ahora; cuando se resuelva el formato VPI, un notebook de tres celdas que genere la vista. F3.5 cubre solo el 10.
+- **Archivos del piloto agroalimentos** (`referencia_revision_2026-09-24.csv`, `decisiones_revision_2026-09-29.csv` y el Excel entregado el 2026-10-05, huella `ENLACES` `9e3950f469ae0523`): no están en el Drive
+  conectado ni en el entorno de trabajo. Sirven solo para reproducir esa huella exacta (el Excel basta: su hoja `DECISIONES` trae el historial). Prioridad baja; la paridad que sí se verifica es motor original contra paquete nuevo.
+

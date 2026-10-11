@@ -1,5 +1,28 @@
 # Changelog
 
+## [Sin publicar] — F3 (en curso) · Vinculación de empresas dentro de la librería: hito F3.1, el motor extraído con paridad
+
+Aditivo: ningún comportamiento publicado cambia. El motor `vinculador_empresas` 1.0.0 (la celda `%%writefile` del notebook 10) pasa a
+`record_linkage.flujo.vinculacion`, **con las mismas tablas y el mismo Excel que el original** (15 tablas, `resumen`, `por_pais`, avisos y Excel celda por celda,
+en 4 escenarios inventados y en Python 3.10 + pandas 2.3 y Python 3.11 + pandas 3.0). Aún no hay `vincular_empresas` (contrato estándar), ni notebooks delgados,
+ni versión ni tag; ver `docs/REANUDAR.md`.
+
+- **Paquete** `flujo/vinculacion/` (26 módulos, ninguno > 600 líneas, complejidad ≤ 15, sin `print`, mypy en el anillo bloqueante):
+  `ejecutar(cfg, verboso, registro)`, `ConfigVinculacion`, `Fuente`, `Resultado`, `leer_decisiones`, `plantilla_decisiones`.
+  Excel de 16 hojas en `flujo/vinculacion_excel/` (`exportar_vinculacion_excel`, alias `exportar_excel`; carga perezosa desde el paquete).
+- **`matching/locales.py::registrar_locale_compuesto`**: un solo punto para componer un locale; `flujo.importadores.registrar_locale` delega.
+- **Arnés de paridad** `scripts/oraculo_vinculacion/`: reconstruye el motor original del historial de git (SHA-256 verificado) y lo compara con el paquete
+  nuevo; `tests/test_vinculacion_paridad.py` congela las huellas del original (`tests/lineas_base_vinculacion.py`).
+- **Pruebas:** 1.107 casos nuevos del paquete; los valores esperados salen de ejecutar el motor original. Guarda `tests/test_sin_nombres_reales.py`
+  (hashes): ningún archivo nuevo nombra una empresa real.
+- **Cambios declarados respecto del original** (no son arreglos de defectos): `print` → `registro`/logging; `assert` → `RuntimeError` con mensaje; `sha256_archivo` acepta la ruta con barra final
+  (el original reventaba al final de la corrida); una celda del RESUMEN (fila 16) y tres textos del LEEME/guía de revisión nombraban empresas reales y ahora usan marcas inventadas;
+  `dec["TIPO"]` en lugar de `dec.TIPO` (KeyError en vez de AttributeError con una tabla mal formada); `zip(strict=True)` donde los largos son iguales por construcción.
+- **Hallazgos del original, conservados a propósito** (≈ 90, `docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md`; plan de arreglos en `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`).
+  Los más graves: `id_comparable(pd.NA)` devuelve `'NA'` (falso «mismo identificador»); `evidencia_extra` sube a EMPRESA/A por identificador sin mirar país ni palabras;
+  la deduplicación une «J Martinez» con «A Martinez»; «Ltda», «Lda», «S. en C.», «E.U.» no tienen forma legal reconocida; `exportar_excel` cae con pandas 3 si una columna no tiene valores.
+- **CI:** el anillo bloqueante de mypy incluye `flujo/vinculacion` y `flujo/vinculacion_excel` (0 errores en 66 archivos, en frío).
+
 ## [Sin publicar] — F2 · Calidad y unificación del motor: estrellas en `linkage()`, identidad estable, un estándar en los cinco caminos
 
 **Cambio de comportamiento declarado (ADR-0011)**: `produccion_estandar` aplica

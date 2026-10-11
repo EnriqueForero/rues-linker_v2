@@ -59,6 +59,12 @@ ARCHIVOS_VIGILADOS = (
     "tests/lineas_base_vinculacion.py",
     "tests/test_vinculacion_*.py",
     "tests/test_apoyo_vinculacion.py",
+    "tests/apoyo_*_vinculacion.py",
+    "docs/REANUDAR.md",
+    "docs/PLAN_EJECUCION.md",
+    "docs/vinculacion/*.md",
+    "scripts/oraculo_vinculacion/*.py",
+    "scripts/oraculo_vinculacion/*.md",
 )
 _PALABRA = re.compile(r"[a-záéíóúüñ0-9]+")
 
