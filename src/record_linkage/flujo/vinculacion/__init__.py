@@ -17,7 +17,35 @@ invariantes y Excel de entrega.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from record_linkage.flujo.vinculacion.config import ConfigVinculacion, Fuente
+from record_linkage.flujo.vinculacion.decisiones import leer_decisiones, plantilla_decisiones
+from record_linkage.flujo.vinculacion.ejecutar import ejecutar
 from record_linkage.flujo.vinculacion.resultado import Resultado
 
-__all__ = ["ConfigVinculacion", "Fuente", "Resultado"]
+if TYPE_CHECKING:
+    from record_linkage.flujo.vinculacion_excel import exportar_excel, exportar_vinculacion_excel
+
+__all__ = [
+    "ConfigVinculacion",
+    "Fuente",
+    "Resultado",
+    "ejecutar",
+    "exportar_excel",
+    "exportar_vinculacion_excel",
+    "leer_decisiones",
+    "plantilla_decisiones",
+]
+
+#: El Excel de entrega vive en ``flujo.vinculacion_excel``, que a su vez importa este paquete: se resuelve
+#: al pedirlo (PEP 562) para no crear un ciclo de importación.
+_DEL_EXCEL = frozenset({"exportar_excel", "exportar_vinculacion_excel"})
+
+
+def __getattr__(nombre: str) -> Any:
+    if nombre in _DEL_EXCEL:
+        from record_linkage.flujo import vinculacion_excel
+
+        return getattr(vinculacion_excel, nombre)
+    raise AttributeError(f"module {__name__!r} has no attribute {nombre!r}")

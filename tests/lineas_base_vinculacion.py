@@ -94,3 +94,51 @@ HUELLAS_MOTOR_ORIGINAL: dict[str, dict[str, str]] = {
         "resumen": "6507dc6aa65810e0",
     },
 }
+
+#: Avisos del motor original sobre los mismos insumos (mismo texto, mismo orden). Iguales en pandas 2 y 3.
+#: Con ``con_decisiones=False`` no hay decisiones y no hay avisos.
+_AVISOS_CON_DECISIONES: tuple[str, ...] = (
+    "decisión con FUENTE desconocida 'NINGUNA': España|Zelvora Alimentos S.A. ↔ ZZ",
+    "ORBIS: la grafía del exportador 'España|NO EXISTE SA' no existe en esta base (se omite)",
+    "ORBIS: el registro 'ESB0000000' no existe en esta base (se omite)",
+    "ORBIS: «Zelvora Alimentos S.A.» ↔ ESB0000001 «ZELVORA ALIMENTOS SA» tiene decisiones distintas "
+    "(decisiones_1.csv: EMPRESA → decisiones_2.csv: GRUPO); se aplica la última",
+)
+
+#: escenario → avisos
+AVISOS_MOTOR_ORIGINAL: dict[str, tuple[str, ...]] = {
+    "automatico_puro": (),
+    "base": _AVISOS_CON_DECISIONES,
+    "errata_doble": _AVISOS_CON_DECISIONES,
+    "relajado": _AVISOS_CON_DECISIONES,
+}
+
+_FALLA_A_ALINEADAS = "Todo vínculo automático A tiene todas las palabras alineadas"
+_ADVERTENCIA_RECALL = "Recall del bloqueo: todo vínculo de la referencia es al menos candidato"
+
+#: Controles de CONTROL_QA que NO salen en OK en el motor original (escenario → control → estado). La FALLA es un
+#: defecto conocido del original (hallazgo de C: ``evidencia_extra`` sube a EMPRESA/A un par por identificador
+#: comparable sin mirar las palabras); el paquete lo conserva hasta que se declare su arreglo (F3.1b).
+CONTROLES_NO_OK_MOTOR_ORIGINAL: dict[str, dict[str, str]] = {
+    "automatico_puro": {_FALLA_A_ALINEADAS: "FALLA"},
+    "base": {_FALLA_A_ALINEADAS: "FALLA", _ADVERTENCIA_RECALL: "ADVERTENCIA"},
+    "errata_doble": {_FALLA_A_ALINEADAS: "FALLA", _ADVERTENCIA_RECALL: "ADVERTENCIA"},
+    "relajado": {_FALLA_A_ALINEADAS: "FALLA", _ADVERTENCIA_RECALL: "ADVERTENCIA"},
+}
+
+#: Cambios DECLARADOS respecto del motor original: (escenario, tabla) → (huella nueva, qué cambió y por qué).
+#: La prueba de paridad exige esta huella en lugar de la del original. Nunca se agrega una entrada para que una
+#: prueba pase: cada una dice qué cambió, y se demuestra que deshaciendo ese cambio sale la huella del original.
+CAMBIOS_DECLARADOS: dict[tuple[str, str], tuple[str, str]] = {
+    (escenario, "resumen"): (
+        huella,
+        "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) "
+        "nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única "
+        "celda distinta.",
+    )
+    for escenario, huella in {
+        "base": "f47eaf7459bcc8b4",
+        "errata_doble": "ce2895231fefec46",
+        "relajado": "094e6055af68eb71",
+    }.items()
+}
