@@ -1,0 +1,13 @@
+{
+  "fecha": "2026-10-13",
+  "datos": "data/benchmark/benchmark_institucional.csv.gz (30.486 registros, 46.374 pares verdaderos)",
+  "maquina": "4 vCPU, misma donde se reprodujo el banco (43 s) y la escala 139k (333 s)",
+  "metodo": "TF-IDF de trigramas de caracteres (char_wb, min_df=2) sobre RAZON_SOCIAL en mayúsculas, producto disperso por lotes de 2.000 filas, umbral de coseno y top-k por fila. Implementación ingenua (bucle Python por fila); sin NIT, sin llaves, sin librería de top-n en C.",
+  "bloqueo_actual_lsh": {"candidatos": 968673, "por_registro": 31.8, "segundos_L2": 27.6, "recall_pares": 0.8662, "recall_pares_CON_ID": 0.9964, "recall_pares_SIN_ID": 0.7183},
+  "tfidf": [
+    {"umbral": 0.5, "topk": 30, "candidatos": 246281, "por_registro": 8.1, "segundos": 12.5, "recall_pares": 0.8489},
+    {"umbral": 0.4, "topk": 50, "candidatos": 532258, "por_registro": 17.5, "segundos": 12.2, "recall_pares": 0.9041, "recall_pares_CON_ID": 0.8701, "recall_pares_SIN_ID": 0.9427},
+    {"umbral": 0.35, "topk": 60, "candidatos": 727653, "por_registro": 23.9, "segundos": 14.4, "recall_pares": 0.9190, "recall_pares_CON_ID": 0.8853, "recall_pares_SIN_ID": 0.9572}
+  ],
+  "lectura": "El LSH recupera CON_ID por el bloqueo de NIT (0,996) y pierde el 28 % de los pares SIN_ID; el TF-IDF de nombre recupera el 94–96 % de SIN_ID con la mitad de candidatos. Un bloqueo híbrido (NIT exacto/base + TF-IDF top-k) es la apuesta de la Fase 2 del plan; la cifra del recall por régimen es la compuerta."
+}
