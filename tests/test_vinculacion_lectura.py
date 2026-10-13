@@ -96,9 +96,9 @@ def test_csv_utf8_con_bom_y_csv_cp1252_se_leen_igual(tmp_path):
         assert _filas(df) == [["Ñandú SA", "España"]]
 
 
-def test_hallazgo_f3_los_textos_na_none_y_null_llegan_como_ausentes(tmp_path):
-    # Hallazgo F3: pandas convierte esos textos en NaN al leer (¡'NA' es el ISO2 de Namibia!) y la fila
-    # pierde su país sin aviso. Se corrige aparte; aquí queda fijado el comportamiento del original.
+def test_los_textos_na_none_y_null_llegan_como_texto_no_como_ausentes(tmp_path):
+    # Arreglo A2 (F3.1b): pandas los convertía en NaN al leer (¡'NA' es el ISO2 de Namibia!) y la fila
+    # perdía su país sin aviso. Ahora solo la celda vacía es ausente.
     ruta = _escribir(
         tmp_path / "a.csv",
         "Empresa;País\nZelvora SA;NA\nKramento;N/A\nOrbelia;None\nTavorín;null\nQuelmar;Namibia\n",
@@ -106,7 +106,7 @@ def test_hallazgo_f3_los_textos_na_none_y_null_llegan_como_ausentes(tmp_path):
     df = leer_fuente(
         Fuente(clave="EXPORTADORES", archivo=str(ruta), col_nombre="Empresa", col_pais="País")
     )
-    assert df["País"].isna().tolist() == [True, True, True, True, False]
+    assert df["País"].tolist() == ["NA", "N/A", "None", "null", "Namibia"]
 
 
 def test_csv_conserva_los_ceros_a_la_izquierda(tmp_path):
@@ -189,16 +189,6 @@ def test_archivo_inexistente_dice_que_paso_y_que_hacer(tmp_path):
 )
 def test_formatear_hs6(entrada, esperado):
     assert formatear_hs6(entrada) == esperado
-
-
-def test_hallazgos_f3_de_formatear_hs6_son_el_comportamiento_del_original():
-    # Hallazgo F3: estos cuatro valores son defectos del motor original, conservados a propósito
-    # (la extracción no cambia el comportamiento). Se corrigen aparte, cada uno con su declaración.
-    assert formatear_hs6("nan") == "000nan"  # debería ser ''
-    assert formatear_hs6(-5) == "-00500"
-    assert formatear_hs6(pd.NA) == "<NA>"  # un ausente de Parquet no se trata como vacío
-    with pytest.raises(OverflowError):  # debería devolver el texto tal cual
-        formatear_hs6("inf")
 
 
 def test_transformaciones_disponibles():
@@ -344,9 +334,8 @@ def test_transformacion_desconocida_lista_las_disponibles(tmp_path):
     assert error.value.args[0] == "Transformación desconocida 'zzz'. Disponibles: ['hs6']"
 
 
-def test_hallazgo_f3_transformacion_sobre_una_columna_inexistente_da_un_keyerror_pelado(tmp_path):
-    # Hallazgo F3: la columna de la transformación no se valida contra el encabezado; el error es el
-    # KeyError('NoExiste') de pandas, sin el formato qué pasó / qué hacer.
+def test_transformacion_sobre_una_columna_inexistente_explica_que_hacer(tmp_path):
+    # Arreglo A6 (F3.1b): antes era el KeyError('NoExiste') pelado de pandas.
     ruta = _escribir(tmp_path / "o.csv", "Empresa\nZelvora SA\n")
     f = Fuente(
         clave="ORBIS",
@@ -354,9 +343,8 @@ def test_hallazgo_f3_transformacion_sobre_una_columna_inexistente_da_un_keyerror
         col_nombre="Empresa",
         transformaciones=(("NoExiste", "hs6"),),
     )
-    with pytest.raises(KeyError) as error:
+    with pytest.raises(KeyError, match=r"(?s)Qué pasó.*'NoExiste'.*Qué hacer"):
         leer_fuente(f)
-    assert error.value.args == ("NoExiste",)
 
 
 def test_los_encabezados_se_recortan_y_las_columnas_no_declaradas_se_conservan(tmp_path):
@@ -382,14 +370,14 @@ def test_fuente_sin_filas_devuelve_la_tabla_vacia_con_sus_columnas(tmp_path):
     assert df.columns.tolist() == ["FILA_EXCEL", "ID_REGISTRO", "FUENTE", "Empresa", "País"]
 
 
-def test_hallazgo_f3_en_un_csv_las_lineas_en_blanco_corren_fila_excel(tmp_path):
-    # Hallazgo F3: read_csv omite las líneas en blanco, así que FILA_EXCEL (posición + 2) deja de ser
-    # la línea real del archivo. Las líneas reales son 2, 4 y 6; el motor original da 2, 3 y 5.
+def test_en_un_csv_las_lineas_en_blanco_no_corren_fila_excel(tmp_path):
+    # Arreglo A5 (F3.1b): read_csv omitía las líneas en blanco y FILA_EXCEL dejaba de ser la línea real del
+    # archivo: las líneas reales son 2, 4 y 6; el motor original daba 2, 3 y 5.
     ruta = _escribir(
         tmp_path / "a.csv", "Empresa;País\nZelvora SA;España\n\nKramento SL;Francia\n;\nOrbelia;\n"
     )
     f = Fuente(clave="EXPORTADORES", archivo=str(ruta), col_nombre="Empresa", col_pais="País")
-    assert leer_fuente(f)["FILA_EXCEL"].tolist() == [2, 3, 5]
+    assert leer_fuente(f)["FILA_EXCEL"].tolist() == [2, 4, 6]
 
 
 # ── sha256_archivo ───────────────────────────────────────────────────────────────────────────────

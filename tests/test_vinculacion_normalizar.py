@@ -161,11 +161,8 @@ def _solo_nombre(nombres: list, **cambios) -> pd.DataFrame:
         (None, ""),
         (NAN, ""),
         (12345, ""),
-        ("tienda.zelvora.gob.es", "gob.es"),  # Hallazgo F3: gob.es no está en los segundos niveles
-        (
-            ";zelvora.es",
-            "",
-        ),  # Hallazgo F3: un separador al comienzo deja la primera dirección vacía
+        ("tienda.zelvora.gob.es", "zelvora.gob.es"),  # A8: gob.es es un sufijo público
+        (";zelvora.es", "zelvora.es"),  # A10: se ignoran los separadores del comienzo
     ],
 )
 def test_dominio_web(entrada, esperado):
@@ -255,7 +252,7 @@ def test_id_comparable(entrada, esperado):
         ("zelvora", "zelvora"),
         ("..zelvora..es..", "zelvora.es"),  # rótulos vacíos se descartan
         ("", ""),
-        ("x.gob.mx", "gob.mx"),  # Hallazgo F3: gob no está en la lista de segundos niveles
+        ("x.gob.mx", "x.gob.mx"),  # A8: gob.mx es un sufijo público: el rótulo propio se conserva
     ],
 )
 def test_dominio_registrable(entrada, esperado):
@@ -585,14 +582,14 @@ def test_paises_sin_el_alias_de_la_configuracion_pide_agregarlo():
     assert "'ISO3': ('FRANCE',)" in str(error.value)
 
 
-def test_hallazgo_f3_el_marcador_sin_pais_sale_como_si_fuera_una_grafia_del_usuario(nz):
-    # Hallazgo F3: los vacíos se reemplazan por «SIN PAIS» antes de canonizar; ese marcador tampoco se
-    # clasifica y, si hay otra grafía desconocida, aparece en la tabla de sugerencias y en los ejemplos.
+def test_el_marcador_de_celda_vacia_no_sale_en_las_sugerencias_de_pais(nz):
+    # Arreglo A11 (F3.1b): los vacíos ya no se clasifican, así que «SIN PAIS» no aparece como si lo hubiera
+    # escrito el usuario en la tabla de sugerencias ni en los ejemplos.
     with pytest.raises(ValueError) as error:
         nz.paises(pd.Series(["Narnia", ""]), "ANCLA", "Pais")
     mensaje = str(error.value)
-    assert "SIN PAIS" in mensaje
-    assert "'ISO3': ('SIN PAIS',)" in mensaje
+    assert "NARNIA" in mensaje
+    assert "SIN PAIS" not in mensaje
 
 
 # ── preparar_fuente ──────────────────────────────────────────────────────────────────────────────
@@ -903,9 +900,10 @@ def test_intermediario_exige_declarar_la_deteccion_y_un_patron(nz):
     assert preparar_fuente(entrada, activo, sin_patrones)["INTERMEDIARIO"].tolist() == [False] * 3
 
 
-def test_hallazgo_f3_una_fuente_sin_filas_revienta_en_preparar_fuente(nz):
-    # Hallazgo F3: con 0 filas np.array([]) es float64 y el `&` del alias lanza TypeError sin mensaje
-    # accionable. leer_fuente sí entrega la tabla vacía; el fallo ocurre aquí.
-    vacia = _entrada(Empresa=[])
-    with pytest.raises(TypeError):
-        preparar_fuente(vacia, Fuente(clave="FUENTE", archivo="n.xlsx", col_nombre="Empresa"), nz)
+def test_una_fuente_sin_filas_da_la_tabla_estandar_vacia(nz):
+    # Arreglo A12 (F3.1b): con 0 filas, np.array([]) era float64 y el `&` del alias lanzaba TypeError.
+    f = Fuente(clave="FUENTE", archivo="n.xlsx", col_nombre="Empresa")
+    vacia = preparar_fuente(_entrada(Empresa=[]), f, nz)
+    llena = preparar_fuente(_entrada(Empresa=["Zelvora SA"]), f, nz)
+    assert len(vacia) == 0
+    assert vacia.columns.tolist() == llena.columns.tolist()
