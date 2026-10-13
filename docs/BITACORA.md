@@ -1686,7 +1686,7 @@ de producción o declararlos límite del motor.
 | escala 139k / 463k (`--comparar base_f0 f2 --holgura-segundos 2`) | tiempo total +6,5 % / +4,2 %, memoria −3 % / −4 %, candidatos idénticos; **L5 +13,1 s / +16,0 s**: el costo declarado de la cobertura por estrellas. Grupo mayor sin identificador: 13 y 14 filas (≤ 50), 0 grupos ≥ 50. El comparador automático dice FALLA por la huella distinta (declarada) y por L5; la compuerta F2 se juzga por tiempo total, memoria y grupo mayor: pasa. Medido con un agente de pulido en paralelo |
 | trinquete de deuda | PASA; el techo baja: `print` 180 → 152, `os_path` 124 → 117, mypy 102 → 80, `except` 103 → 101; complejidad ≥ 20 se mantiene en 11 |
 | reglas estrictas (`--base 16e6e49`, el `main` previo a F2) | PASA: ningún archivo añade violaciones y tres las reducen |
-| CI | PR #3: Lint y Python 3.10 rojos (causas arriba), el resto verde; PR de cierre: PENDIENTE |
+| CI | PR #3: Lint y Python 3.10 rojos (causas arriba), el resto verde. **PR #4 verde** en `bab03c2` ([run 38081639013](https://github.com/EnriqueForero/rues-linker_v2/actions/runs/38081639013)): lint con paso estricto, typecheck-core, pruebas 3.10/3.11/3.12, security, trinquete de deuda y build; el job de deuda de mypy sigue rojo por diseño (`continue-on-error`, 80 errores = techo) y también lo está en `main` |
 
 ### Pendiente para F5 (anotado para que no se pierda)
 
