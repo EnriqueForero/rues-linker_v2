@@ -22,8 +22,6 @@ from record_linkage.flujo.vinculacion.lectura import (
 )
 from record_linkage.flujo.vinculacion.normalizar import Normalizador, dominio_web, preparar_fuente
 
-TEXTOS_QUE_PANDAS_TOMA_POR_AUSENTES = ["NA", "N/A", "None", "null", "NULL", "NaN", "n/a", "#N/A"]
-
 
 def _csv(tmp_path: Path, contenido: str, nombre: str = "base.csv") -> Path:
     ruta = tmp_path / nombre
@@ -61,22 +59,67 @@ def _fuente_csv(ruta: Path, **cambios) -> Fuente:
     return Fuente(**{**parametros, **cambios})
 
 
-# ── A2 · «NA» (Namibia), «N/A», «None», «null»… son texto, no ausentes ───────────────────────────────
-def test_a2_csv_conserva_los_textos_que_pandas_toma_por_ausentes(tmp_path):
+# ── A2 · «NA» (Namibia) no se pierde en una columna de país; los demás marcadores de ausente siguen igual ────────
+PLACEHOLDERS_DE_AUSENTE = ["N/A", "None", "null", "NULL", "NaN", "n/a", "#N/A"]
+
+
+def test_a2_csv_conserva_el_texto_na_y_sigue_leyendo_como_ausentes_los_otros_marcadores(tmp_path):
     # Antes: la celda de país 'NA' llegaba vacía sin aviso (pandas la convierte en NaN por defecto).
-    filas = "".join(f"E{k};{t}\n" for k, t in enumerate(TEXTOS_QUE_PANDAS_TOMA_POR_AUSENTES))
+    filas = "".join(f"E{k};{t}\n" for k, t in enumerate(["NA", *PLACEHOLDERS_DE_AUSENTE]))
     tabla = lectura._leer_csv(_csv(tmp_path, "Empresa;Pais\n" + filas + "VACIA;\n"))
-    assert tabla["Pais"].tolist()[:-1] == TEXTOS_QUE_PANDAS_TOMA_POR_AUSENTES
-    assert pd.isna(tabla["Pais"].iloc[-1])  # lo realmente vacío sigue siendo ausente
+    assert tabla["Pais"].iloc[0] == "NA"
+    assert (
+        tabla["Pais"].iloc[1:].isna().all()
+    )  # 'N/A', 'None', 'null'… y la celda vacía: ausentes, como antes
 
 
-def test_a2_excel_conserva_los_textos_que_pandas_toma_por_ausentes(tmp_path):
+def test_a2_excel_conserva_el_texto_na_y_sigue_leyendo_como_ausentes_los_otros_marcadores(tmp_path):
     ruta = tmp_path / "base.xlsx"
-    original = pd.DataFrame({"Empresa": ["A", "B", "C"], "Pais": ["NA", "N/A", None]}, dtype=object)
-    original.to_excel(ruta, index=False)
+    pd.DataFrame(
+        {"Empresa": ["A", "B", "C", "D"], "Pais": ["NA", "N/A", "None", None]}, dtype=object
+    ).to_excel(ruta, index=False)
     tabla = leer_tabla(ruta)
-    assert tabla["Pais"].tolist()[:2] == ["NA", "N/A"]
-    assert pd.isna(tabla["Pais"].iloc[2])
+    assert tabla["Pais"].iloc[0] == "NA"
+    assert tabla["Pais"].iloc[1:].isna().all()
+
+
+def test_a2_leer_fuente_conserva_na_solo_en_las_columnas_de_pais(tmp_path):
+    ruta = _csv(
+        tmp_path,
+        "Empresa;Pais;HQ;NIF;Ciudad\nKronos;NA;NA;NA;NA\nValdoria;N/A;N/A;N/A;N/A\n",
+    )
+    f = _fuente_csv(
+        ruta,
+        cols_pais_extra=("HQ",),
+        col_id_comparable="NIF",
+        col_ciudad="Ciudad",
+    )
+    df = leer_fuente(f)
+    assert df["Pais"].iloc[0] == df["HQ"].iloc[0] == "NA"  # Namibia
+    # Fuera de las columnas de país 'NA' es «no disponible», como lo leía pandas: sin esto dos empresas sin NIF
+    # «compartirían identificador» (id_comparable('NA') = 'NA').
+    assert pd.isna(df["NIF"].iloc[0]) and pd.isna(df["Ciudad"].iloc[0])
+    assert df[["Pais", "HQ", "NIF", "Ciudad"]].iloc[1].isna().all()
+
+
+def test_a2_un_parquet_no_pasa_por_la_conversion_de_pandas(tmp_path):
+    ruta = tmp_path / "base.parquet"
+    pd.DataFrame({"Empresa": ["Kronos"], "Pais": ["NA"], "NIF": ["NA"]}).to_parquet(ruta)
+    f = _fuente_csv(ruta, col_id_comparable="NIF")
+    df = leer_fuente(f)
+    assert (
+        df["NIF"].iloc[0] == "NA"
+    )  # el Parquet lo trae como texto y así se queda (el original tampoco lo tocaba)
+
+
+def test_a2_un_na_en_la_columna_de_pais_sin_alias_se_rechaza_con_un_mensaje_que_dice_que_hacer():
+    # Antes: el país quedaba vacío sin aviso. Ahora el catálogo lo rechaza y el mensaje ofrece las dos salidas.
+    df = _entrada(Empresa=["Kronos"], Pais=["NA"])
+    with pytest.raises(
+        ValueError, match=r"(?s)Qué pasó.*Qué hacer.*ALIAS_PAISES.*'NA' significa «sin dato»"
+    ) as e:
+        preparar_fuente(df, _fuente_nombre_y_pais(), Normalizador(_config()))
+    assert "SIN PAIS" not in str(e.value)
 
 
 # ── A1 · el separador se decide leyendo solo el comienzo del archivo ─────────────────────────────────

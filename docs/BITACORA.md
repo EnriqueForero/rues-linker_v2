@@ -1796,8 +1796,9 @@ todos los arreglos de F3.1b que garanticen que el motor funcione bien, declarand
   `tests/lineas_base_vinculacion_cambios.json` solo donde una tabla de los 4 escenarios cambió. La línea base del original (`HUELLAS_MOTOR_ORIGINAL`) no se toca: es el registro del oráculo.
 * **Algoritmo nuevo:** `componentes_restringidas` (union-find con restricciones): una decisión DISTINTA se respeta aunque haya un puente, las uniones automáticas no mezclan familias legales
   incompatibles y las decisiones humanas se aplican primero. Antes el resultado dependía del orden de unión (g3-O1, g3-O2).
-* **Una dependencia entre arreglos que conviene recordar:** con A2 (`'NA'` es texto) el texto «nan» que llega de un CSV ya no se vuelve ausente en la lectura; por eso A4 (HS6 con nan/inf) y el
-  descarte de `pd.NA` en `unir_valores` se hicieron en el mismo bloque.
+* **Un arreglo que tuvo que corregirse a sí mismo (A2):** la primera versión leía como texto todo lo que pandas toma por ausente (`'NA'`, `'N/A'`, `'None'`, `'null'`…). Un repaso de efectos secundarios mostró que
+  eso habría hecho que dos empresas con `'N/A'` en el NIF «compartieran identificador» (`id_comparable('N/A')` = `'NA'`) y que un país `'N/A'` detuviera la corrida. Quedó acotado a lo que el hallazgo describía:
+  solo el texto `'NA'` se conserva y solo en las columnas de país; en las demás todo sigue como lo leía pandas.
 
 ### Lo que el arnés mostró al final
 

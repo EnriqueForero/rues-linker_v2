@@ -26,6 +26,13 @@ __all__ = ["TRANSFORMACIONES", "formatear_hs6", "leer_fuente", "leer_tabla", "sh
 #: Bytes del comienzo de un CSV/TXT/TSV que se miran para decidir el separador.
 _BYTES_MUESTRA_SEPARADOR = 4096
 
+#: Lo que pandas toma por ausente al leer un CSV o un Excel, SALVO el texto 'NA': es el ISO2 de Namibia y, como país,
+#: llegaba vacío sin aviso (A2 de F3.1b). ``leer_fuente`` lo vuelve ausente en las columnas que no son de país, como antes.
+_AUSENTES_DE_PANDAS_SIN_NA = [
+    "", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan", "1.#IND", "1.#QNAN",
+    "<NA>", "N/A", "NULL", "NaN", "None", "n/a", "nan", "null",
+]  # fmt: skip
+
 
 def sha256_archivo(ruta: str | Path) -> str:
     """SHA-256 (hexadecimal) del contenido de un archivo, leído por bloques de 1 MiB."""
@@ -57,7 +64,7 @@ def _lineas_en_blanco_iniciales(muestra: str) -> int:
 def _leer_csv(ruta: Path) -> pd.DataFrame:
     """Lee un CSV/TXT/TSV como texto: separador detectado, UTF-8 (con o sin BOM) y si no, cp1252.
 
-    Los textos 'NA' (Namibia), 'N/A', 'None', 'null'… se conservan tal cual: solo la celda vacía es ausente.
+    Conserva el texto 'NA' (Namibia); 'N/A', 'None', 'null', 'NaN'… siguen siendo ausentes, como en pandas.
     Las líneas en blanco del medio se leen como filas vacías (``leer_fuente`` las descarta conservando la
     numeración de las demás); las que van antes del encabezado se ignoran.
     """
@@ -72,14 +79,14 @@ def _leer_csv(ruta: Path) -> pd.DataFrame:
 
 
 def _leer_csv_en(ruta: Path, sep: str, saltar: int, codificacion: str) -> pd.DataFrame:
-    """``read_csv`` con las opciones del motor: todo texto, solo la celda vacía es ausente, líneas en blanco como filas."""
+    """``read_csv`` con las opciones del motor: todo texto, 'NA' conservado, líneas en blanco como filas."""
     return pd.read_csv(
         ruta,
         sep=sep,
         dtype=object,
         encoding=codificacion,
         keep_default_na=False,
-        na_values=[""],
+        na_values=_AUSENTES_DE_PANDAS_SIN_NA,
         skip_blank_lines=False,
         skiprows=saltar,
     )
@@ -88,7 +95,8 @@ def _leer_csv_en(ruta: Path, sep: str, saltar: int, codificacion: str) -> pd.Dat
 def leer_tabla(ruta: str | Path, hoja: str | int = 0) -> pd.DataFrame:
     """Lee una tabla según la extensión del archivo.
 
-    * ``.xlsx``, ``.xlsm``, ``.xls``: la ``hoja`` (nombre o posición), todo como ``object``.
+    * ``.xlsx``, ``.xlsm``, ``.xls``: la ``hoja`` (nombre o posición), todo como ``object``. El texto 'NA' se conserva (ver
+      ``leer_fuente``); los demás marcadores de ausente de pandas ('N/A', 'None', 'null'…) siguen siendo ausentes.
     * ``.parquet``: tal cual viene.
     * ``.csv``, ``.txt``, ``.tsv``: todo como texto, con el separador detectado (``hoja`` no aplica).
 
@@ -105,7 +113,11 @@ def leer_tabla(ruta: str | Path, hoja: str | int = 0) -> pd.DataFrame:
     if suf in (".xlsx", ".xlsm", ".xls"):
         try:
             return pd.read_excel(
-                p, sheet_name=hoja, dtype=object, keep_default_na=False, na_values=[""]
+                p,
+                sheet_name=hoja,
+                dtype=object,
+                keep_default_na=False,
+                na_values=_AUSENTES_DE_PANDAS_SIN_NA,
             )
         except ImportError as e:
             if suf != ".xls":
@@ -245,10 +257,27 @@ def _asignar_ids(df: pd.DataFrame, f: Fuente) -> None:
         df.insert(1, "ID_REGISTRO", [f"{f.prefijo_id}-F{n:04d}" for n in df["FILA_EXCEL"]])
 
 
+def _na_solo_en_los_paises(df: pd.DataFrame, f: Fuente) -> None:
+    """El texto 'NA' sigue siendo ausente en toda columna que no es de país (como lo leía pandas); en las de país se conserva.
+
+    En una columna de país 'NA' es Namibia: dejarlo vacío era perder el país sin aviso. Si en esa base significa «no
+    disponible», el catálogo de países lo rechaza con un mensaje que dice qué hacer. No aplica a Parquet, que no pasa por
+    la conversión de pandas.
+    """
+    if Path(f.archivo).suffix.lower() == ".parquet":
+        return
+    paises = {c for c in (f.col_pais, *f.cols_pais_extra) if c}
+    for j, c in enumerate(df.columns):
+        if c not in paises:
+            col = df.iloc[:, j]
+            df.isetitem(j, col.mask(col == "NA"))
+
+
 def leer_fuente(f: Fuente) -> pd.DataFrame:
     """Lee la hoja, verifica el contrato y asigna ``FILA_EXCEL``, ``ID_REGISTRO`` y ``FUENTE``.
 
-    Los encabezados se recortan de espacios. La tabla devuelta no tiene filas completamente vacías
+    Los encabezados se recortan de espacios. El texto 'NA' se conserva solo en las columnas de país (Namibia).
+    La tabla devuelta no tiene filas completamente vacías
     (en las columnas declaradas) y trae al frente ``FILA_EXCEL``, ``ID_REGISTRO`` y ``FUENTE``.
 
     Raises:
@@ -259,6 +288,7 @@ def leer_fuente(f: Fuente) -> pd.DataFrame:
     """
     df = leer_tabla(f.archivo, f.hoja).copy()
     df.columns = [str(c).strip() for c in df.columns]
+    _na_solo_en_los_paises(df, f)
     _exigir_columnas(df, f)
     _exigir_sin_reservadas(df, f)
     df = _numerar_y_descartar_vacias(df, f)

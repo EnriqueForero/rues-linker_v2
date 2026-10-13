@@ -96,9 +96,9 @@ def test_csv_utf8_con_bom_y_csv_cp1252_se_leen_igual(tmp_path):
         assert _filas(df) == [["Ñandú SA", "España"]]
 
 
-def test_los_textos_na_none_y_null_llegan_como_texto_no_como_ausentes(tmp_path):
-    # Arreglo A2 (F3.1b): pandas los convertía en NaN al leer (¡'NA' es el ISO2 de Namibia!) y la fila
-    # perdía su país sin aviso. Ahora solo la celda vacía es ausente.
+def test_el_texto_na_de_un_pais_se_conserva_y_los_otros_marcadores_siguen_siendo_ausentes(tmp_path):
+    # Arreglo A2 (F3.1b): pandas convertía 'NA' (¡el ISO2 de Namibia!) en NaN y la fila perdía su país sin aviso.
+    # Ahora 'NA' se conserva en las columnas de país; 'N/A', 'None' y 'null' siguen siendo ausentes (marcadores).
     ruta = _escribir(
         tmp_path / "a.csv",
         "Empresa;País\nZelvora SA;NA\nKramento;N/A\nOrbelia;None\nTavorín;null\nQuelmar;Namibia\n",
@@ -106,7 +106,8 @@ def test_los_textos_na_none_y_null_llegan_como_texto_no_como_ausentes(tmp_path):
     df = leer_fuente(
         Fuente(clave="EXPORTADORES", archivo=str(ruta), col_nombre="Empresa", col_pais="País")
     )
-    assert df["País"].tolist() == ["NA", "N/A", "None", "null", "Namibia"]
+    assert df["País"].isna().tolist() == [False, True, True, True, False]
+    assert df["País"].iloc[0] == "NA"
 
 
 def test_csv_conserva_los_ceros_a_la_izquierda(tmp_path):

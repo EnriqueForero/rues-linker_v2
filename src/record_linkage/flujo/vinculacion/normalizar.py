@@ -344,11 +344,17 @@ class Normalizador:
         if (res.tabla["PAIS_METODO"] == "sin_clasificar").any():
             sug = sugerir_alias_pais(res.sin_clasificar, catalogo=self.catalogo, maximo=50)
             ejemplos = ", ".join(f"'ISO3': ({str(v).upper()!r},)" for v in sug["valor"].head(5))
+            # 'NA' es Namibia, pero en muchas bases quiere decir «no disponible»: el catálogo no puede saberlo (A2 de F3.1b).
+            nota_na = (
+                " Si 'NA' significa «sin dato» y no Namibia, déjela vacía en la base."
+                if sug["valor"].astype(str).str.upper().eq("NA").any()
+                else ""
+            )
             raise ValueError(
                 f"Qué pasó: {fuente}.{columna} trae grafías de país que el catálogo no reconoce:\n"
                 f"{sug.to_string(index=False)}\n"
                 f"Por qué importa: el país es evidencia del cruce; sin catalogar, 'France' y 'Francia' no coinciden.\n"
-                f"Qué hacer: agréguelas en ALIAS_PAISES con su ISO3, p. ej. {ejemplos}. La sugerencia es una ayuda, no una regla."
+                f"Qué hacer: agréguelas en ALIAS_PAISES con su ISO3, p. ej. {ejemplos}. La sugerencia es una ayuda, no una regla.{nota_na}"
             )
         tabla = res.tabla[["PAIS_ISO3", "PAIS_FINAL"]].copy()
         tabla.index = s.index[~vacio]

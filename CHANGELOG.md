@@ -33,7 +33,7 @@ Cada arreglo tiene su prueba y su declaración (`tests/lineas_base_vinculacion_c
   con «A Martinez» ni «Kramento 2» con «Kramento 3» (B1) y un puente no mezcla formas legales incompatibles ni anula una decisión DISTINTA (g3-O1, g3-O2); «Ltda», «Lda», «S. en C.», «E.U.», «EIRL»
   tienen familia legal y «Unlimited»/«Ilimitada» ya no se leen como LTD/SL (g3-O6); un ausente de pandas (`pd.NA`, `NaT`) deja de ser el texto «NA» y de «compartir identificador» (g1-O1);
   `tienda.zelvora.gob.es` ya no se reduce a `gob.es` (A8); una IP no es un dominio (A10); una sustitución más una inserción ya no es «la misma palabra» con errata doble (B8).
-- **Recall:** la sigla también se busca del lado del destino (C3: «KRONOS EMPRESARIAL VALDORIA» ↔ «KEV»); `'NA'` (Namibia), `'N/A'`, `'None'`, `'null'` llegan como texto y no como país vacío (A2);
+- **Recall:** la sigla también se busca del lado del destino (C3: «KRONOS EMPRESARIAL VALDORIA» ↔ «KEV»); el texto `'NA'` (Namibia) ya no se pierde como país vacío: se conserva en las columnas de país y el catálogo lo rechaza con un mensaje que dice qué hacer (A2; en las demás columnas `'NA'`, `'N/A'`, `'None'`, `'null'` siguen siendo ausentes);
   un entero guardado como float conserva sus dígitos al comparar identificadores y teléfonos (g1-O2).
 - **Robustez y mensajes:** configuración que rechaza un texto suelto donde va una colección, etiquetas en blanco y destinos con la misma primera palabra, `metricas_repetidas`/`claves_repeticion` inexistentes (g1-O3, D);
   columnas reservadas, `.xls` sin xlrd, transformación sobre una columna que no existe, fuente sin filas (A3, A6, A12, g1-O4); validación contra la referencia sin candidatos y F1 = 0,0 sin aciertos (C10, C11);
