@@ -64,18 +64,25 @@ def _leer_csv(ruta: Path) -> pd.DataFrame:
     # Solo se leen los primeros bytes para decidir el separador, no el archivo entero.
     with ruta.open("rb") as fh:
         muestra = fh.read(_BYTES_MUESTRA_SEPARADOR).decode("utf-8", errors="ignore")
-    opciones = {
-        "sep": _detectar_separador(muestra),
-        "dtype": object,
-        "keep_default_na": False,
-        "na_values": [""],
-        "skip_blank_lines": False,
-        "skiprows": _lineas_en_blanco_iniciales(muestra),
-    }
+    sep, saltar = _detectar_separador(muestra), _lineas_en_blanco_iniciales(muestra)
     try:
-        return pd.read_csv(ruta, encoding="utf-8-sig", **opciones)
+        return _leer_csv_en(ruta, sep, saltar, "utf-8-sig")
     except UnicodeDecodeError:
-        return pd.read_csv(ruta, encoding="cp1252", **opciones)
+        return _leer_csv_en(ruta, sep, saltar, "cp1252")
+
+
+def _leer_csv_en(ruta: Path, sep: str, saltar: int, codificacion: str) -> pd.DataFrame:
+    """``read_csv`` con las opciones del motor: todo texto, solo la celda vacía es ausente, líneas en blanco como filas."""
+    return pd.read_csv(
+        ruta,
+        sep=sep,
+        dtype=object,
+        encoding=codificacion,
+        keep_default_na=False,
+        na_values=[""],
+        skip_blank_lines=False,
+        skiprows=saltar,
+    )
 
 
 def leer_tabla(ruta: str | Path, hoja: str | int = 0) -> pd.DataFrame:
@@ -122,7 +129,12 @@ def formatear_hs6(x: object) -> str:
     número o que es negativo queda como llegó; un número de 10000 o más se toma como el entero de 5-6 dígitos
     ya completo.
     """
-    if not isinstance(x, str) and pd.isna(x):
+    if (
+        x is None
+        or x is pd.NA
+        or x is pd.NaT
+        or (isinstance(x, float | np.floating) and math.isnan(x))
+    ):
         return ""
     s = str(x).strip()
     if s == "":
