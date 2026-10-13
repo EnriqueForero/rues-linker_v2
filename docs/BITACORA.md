@@ -1785,7 +1785,7 @@ No hay PR abierto para ella; el PR #4 (cierre de F2) espera el merge de Enrique.
 
 Continuación de IT-30. Enrique mezcló el PR #4 (cierre de F2) y el PR #5 (hito F3.1) y pidió retomar la culminación del plan con «la mayor precisión y el mayor recall»: hacer
 todos los arreglos de F3.1b que garanticen que el motor funcione bien, declarando cada uno porque **cambian resultados del motor** respecto del original. Rama `claude/f3-arreglos`
-(base `main`), 17 commits, sin versión ni tag.
+(base `main`), 19 commits, sin versión ni tag.
 
 ### Qué se hizo y cómo se decidió
 
