@@ -16,6 +16,20 @@ __all__ = ["ConfigVinculacion", "Fuente"]
 _CLAVE_VALIDA = re.compile(r"[A-Z][A-Z0-9_]{1,30}")
 
 
+def _exigir_coleccion(campo: str, valor: object) -> None:
+    """Rechaza un texto suelto donde va una colección.
+
+    F3.1b (g1-O3): un ``str`` se recorría letra a letra (``patrones_intermediario="CARGO"`` compilaba ``C|A|R|G|O`` y casi
+    toda la ancla quedaba como «agente de carga»; ``formas_legales_extra="S.L."`` borraba las palabras S y L).
+    """
+    if isinstance(valor, str):
+        raise ValueError(
+            f"Qué pasó: {campo}={valor!r} es un texto suelto y debe ser una colección.\n"
+            "Por qué importa: un texto se recorre letra a letra y la configuración no haría lo que escribió.\n"
+            f"Qué hacer: escríbalo como colección, p. ej. ({valor!r},)."
+        )
+
+
 @dataclass
 class Fuente:
     """Una base de entrada y el papel de cada columna.
@@ -83,8 +97,12 @@ class Fuente:
             raise ValueError(
                 f"clave={self.clave!r}: use MAYÚSCULAS, dígitos o '_' (p. ej. 'ORBIS')."
             )
+        for campo in (
+            "cols_pais_extra", "cols_metricas", "cols_contexto", "metricas_repetidas", "claves_repeticion",
+        ):  # fmt: skip
+            _exigir_coleccion(campo, getattr(self, campo))
         self.prefijo_id = self.prefijo_id or self.clave[:3]
-        self.etiqueta = self.etiqueta or self.clave
+        self.etiqueta = self.etiqueta.strip() or self.clave
         self.cols_pais_extra = tuple(self.cols_pais_extra)
         self.cols_metricas = tuple(self.cols_metricas)
         self.cols_contexto = tuple(self.cols_contexto)
@@ -156,6 +174,19 @@ class ConfigVinculacion:
             raise ValueError(
                 f"Qué pasó: claves de fuente repetidas {claves}.\nQué hacer: use una clave única por base."
             )
+        for campo in (
+            "formas_legales_extra", "genericos_extra", "patrones_intermediario", "dominios_genericos", "nombres_pila",
+        ):  # fmt: skip
+            _exigir_coleccion(campo, getattr(self, campo))
+        for iso, grafias in self.alias_paises.items():
+            _exigir_coleccion(f"alias_paises[{iso!r}]", grafias)
+        prefijos = [d.etiqueta.split()[0].upper() for d in self.destinos]
+        if len(set(prefijos)) != len(prefijos):
+            raise ValueError(
+                f"Qué pasó: dos destinos comparten la primera palabra de la etiqueta {prefijos}.\n"
+                "Por qué importa: esa palabra prefija sus columnas en EXPORTADORES y se pisarían sin aviso.\n"
+                "Qué hacer: cambie la etiqueta de uno para que su primera palabra sea distinta."
+            )
         umbrales = (
             ("umbral_piso_empresa", self.umbral_piso_empresa),
             ("umbral_dedup", self.umbral_dedup),
@@ -166,6 +197,9 @@ class ConfigVinculacion:
                 raise ValueError(f"{nombre}={v}: debe estar en [0,5; 1,0).")
         if self.max_ediciones_palabra not in (0, 1, 2):
             raise ValueError("max_ediciones_palabra debe ser 0, 1 o 2.")
+        if isinstance(self.archivos_decisiones, str):
+            # F3.1b (C1 de g2): un archivo suelto es UN archivo, no una lista de letras.
+            self.archivos_decisiones = (self.archivos_decisiones,)
         self.archivos_decisiones = tuple(a for a in self.archivos_decisiones if a)
         self.formas_legales_extra = frozenset(
             str(x).strip().upper() for x in self.formas_legales_extra

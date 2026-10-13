@@ -199,3 +199,67 @@ def test_g3_o3_el_aviso_de_una_decision_de_una_grafia_contra_si_misma():
         "EXPORTADORES: decisión DUPLICADO con grafía inexistente España|A ↔ España|B",
         "EXPORTADORES: decisión DUPLICADO de una grafía contra sí misma (España|Zelvora); se ignora",
     ]
+
+
+# ── g1-O3 / C1(g2) · un texto suelto donde va una colección ya no se recorre letra a letra ─────────
+from record_linkage.flujo.vinculacion.config import ConfigVinculacion, Fuente  # noqa: E402
+
+
+def _fuente(clave="EXPORTADORES", **cambios):
+    return Fuente(clave=clave, archivo="x.csv", col_nombre="Empresa", **cambios)
+
+
+@pytest.mark.parametrize(
+    "campo",
+    [
+        "formas_legales_extra",
+        "genericos_extra",
+        "patrones_intermediario",
+        "dominios_genericos",
+        "nombres_pila",
+    ],
+)
+def test_g1_o3_la_configuracion_rechaza_un_texto_donde_va_una_coleccion(campo):
+    with pytest.raises(ValueError, match=rf"{campo}.*texto suelto"):
+        ConfigVinculacion(ancla=_fuente(), **{campo: "CARGO"})
+
+
+@pytest.mark.parametrize(
+    "campo",
+    [
+        "cols_pais_extra",
+        "cols_metricas",
+        "cols_contexto",
+        "metricas_repetidas",
+        "claves_repeticion",
+    ],
+)
+def test_g1_o3_la_fuente_rechaza_un_texto_donde_va_una_coleccion(campo):
+    with pytest.raises(ValueError, match=rf"{campo}.*texto suelto"):
+        _fuente(**{campo: "HQ"})
+
+
+def test_g1_o3_los_alias_de_pais_deben_ser_colecciones_de_grafias():
+    with pytest.raises(ValueError, match=r"alias_paises\['FRA'\].*texto suelto"):
+        ConfigVinculacion(ancla=_fuente(), alias_paises={"FRA": "FRANCE"})
+    cfg = ConfigVinculacion(ancla=_fuente(), alias_paises={"FRA": ("FRANCE",)})
+    assert cfg.alias_paises == {"FRA": ("FRANCE",)}
+
+
+def test_g1_o3_un_archivo_de_decisiones_suelto_es_un_solo_archivo():
+    # Antes: "decisiones.xlsx" se iteraba letra a letra y se intentaban leer los archivos 'd', 'e', 'c'…
+    assert ConfigVinculacion(
+        ancla=_fuente(), archivos_decisiones="decisiones.xlsx"
+    ).archivos_decisiones == ("decisiones.xlsx",)
+
+
+def test_d_la_etiqueta_en_blanco_vale_la_clave_y_dos_destinos_no_comparten_primera_palabra():
+    assert _fuente("ORBIS", etiqueta="   ").etiqueta == "ORBIS"
+    with pytest.raises(ValueError, match="primera palabra de la etiqueta"):
+        ConfigVinculacion(
+            ancla=_fuente(),
+            destinos=[
+                _fuente("FDI", etiqueta="FDI MARKETS"),
+                _fuente("FDI_NEWS", etiqueta="FDI NEWS"),
+            ],
+        )
