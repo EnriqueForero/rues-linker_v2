@@ -36,6 +36,7 @@ from record_linkage.flujo.vinculacion_excel.leeme import (
 )
 from record_linkage.flujo.vinculacion_excel.tablas import (
     colorear_columna,
+    escribir_celda,
     escribir_tabla,
     formatear_tabla,
     hoja_desde_tabla,
@@ -160,13 +161,12 @@ def _advertencias_de_calidad(
     hoja.cell(
         row=fila, column=1, value="Advertencias de los datos (detalle en CALIDAD_DATOS)"
     ).font = estilos.titulo(12)
-    # Hallazgo F3: estas celdas no pasan por escribir_tabla: un «=» inicial sería fórmula y un control, un error.
     for r in calidad.head(_ADVERTENCIAS_EN_RESUMEN).itertuples(index=False):
         fila += 1
-        hoja.cell(row=fila, column=1, value=r.FUENTE).font = estilos.negrita
-        hoja.cell(row=fila, column=2, value=r.TEMA).font = estilos.negrita
+        escribir_celda(hoja, fila, 1, r.FUENTE).font = estilos.negrita
+        escribir_celda(hoja, fila, 2, r.TEMA).font = estilos.negrita
         texto = f"{r.HALLAZGO} {r.IMPACTO}"
-        hoja.cell(row=fila, column=3, value=texto).font = estilos.base
+        escribir_celda(hoja, fila, 3, texto).font = estilos.base
         hoja.cell(row=fila, column=3).alignment = ALINEACION_ARRIBA_ENVUELTA
         for col in (1, 2):
             hoja.cell(row=fila, column=col).alignment = ALINEACION_ARRIBA_ENVUELTA

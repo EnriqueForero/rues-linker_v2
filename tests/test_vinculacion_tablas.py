@@ -1670,7 +1670,10 @@ def test_sin_decisiones_leidas_los_duplicados_decididos_dejan_de_listarse(corrid
     decisiones = res.tablas["DECISIONES"]
     assert (len(decisiones), list(decisiones.columns)) == (0, COLUMNAS["DECISIONES"])
     comparacion = res.tablas["COMPARACION_REVISIONES"]
-    assert (len(comparacion), len(comparacion.columns)) == (0, 7)
+    assert (len(comparacion), len(comparacion.columns)) == (
+        0,
+        8,
+    )  # M-b: el mismo esquema que la llena
     r = res.tablas["REVISION"]
     assert r.groupby(["PRIORIDAD", "ESTADO_REVISION", "TIPO"]).size().to_dict() == {
         (P1, "PENDIENTE", "VINCULO"): 21,

@@ -106,6 +106,14 @@ class Fuente:
         self.cols_pais_extra = tuple(self.cols_pais_extra)
         self.cols_metricas = tuple(self.cols_metricas)
         self.cols_contexto = tuple(self.cols_contexto)
+        ajenas = [c for c in self.metricas_repetidas if c not in self.cols_metricas]
+        if ajenas:
+            raise ValueError(
+                f"Qué pasó: la fuente {self.clave} declara en metricas_repetidas {ajenas}, que no están en cols_metricas.\n"
+                "Por qué importa: la cifra «sin repetidos» solo existe para una métrica que se suma; con una errata la\n"
+                "métrica se ignoraría sin aviso.\n"
+                f"Qué hacer: corrija el nombre o agréguela a cols_metricas ({list(self.cols_metricas)})."
+            )
 
     def columnas_declaradas(self) -> list[str]:
         """Las columnas que la fuente declara, sin repetidas y en el orden de declaración."""
