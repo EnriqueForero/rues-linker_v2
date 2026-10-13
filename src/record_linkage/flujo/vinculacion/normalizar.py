@@ -56,8 +56,14 @@ _LEGALES_NO_SUFIJO = frozenset({"CO", "SE", "AS", "AB", "SC", "SP", "RL"})
 
 
 def _es_ausente(x: object) -> bool:
-    """True si ``x`` es ``None`` o un ``NaN`` de coma flotante (la celda vacía que deja pandas)."""
-    return x is None or (isinstance(x, float) and math.isnan(x))
+    """True si ``x`` es la celda vacía que deja pandas: ``None``, ``pd.NA``, ``pd.NaT`` o un ``NaN`` (cualquier ancho).
+
+    F3.1b (g1-O1): el original solo reconocía ``None`` y el ``float`` NaN, así que ``pd.NA`` (texto anulable, p. ej. de
+    un Parquet) terminaba como el texto «NA» y dos empresas sin NIF «compartían identificador».
+    """
+    if x is None or x is pd.NA or x is pd.NaT:
+        return True
+    return isinstance(x, (float, np.floating)) and math.isnan(x)
 
 
 def dominio_registrable(dominio: str) -> str:
