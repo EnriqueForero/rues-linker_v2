@@ -1779,9 +1779,9 @@ def test_unir_valores_con_maximo_cero_empieza_con_el_separador():
     assert unir_valores(["a", "b"], maximo=0) == " | … (+2)"
 
 
-def test_unir_valores_no_descarta_na_ni_nat():
-    """Hallazgo F3: ``pd.NA`` y ``pd.NaT`` no se tratan como vacíos: entran a la celda como «<NA>» y «NaT»."""
-    assert unir_valores([pd.NA, "a", pd.NaT]) == "<NA> | a | NaT"
+def test_unir_valores_descarta_na_y_nat():
+    """Arreglo g1-O1 (F3.1b): ``pd.NA`` y ``pd.NaT`` son vacíos; antes entraban a la celda como «<NA>» y «NaT»."""
+    assert unir_valores([pd.NA, "a", pd.NaT, np.float32("nan")]) == "a"
 
 
 # ── nombres de columnas derivados de la configuración ─────────────────────────

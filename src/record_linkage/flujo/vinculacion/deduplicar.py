@@ -427,8 +427,6 @@ def _decisiones_ancla(
     una grafía de ``graf`` no se aplican y se devuelven en ``desconocidas``; una decisión de una grafía contra sí
     misma, en ``autopares``.
     """
-    # Hallazgo F3: aquí MISMA_ENTIDAD levanta un veto previo (el último manda) y las claves desconocidas se
-    # reportan; ``_decisiones_destino`` no hace ninguna de las dos cosas (DISTINTA y luego MISMA deja el veto).
     pos = {k: i for i, k in enumerate(graf["CLAVE"])}
     vetos: set[tuple[int, int]] = set()
     uniones: list[_Union] = []
