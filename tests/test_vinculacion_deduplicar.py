@@ -277,9 +277,9 @@ def test_ancla_devuelve_las_tablas_con_sus_columnas():
 
 
 def test_ancla_deja_vetos_y_desconocidas_en_attrs_incluso_sin_decisiones():
-    """Otras funciones leen ``graf.attrs``: las dos claves existen siempre, vacías si no hubo decisiones."""
+    """Otras funciones leen ``graf.attrs``: las tres claves existen siempre, vacías si no hubo decisiones."""
     graf, _, _ = _ancla([A("España", "Zelvora Alimentos SA", "ZELVORA ALIMENTOS")])
-    assert set(graf.attrs) == {"vetos", "desconocidas"}
+    assert set(graf.attrs) == {"vetos", "desconocidas", "autopares"}
     assert graf.attrs["vetos"] == set()
     assert graf.attrs["desconocidas"] == []
 
@@ -410,8 +410,8 @@ def test_ancla_forma_legal_distinta_no_une_y_va_a_pendientes_con_las_familias():
     assert _listas(pe) == [[0, 1, "mismo nombre, forma legal distinta (COOP ≠ SL)"]]
 
 
-def test_ancla_familia_desconocida_es_compatible_con_cualquiera():
-    """Un nombre sin forma legal une con los que sí la traen; entre las dos formas distintas queda pendiente."""
+def test_ancla_familia_desconocida_es_compatible_con_cualquiera_pero_no_puentea():
+    """Un nombre sin forma legal une con UNA de las formas; unir además la otra mezclaría SL y COOP (F3.1b, g3-O1)."""
     graf, un, pe = _ancla(
         [
             A("España", "Fribelia SL", "FRIBELIA"),
@@ -420,13 +420,17 @@ def test_ancla_familia_desconocida_es_compatible_con_cualquiera():
         ]
     )
     assert graf["FORMA_LEGAL"].tolist() == ["", "COOP", "SL"]
-    assert _listas(un) == [
-        [0, 1, "mismo nombre normalizado"],
-        [0, 2, "mismo nombre normalizado"],
+    # Antes (original) las dos uniones se aplicaban y las tres grafías quedaban en una empresa con SL y COOP juntas.
+    assert _listas(un) == [[0, 1, "mismo nombre normalizado"]]
+    assert graf["_COMP"].tolist() == [0, 0, 1]
+    assert _listas(pe) == [
+        [1, 2, "mismo nombre, forma legal distinta (COOP ≠ SL)"],
+        [
+            0,
+            2,
+            "mismo nombre normalizado; no se une sola: la empresa mezclaría formas legales distintas (COOP ≠ SL)",
+        ],
     ]
-    # COOP y SL quedó pendiente, pero ya están en la misma empresa por la grafía sin forma legal: se descarta.
-    assert graf["_COMP"].tolist() == [0, 0, 0]
-    assert len(pe) == 0
 
 
 def test_ancla_sigla_va_a_pendientes():
@@ -1129,3 +1133,87 @@ def test_destino_las_decisiones_se_filtran_por_la_clave_de_la_fuente_del_destino
     out, un = _destino(otra, filas, dec)  # la misma decisión no aplica a otro destino
     assert len(un) == 0
     assert out["ID_ENTIDAD"].tolist() == ["OTR-E0001", "OTR-E0002"]
+
+
+# ── F3.1b · uniones con restricciones: puentes, vetos y autopares ───────────────────────────────────
+def _comp_por_nombre(graf):
+    return dict(zip(graf["NOMBRE_ORIGINAL"], graf["_COMP"], strict=True))
+
+
+def test_ancla_una_grafia_sin_forma_legal_no_puentea_dos_formas_distintas():
+    """F3.1b (g3-O1): 'Zelvora' une a 'Zelvora S. Coop.' pero no puede unir además a 'Zelvora SL' (SL ≠ COOP)."""
+    filas = [
+        A("España", "Zelvora", "ZELVORA"),
+        A("España", "Zelvora S. Coop.", "ZELVORA"),
+        A("España", "Zelvora SL", "ZELVORA"),
+    ]
+    graf, un, pe = _ancla(filas)
+    comp = _comp_por_nombre(graf)
+    assert comp["Zelvora S. Coop."] != comp["Zelvora SL"]
+    assert graf["_COMP"].nunique() == 2
+    assert _listas(un) == [[0, 1, "mismo nombre normalizado"]]
+    motivos = {(a, b): m for a, b, m in _listas(pe)}
+    assert motivos[(0, 2)] == (
+        "mismo nombre normalizado; no se une sola: la empresa mezclaría formas legales distintas (COOP ≠ SL)"
+    )
+    assert motivos[(1, 2)] == "mismo nombre, forma legal distinta (COOP ≠ SL)"
+
+
+def test_ancla_una_decision_distinta_se_respeta_aunque_haya_un_puente(tmp_path):
+    """F3.1b (g3-O2): DISTINTA entre 'SL' y 'S.L.' no se anula porque 'Zelvora' una a los dos."""
+    filas = [
+        A("España", "Zelvora", "ZELVORA"),
+        A("España", "Zelvora SL", "ZELVORA"),
+        A("España", "Zelvora S.L.", "ZELVORA"),
+    ]
+    dec = _leer(
+        tmp_path,
+        [(DUP, EXP, "España|Zelvora SL", "España|Zelvora S.L.", "DISTINTA", "Revisora Uno")],
+    )
+    graf, _, pe = _ancla(filas, dec)
+    comp = _comp_por_nombre(graf)
+    assert comp["Zelvora SL"] != comp["Zelvora S.L."]
+    assert graf["_COMP"].nunique() == 2
+    assert any(
+        "una decisión DISTINTA separa a miembros de ambas empresas" in m for *_, m in _listas(pe)
+    )
+
+
+def test_ancla_una_decision_misma_entidad_une_formas_legales_distintas_aunque_las_reglas_no(
+    tmp_path,
+):
+    """Lo que una persona decide manda sobre la compatibilidad de formas legales (solo un veto lo frena)."""
+    filas = [A("España", "Zelvora SL", "ZELVORA"), A("España", "Zelvora S. Coop.", "ZELVORA")]
+    dec = _leer(
+        tmp_path, [(DUP, EXP, "España|Zelvora S. Coop.", "España|Zelvora SL", "MISMA_ENTIDAD", "x")]
+    )
+    graf, _, pe = _ancla(filas, dec)
+    assert graf["_COMP"].nunique() == 1 and len(pe) == 0
+
+
+def test_ancla_el_orden_de_las_uniones_no_cambia_si_nada_las_restringe():
+    """Sin vetos ni formas incompatibles el resultado es la partición de siempre (transitividad)."""
+    filas = [A("España", "Kra Mento Foods", "KRAMENTO"), A("España", "Kramento Foods", "KRAMENTO"), A("España", "Kramento Foods SL", "KRAMENTO")]  # fmt: skip
+    graf, un, _ = _ancla(filas)
+    assert graf["_COMP"].nunique() == 1 and len(un) == 3
+
+
+def test_ancla_los_pendientes_conservan_sus_columnas_aunque_una_decision_los_absorba(tmp_path):
+    """F3.1b (g3-O4): si todos los pendientes quedan en la misma empresa, ``pe`` sigue teniendo sus tres columnas."""
+    filas = [A("España", "Quelmar", "QUELMAR"), A("España", "Quelmar Lacteos", "QUELMAR LACTEOS")]
+    assert len(_ancla(filas)[2]) == 1
+    dec = _leer(
+        tmp_path, [(DUP, EXP, "España|Quelmar", "España|Quelmar Lacteos", "MISMA_ENTIDAD", "x")]
+    )
+    _, _, pe = _ancla(filas, dec)
+    assert len(pe) == 0
+    assert list(pe.columns) == ["pos_a", "pos_b", "MOTIVO"]
+
+
+def test_ancla_una_decision_de_una_grafia_con_ella_misma_se_avisa_y_no_pone_veto(tmp_path):
+    """F3.1b (g3-O3): CLAVE_A == CLAVE_B no tiene sentido: no pone un veto (p, p) que rompe una invariante."""
+    filas = [A("España", "Zelvora", "ZELVORA"), A("España", "Kramento", "KRAMENTO")]
+    dec = _leer(tmp_path, [(DUP, EXP, "España|Zelvora", "España|Zelvora", "DISTINTA", "x")])
+    graf, _, _ = _ancla(filas, dec)
+    assert graf.attrs["vetos"] == set()
+    assert graf.attrs["autopares"] == [("España|Zelvora", "España|Zelvora")]

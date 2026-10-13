@@ -232,6 +232,20 @@ def _validar(
     return validar_contra_referencia(l_auto, ref_map, prep, destinos)
 
 
+def _avisos_de_decisiones_de_la_ancla(clave: str, graf: pd.DataFrame) -> list[str]:
+    """Avisos de las decisiones DUPLICADO que no se pudieron aplicar: grafía inexistente o una grafía contra sí misma."""
+    return [
+        *[
+            f"{clave}: decisión DUPLICADO con grafía inexistente {a} ↔ {b}"
+            for a, b in graf.attrs.get("desconocidas", [])
+        ],
+        *[
+            f"{clave}: decisión DUPLICADO de una grafía contra sí misma ({a}); se ignora"
+            for a, _ in graf.attrs.get("autopares", [])
+        ],
+    ]
+
+
 def ejecutar(
     cfg: ConfigVinculacion, verboso: bool = True, registro: Emisor | None = None
 ) -> Resultado:
@@ -262,10 +276,7 @@ def ejecutar(
     vinculos, ent1, uniones_emp, avisos = _vinculos_con_decisiones(
         cfg, pares, graf, prep, dec, nz, comp, log
     )
-    avisos += [
-        f"{cfg.ancla.clave}: decisión DUPLICADO con grafía inexistente {a} ↔ {b}"
-        for a, b in graf.attrs.get("desconocidas", [])
-    ]
+    avisos += _avisos_de_decisiones_de_la_ancla(cfg.ancla.clave, graf)
     val, disc = _validar(cfg, ref, l_auto, graf_auto, ent_auto, prep, avisos)
 
     internos = {

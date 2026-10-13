@@ -187,3 +187,15 @@ def test_g3_o5_los_espacios_unicode_se_normalizan_igual_en_pandas_2_y_3(espacio)
 
 def test_g3_o5_la_clave_conserva_los_ausentes_como_vacio_y_el_orden():
     assert clave_texto([None, np.nan, pd.NA, " a  b "]).tolist() == ["", "", "", "a b"]
+
+
+def test_g3_o3_el_aviso_de_una_decision_de_una_grafia_contra_si_misma():
+    from record_linkage.flujo.vinculacion.ejecutar import _avisos_de_decisiones_de_la_ancla
+
+    graf = pd.DataFrame({"x": [1]})
+    graf.attrs["desconocidas"] = [("España|A", "España|B")]
+    graf.attrs["autopares"] = [("España|Zelvora", "España|Zelvora")]
+    assert _avisos_de_decisiones_de_la_ancla("EXPORTADORES", graf) == [
+        "EXPORTADORES: decisión DUPLICADO con grafía inexistente España|A ↔ España|B",
+        "EXPORTADORES: decisión DUPLICADO de una grafía contra sí misma (España|Zelvora); se ignora",
+    ]
