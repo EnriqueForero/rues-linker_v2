@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from record_linkage.flujo.vinculacion import controles
 from record_linkage.flujo.vinculacion.normalizar import (
     digitos_telefono,
     dominio_email,
@@ -54,3 +55,31 @@ def test_g1_o2_el_telefono_en_float_da_los_mismos_ocho_digitos_que_en_texto(valo
 def test_g1_o2_un_float_con_decimales_se_conserva_como_viene():
     assert id_comparable(12.5) == "125"
     assert digitos_telefono(12.5) == ""
+
+
+# ── C1 + M-a · el identificador igual no cruza países y justifica el A en la invariante ─────────────
+def _pares_a(evidencia: str, sobra: str = "ALIMENTOS") -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "NIVEL_AUTO": ["EMPRESA"], "BANDA_AUTO": ["A"], "DECISION": [""], "MISMO_PAIS": ["SÍ"],
+            "TIPO_SUP_B": ["NOMBRE"], "SOBRA_EXPORTADOR": [sobra], "SOBRA_DESTINO": [""],
+            "NIVEL_FINAL": ["EMPRESA"], "EVIDENCIA_EXTRA": [evidencia],
+        }
+    )  # fmt: skip
+
+
+def _estados(pares: pd.DataFrame) -> dict[str, str]:
+    c = controles._Controles()
+    controles._controles_de_pares(c, pares)
+    return {f["CONTROL"]: f["ESTADO"] for f in c.filas}
+
+
+def test_m_a_un_a_promovido_por_identificador_no_incumple_la_invariante_de_palabras_alineadas():
+    # Antes: toda subida por identificador con palabras que sobran dejaba esta invariante en FALLA.
+    estados = _estados(_pares_a("mismo identificador"))
+    assert estados["Todo vínculo automático A tiene todas las palabras alineadas"] == "OK"
+
+
+def test_m_a_un_a_con_palabras_sin_alinear_y_sin_identificador_sigue_incumpliendo():
+    estados = _estados(_pares_a(""))
+    assert estados["Todo vínculo automático A tiene todas las palabras alineadas"] == "FALLA"

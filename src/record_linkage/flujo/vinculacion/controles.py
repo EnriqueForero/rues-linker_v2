@@ -108,6 +108,9 @@ def _controles_de_pares(c: _Controles, pares: pd.DataFrame) -> None:
     malos = emp_auto[(emp_auto["MISMO_PAIS"] == "NO")]
     c.agregar("Ningún vínculo EMPRESA automático cruza países", len(malos) == 0, len(malos), "")
     emp_a = pares[(pares["BANDA_AUTO"] == "A") & (pares["TIPO_SUP_B"] != "WEB")]
+    if "EVIDENCIA_EXTRA" in emp_a.columns:
+        # F3.1b (M-a): un A que sube por identificador comparable se justifica por el identificador, no por las palabras.
+        emp_a = emp_a[~emp_a["EVIDENCIA_EXTRA"].fillna("").str.contains("mismo identificador")]
     sin_alinear = emp_a[(emp_a["SOBRA_EXPORTADOR"] != "") | (emp_a["SOBRA_DESTINO"] != "")]
     c.agregar(
         "Todo vínculo automático A tiene todas las palabras alineadas",

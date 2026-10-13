@@ -129,8 +129,9 @@ COLUMNAS = {
     "PARAMETROS": ["PARAMETRO", "VALOR"],
 }  # fmt: skip
 
-#: Huella de cada tabla de la corrida (``apoyo_tablas_vinculacion.huellas``) según el motor ORIGINAL. ``resumen``
-#: lleva el texto declarado (Quelmar frente a Zelvora) en lugar de las dos marcas reales del original.
+#: Huella de cada tabla de la corrida (``apoyo_tablas_vinculacion.huellas``) según el motor ORIGINAL, salvo los cambios
+#: declarados: ``resumen`` lleva el texto declarado (Quelmar frente a Zelvora) en lugar de las dos marcas reales, y
+#: ``CONTROL_QA`` y ``resumen`` ya no cuentan como FALLA los A justificados por identificador (F3.1b, M-a).
 HUELLAS_MOTOR_ORIGINAL = {
     "EXPORTADORES": "0505435781ada4b5",
     "ENLACES": "35f6567cd34856e6",
@@ -145,9 +146,9 @@ HUELLAS_MOTOR_ORIGINAL = {
     "VALIDACION_DETALLE": "2b4a608d23f99c1b",
     "COMPARACION_REVISIONES": "9af061aa3114d889",
     "CALIDAD_DATOS": "12cd6a8697f461c6",
-    "CONTROL_QA": "ae82703d4d6a526a",
+    "CONTROL_QA": "e888a538f0afa81a",
     "PARAMETROS": "79a7c469953adec8",
-    "resumen": "564dff83faedfc51",
+    "resumen": "1cb3b169c2ed733c",
     "por_pais": "803e0ea6df8cc314",
 }
 
@@ -206,11 +207,11 @@ def test_el_resultado_trae_la_configuracion_los_avisos_y_los_controles(corrida, 
     assert base.tablas["CALIDAD_DATOS"] is base.calidad
     assert base.tablas["PARAMETROS"] is base.parametros
     assert base.tablas["VALIDACION"] is base.validacion
-    # El caso del identificador comparable (A con palabras que sobran) incumple un control crítico: el motor
-    # original también lo reporta, y por eso ``todo_ok`` es falso con estos insumos.
+    # El caso del identificador comparable (A con palabras que sobran) incumplía un control crítico en el motor
+    # original; F3.1b (M-a) lo justifica por el identificador y ya no es FALLA.
     fallas = base.invariantes.loc[base.invariantes["ESTADO"] == "FALLA", "CONTROL"].tolist()
-    assert fallas == ["Todo vínculo automático A tiene todas las palabras alineadas"]
-    assert base.todo_ok is False
+    assert fallas == []
+    assert base.todo_ok is True
 
 
 def test_deja_id_ent_y_vinc_en_el_estado_interno(corrida):

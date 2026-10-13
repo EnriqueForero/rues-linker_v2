@@ -1,14 +1,70 @@
 {
+ "automatico_puro|CONTROL_QA": {
+  "huella": "dcba8789581a1cff",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "automatico_puro|ENLACES": {
+  "huella": "c1e4fe3dc4a39397",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "automatico_puro|PARAMETROS": {
+  "huella": "b49b5efbac40d897",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "automatico_puro|resumen": {
+  "huella": "618bc51960dce838",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "base|CONTROL_QA": {
+  "huella": "65dabbff4bfdfb82",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "base|ENLACES": {
+  "huella": "57b8710c38b35900",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "base|PARAMETROS": {
+  "huella": "1c76617a291c4513",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
  "base|resumen": {
-  "huella": "f47eaf7459bcc8b4",
-  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+  "huella": "acce8e7bbbf3e358",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta.; [C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "errata_doble|CONTROL_QA": {
+  "huella": "65dabbff4bfdfb82",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "errata_doble|ENLACES": {
+  "huella": "2f301f6a45712d31",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "errata_doble|PARAMETROS": {
+  "huella": "04c16c92add7966c",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
  },
  "errata_doble|resumen": {
-  "huella": "ce2895231fefec46",
-  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+  "huella": "210dbab6fbeebd92",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta.; [C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "relajado|CONTROL_QA": {
+  "huella": "65dabbff4bfdfb82",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "relajado|ENLACES": {
+  "huella": "c83fafc1e87ea580",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "relajado|PARAMETROS": {
+  "huella": "b8b21246e503325b",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
+ },
+ "relajado|REVISION": {
+  "huella": "0ee349f40a529d2f",
+  "motivo": "[C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
  },
  "relajado|resumen": {
-  "huella": "094e6055af68eb71",
-  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+  "huella": "942bdbdc35fa4a08",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta.; [C1+M-a] el identificador comparable igual ya no sube un par de países distintos a EMPRESA/A (se informa y el nivel no cambia); el MOTIVO de un par que sube por identificador lo dice; la invariante «todo A tiene todas las palabras alineadas» no cuenta los A justificados por identificador (CONTROL_QA y los indicadores que lo resumen)"
  }
 }

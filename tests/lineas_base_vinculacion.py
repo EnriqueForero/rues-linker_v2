@@ -141,3 +141,10 @@ def _cargar_cambios_declarados() -> dict[tuple[str, str], tuple[str, str]]:
 
 
 CAMBIOS_DECLARADOS: dict[tuple[str, str], tuple[str, str]] = _cargar_cambios_declarados()
+
+#: Controles que no salen en OK HOY (tras los arreglos declarados de F3.1b). La FALLA «A con palabras sin alinear» del
+#: original desapareció con el arreglo M-a/C1; queda la advertencia de recall del bloqueo.
+CONTROLES_NO_OK_VIGENTES: dict[str, dict[str, str]] = {
+    escenario: {c: e for c, e in controles.items() if e != "FALLA"}
+    for escenario, controles in CONTROLES_NO_OK_MOTOR_ORIGINAL.items()
+}

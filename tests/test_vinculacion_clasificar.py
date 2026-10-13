@@ -723,25 +723,55 @@ def test_evidencia_una_variable_vacia_en_la_ancla_se_omite_sin_leer_el_destino()
     ]
 
 
-def test_evidencia_el_identificador_igual_no_mira_el_pais_ni_las_palabras_ni_el_motivo():
-    """Hallazgo F3 (fijado tal cual está): un par entre países, con palabras sin alinear, sube a EMPRESA A.
-
-    Queda un vínculo A automático que ``controles`` marca en FALLA (cruza países y tiene palabras sin alinear),
-    y el MOTIVO sigue explicando el nivel anterior.
-    """
-    pares = _pares_clasificados([("GRUPO", "C", "ZELVORA")])
-    pares["MISMO_PAIS"] = ["NO"]
+def _par_con_identificador(
+    mismo_pais: str, nivel: str = "GRUPO", banda: str = "C", paises: str = "DEU"
+):
+    pares = _pares_clasificados([(nivel, banda, "ZELVORA")])
+    pares["MISMO_PAIS"] = [mismo_pais]
     pares["SOBRA_EXPORTADOR"] = ["ALIMENTOS"]
     pares["SOBRA_DESTINO"] = ["INDUSTRIAS"]
-    pares["MOTIVO"] = ["Comparte la marca ZELVORA pero está en otro país; lo que sobra es genérico"]
+    pares["MOTIVO"] = ["Comparte la marca ZELVORA; lo que sobra es genérico"]
     graf = graf_de([Grafia("España", "A0", "A0", id_comparable="B12345678")])
     prep_b = destino_de(
-        [Registro("ESB0000001", "B0", "B0", paises="DEU", id_comparable="B12345678")]
+        [Registro("ESB0000001", "B0", "B0", paises=paises, id_comparable="B12345678")]
     )
-    y = evidencia_extra(pares, graf, prep_b)
-    assert y[["NIVEL_AUTO", "BANDA_AUTO", "MISMO_PAIS", "SOBRA_EXPORTADOR"]].values.tolist() == [
-        ["EMPRESA", "A", "NO", "ALIMENTOS"]
+    return pares, evidencia_extra(pares, graf, prep_b)
+
+
+def test_evidencia_el_identificador_igual_no_sube_un_par_de_otro_pais():
+    """F3.1b (C1): el mismo identificador entre países distintos se informa, pero no convierte el par en EMPRESA A."""
+    pares, y = _par_con_identificador("NO")
+    assert y[["NIVEL_AUTO", "BANDA_AUTO"]].values.tolist() == [["GRUPO", "C"]]
+    assert y["EVIDENCIA_EXTRA"].tolist() == [
+        "mismo identificador (en otro país: no cambia el nivel)"
     ]
+    assert y["MOTIVO"].tolist() == pares["MOTIVO"].tolist()
+
+
+def test_evidencia_el_identificador_igual_en_el_mismo_pais_sube_y_el_motivo_lo_explica():
+    """El identificador decide EMPRESA A con el mismo país, aunque el nombre difiera; el MOTIVO dice que lo decide él."""
+    _, y = _par_con_identificador("SÍ", paises="ESP")
+    assert y[["NIVEL_AUTO", "BANDA_AUTO", "EVIDENCIA_EXTRA"]].values.tolist() == [
+        ["EMPRESA", "A", "mismo identificador"]
+    ]
+    assert y["MOTIVO"].iat[0] == (
+        "Mismo identificador comparable y mismo país: lo decide el identificador. "
+        "Antes: Comparte la marca ZELVORA; lo que sobra es genérico"
+    )
+
+
+def test_evidencia_el_identificador_igual_sube_si_falta_el_pais_de_un_lado():
+    _, y = _par_con_identificador("SIN DATO", paises="")
+    assert y[["NIVEL_AUTO", "BANDA_AUTO"]].values.tolist() == [["EMPRESA", "A"]]
+    assert (
+        y["MOTIVO"]
+        .iat[0]
+        .startswith("Mismo identificador comparable: lo decide el identificador. Antes:")
+    )
+
+
+def test_evidencia_no_reescribe_el_motivo_de_un_par_que_ya_era_empresa_a():
+    pares, y = _par_con_identificador("SÍ", nivel="EMPRESA", banda="A", paises="ESP")
     assert y["MOTIVO"].tolist() == pares["MOTIVO"].tolist()
 
 
