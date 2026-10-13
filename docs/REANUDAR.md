@@ -1,7 +1,7 @@
 # Dónde estamos y cómo retomar
 
-*Actualizado: 2026-10-11. Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
-El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-30); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
+*Actualizado: 2026-10-13. Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
+El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-31); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
 
 ## 1. Estado en una mirada
 
@@ -9,16 +9,18 @@ El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, e
 |---|---|---|---|
 | F0 | Fundaciones (CI, líneas base, trinquetes) | ✅ en `main` (PR #1) | 7 % |
 | F1 | Contrato de salida | ✅ en `main` (PR #2) | 18 % |
-| F2 | Calidad y unificación del motor | ✅ el motor está en `main` (PR #3). **El PR #4 (cierre documental) está abierto: falta que Enrique lo mezcle** | 18 % |
-| **F3** | **Vinculación de empresas dentro de la librería** | **Hito F3.1 cerrado en la rama `claude/f3-vinculacion` (no está en `main`).** F3.1b a F3.7 pendientes | 18 % (≈ 38 % hecho) |
+| F2 | Calidad y unificación del motor | ✅ en `main` (PR #3 el motor, PR #4 el cierre documental) | 18 % |
+| **F3** | **Vinculación de empresas dentro de la librería** | **F3.1 (motor extraído con paridad) está en `main` (PR #5). F3.1b (arreglos declarados) está hecho en la rama `claude/f3-arreglos`: falta abrir su PR y que Enrique lo mezcle.** F3.2 a F3.7 pendientes | 18 % (≈ 48 % hecho) |
 | F4 | Escala (4 M de registros en Colab) | pendiente | 18 % |
 | F5/F6 | Ingeniería y release 1.0 | pendiente | 18 % |
 
-**Avance del plan ≈ 51 %.** F0 + F1 + F2 = 44 %; F3 aporta ≈ 7 puntos (38 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
+**Avance del plan ≈ 53 %.** F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
 
-Subfases de F3: **F3.0 oráculo ✅ · F3.1 extracción con paridad ✅** · F3.1b arreglos declarados · F3.2 reutilizar la librería · F3.3 contrato estándar (`vincular_empresas`) · F3.4 decisiones unificadas · F3.5 notebook 10 delgado · F3.6 notebook 09 · F3.7 ADR, documentación, skill (sin versión ni tag).
+Subfases de F3: **F3.0 oráculo ✅ · F3.1 extracción con paridad ✅ · F3.1b arreglos declarados ✅ (rama `claude/f3-arreglos`)** · F3.2 reutilizar la librería · F3.3 contrato estándar (`vincular_empresas`) · F3.4 decisiones unificadas · F3.5 notebook 10 delgado · F3.6 notebook 09 · F3.7 ADR, documentación, skill (sin versión ni tag).
 
-## 2. Qué contiene `claude/f3-vinculacion` (hito F3.1)
+## 2. Qué contiene el hito F3.1 (ya en `main`) y qué agrega F3.1b
+
+**F3.1b** (rama `claude/f3-arreglos`, IT-31): hizo todo el nivel 1 del plan de arreglos y cinco del nivel 2, cada uno con su prueba y su declaración. El detalle (qué cambia, qué tablas de los escenarios toca, qué NO se hizo y por qué) está en `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`, sección «Estado». **Lo que sigue sin medirse:** precisión y recall sobre empresas reales (los insumos del piloto se perdieron al reciclarse el contenedor). Lo de abajo describe F3.1, que sigue valiendo como evidencia de la extracción.
 
 El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celda `%%writefile`) vive ahora en la librería, partido por responsabilidad y **con el mismo comportamiento**:
 
@@ -49,9 +51,9 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 
 | # | Qué | Cómo se sabe que terminó | Costo relativo |
 |---|---|---|---|
-| 0 | **Enrique mezcla el PR #4** y borra las ramas viejas (sección 4) | `main` trae IT-29 completo | mínimo |
-| 1 | PR del hito F3.1 (`claude/f3-vinculacion` → `main`) | CI verde (el job «mypy visible» es rojo por diseño); Enrique mezcla | bajo |
-| 2 | **F3.1b**: arreglos declarados del motor. Empezar por el nivel 1 de `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md` (los de severidad alta: identificador ausente leído como `'NA'`, `ID_COMPARABLE` que sube a EMPRESA/A entre países, «Ltda» sin forma legal, rama `COMPACTO_IGUAL` sin mirar las marcas, caída del Excel con pandas 3 si una columna no tiene valores) | un commit por hallazgo: prueba que falla → arreglo → `CAMBIOS_DECLARADOS` en la línea base | medio (≈ 24 arreglos pequeños) |
+| 0 | ✅ PR #4 y PR #5 mezclados. **Enrique borra las ramas viejas** (sección 4) | — | mínimo |
+| 1 | **PR de F3.1b** (`claude/f3-arreglos` → `main`) | CI verde (el job «mypy visible» es rojo por diseño); Enrique mezcla | bajo |
+| 2 | ✅ **F3.1b**: arreglos declarados del motor (nivel 1 completo + B2, B3, B8, g3-O1, g3-O2). Pendientes con decisión de Enrique: C9, B7, M-c, A13 (`PLAN_ARREGLOS_F3.1b.md`) | `pytest` de `test_vinculacion_*` verde en py311 y py310; el arnés solo difiere en lo declarado | hecho |
 | 3 | F3.2: catálogos a `matching/genericos.py`; locale por configuración (un `Normalizador` no pisa al otro) | prueba «vinculacion no define catálogos» | bajo |
 | 4 | F3.3: `vincular_empresas` → `ResultadoLinkage` (+ Excel técnico como vista). **La vista VPI queda vacía hasta resolver el Excel de Caro** | contrato de salida verde | alto |
 | 5 | F3.4: lector único de decisiones (`flujo/decisiones.py`) | ida y vuelta: el Excel de salida sirve como archivo de decisiones | medio |
@@ -62,22 +64,22 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 ## 4. Cómo llevar lo hecho a `main`
 
 Nadie empuja a `main`: se hace por PR y **Enrique mezcla** (regla del proyecto).
-1. Mezclar el PR #4 (`claude/f2-cierre` → `main`, con *merge commit*). Después, desde la interfaz de GitHub (Branches → papelera; el proxy de las sesiones no puede borrar ramas) borrar `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12` y `claude/f2-cierre`. **Conservar** `feature/vinculacion-0.23.0` hasta que F3.7 decida.
-2. Abrir el PR del hito F3.1: base `main`, cabeza `claude/f3-vinculacion`. Título sugerido: «F3.1 · Motor de vinculación extraído a la librería con paridad contra el original». Cuerpo: esta sección 2 y la tabla de evidencia. Es **aditivo**: ningún código existente cambia de comportamiento (solo `matching/locales.py` gana `registrar_locale_compuesto` y `flujo.importadores` delega en él); nadie más importa el paquete nuevo; CI: ruff, formato, anillo de mypy (ahora con los dos paquetes), pruebas, deuda y reglas estrictas pasan en local.
-3. Mezclarlo ya o esperar es indiferente para la calidad: la rama no se rompe por esperar. Si se mezcla, `main` queda con un motor completo y probado pero sin API pública estándar ni notebooks (F3.3 y F3.5).
+1. ✅ PR #4 (cierre de F2) y PR #5 (hito F3.1) ya están mezclados. Desde la interfaz de GitHub (Branches → papelera; el proxy de las sesiones no puede borrar ramas) borrar `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12`, `claude/f2-cierre` y `claude/f3-vinculacion`. **Conservar** `feature/vinculacion-0.23.0` hasta que F3.7 decida.
+2. PR de F3.1b: base `main`, cabeza `claude/f3-arreglos`. Título sugerido: «F3.1b · Arreglos declarados del motor de vinculación». Cuerpo: `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`, sección «Estado». **Cambia resultados del motor respecto del original** (declarados; en los 4 escenarios solo cambian `ENLACES.MOTIVO`, `CONTROL_QA`, `PARAMETROS`, `resumen`, `COMPARACION_REVISIONES` y, con errata doble, `REVISION`/`EXPORTADORES`), pero nada de esto está en una versión publicada.
+3. Después de mezclarlo, la siguiente rama sale de `main` (F3.2 en adelante).
 
 ## 5. Decisiones y preguntas abiertas (de Enrique)
 
 - **Excel de Caro / formato VPI → al final** (2026-10-11). No pedir archivo nuevo: releer las cuatro «matrices VPI» del Drive (ids en el archivo de decisiones de Enrique del 2026-10-07) con la hipótesis de que alguna hoja (`LÍNEA 1–3`, `CASOS DE ÉXITO`…) es el formato; **no inventar columnas**. Hasta entonces la vista VPI queda vacía.
 - **Notebook 11**: solo existe en el plan («notebooks 01–11»); no existe en el repositorio, el Drive ni el zip entregado. Recomendación: no crear un 11 ahora; cuando se resuelva el Excel de Caro, un notebook de tres celdas que genere la vista VPI. Por defecto F3.5 cubre solo el 10. Falta que Enrique elija (o confirme el defecto).
 - **Archivos de septiembre** (`referencia_revision_2026-09-24.csv`, `decisiones_revision_2026-09-29.csv`) y el Excel entregado el 5-oct: prioridad baja; su hoja `DECISIONES` basta para reconstruir ambos. Sirven solo para reproducir la huella `9e3950f469ae0523`.
-- **Alcance de F3.1b**: la lista del nivel 1 de `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md` cambia resultados del motor (declarados). Enrique decide si todos, algunos o ninguno antes del 0.23.0; el nivel 2 (diseño delicado: uniones transitivas con vetos) se queda para F5.
+- **F3.1b (2026-10-13): hecho el nivel 1 completo y cinco del nivel 2** (uniones transitivas con vetos resueltas con union-find restringido). Quedan para decidir con datos reales: **C9** (propagar por web solo desde vínculos ALTA: más precisión, menos recall), **M-c** (el umbral de «parecido» hace inalcanzable esa rama de REVISAR: bajarlo da más recall y más preguntas de revisión), **B7** (`raiz_id` corta en el primer «-») y A13 (promoción del alias).
 - Vigentes (2026-10-07): F3 antes de F4; se conservan Optuna y `GroundTruth`; umbral de estrellas 0,80 («unir mal duele más»); alias en español solo en `diccionario`/`leer_resultado`; Snowflake no lee los nombres de v1; equipos consumidores en `CONSUMIDORES.md`.
 
 ## 6. Cómo comprobar el estado en una máquina nueva
 
 ```bash
-git clone https://github.com/EnriqueForero/rues-linker_v2 && cd rues-linker_v2 && git checkout claude/f3-vinculacion
+git clone https://github.com/EnriqueForero/rues-linker_v2 && cd rues-linker_v2     # main trae F3.1; para F3.1b: git checkout claude/f3-arreglos
 python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"      # Python 3.11 (y otro entorno con 3.10 para la matriz)
 pytest tests/test_vinculacion_*.py tests/test_sin_nombres_reales.py -q       # ≈ 4 min; usar `pytest` simple, como el CI
 export LIB_SRC=$PWD/src                                                       # arnés contra el motor original
@@ -100,10 +102,10 @@ Lo gastado en F3.1 (tokens de subagentes reportados, sin contar al coordinador n
 
 Para seguir gastando menos, sin perder la compuerta de paridad:
 - Un solo modelo, sin abanico de agentes; **prueba primero y el arnés/`test_vinculacion_paridad.py` como único verificador** de cada arreglo.
-- Hacer solo el nivel 1 de F3.1b y solo los de severidad alta primero (cada uno pequeño).
+- F3.1b ya está hecho (se trabajó con un solo modelo, sin abanico de agentes, y con `declarar_cambio.py` para cada declaración).
 - Saltar la revisión independiente salvo en lo que toque la clasificación o las uniones (los puntos donde un error cuesta vínculos falsos).
 - Parar en cualquier hito cerrado: cada fila de la sección 3 deja el repositorio en un estado coherente.
 
 ## 9. Mapa de documentos
 
-`REANUDAR.md` (esto) · `PLAN_EJECUCION.md` (el plan) · `BITACORA.md` IT-30 (qué pasó y por qué) · `vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md` (≈ 90 hallazgos del motor original, conservados a propósito) · `vinculacion/PLAN_ARREGLOS_F3.1b.md` (qué arreglar y en qué orden) · `vinculacion/REVISION_EQUIVALENCIA.md` (encargo para la revisión independiente) · `CONSUMIDORES.md` (quién lee qué; notas del 2026-10-11) · `adr/` (decisiones; la próxima es 0014).
+`REANUDAR.md` (esto) · `PLAN_EJECUCION.md` (el plan) · `BITACORA.md` IT-30 e IT-31 (qué pasó y por qué) · `vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md` (≈ 90 hallazgos del motor original; los de nivel 1 ya corregidos) · `vinculacion/PLAN_ARREGLOS_F3.1b.md` (qué se arregló, qué no y por qué) · `vinculacion/REVISION_EQUIVALENCIA.md` (encargo para la revisión independiente) · `CONSUMIDORES.md` (quién lee qué; notas del 2026-10-11 y 2026-10-13) · `adr/` (decisiones; la próxima es 0014).

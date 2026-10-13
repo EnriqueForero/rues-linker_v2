@@ -637,3 +637,12 @@ pytest tests/test_scripts_tecnicas_contrato.py -W error::DeprecationWarning:<los
 - **Archivos del piloto agroalimentos** (`referencia_revision_2026-09-24.csv`, `decisiones_revision_2026-09-29.csv` y el Excel entregado el 2026-10-05, huella `ENLACES` `9e3950f469ae0523`): no están en el Drive
   conectado ni en el entorno de trabajo. Sirven solo para reproducir esa huella exacta (el Excel basta: su hoja `DECISIONES` trae el historial). Prioridad baja; la paridad que sí se verifica es motor original contra paquete nuevo.
 
+
+### 2026-10-13 (Enrique): retomar el plan, F3.1b y notebook 11
+
+- **Notebook 11:** Enrique confirma **no crearlo** (queda como estaba: F3.5 cubre solo el notebook 10; el formato VPI sigue para el final de F3).
+- **F3.1b autorizado de forma amplia:** «la mayor precisión y el mayor recall», declarando cada cambio. Hecho el nivel 1 completo (ver `vinculacion/PLAN_ARREGLOS_F3.1b.md`, sección «Estado»).
+- **Qué ven los consumidores del Excel/tablas de vinculación (nada de esto está en una versión publicada):** `COMPARACION_REVISIONES` trae siempre 8 columnas (`RAZON_ULTIMA` también cuando está vacía);
+  `ENLACES.MOTIVO` de un par promovido por identificador comparable dice «Mismo identificador comparable y mismo país: lo decide el identificador. Antes: …»; `'NA'` (Namibia), `'N/A'`, `'None'` y `'null'` en una
+  base se leen ahora como texto (antes quedaban vacíos); `FILA_EXCEL`/`ID_REGISTRO` de un CSV con líneas en blanco son la línea real del archivo; las hojas `DETALLE_*` con el mismo prefijo de 31 caracteres reciben `_2`, `_3`.
+- **Sigue abierto, necesita datos reales:** medir precisión y recall del motor corregido contra la referencia adjudicada del piloto (los insumos se perdieron al reciclarse el contenedor).

@@ -1779,3 +1779,49 @@ tablas 0,46 M; tres revisiones independientes 1,05 M). El resto de F3 en el mism
 
 La rama `claude/f3-vinculacion` (empujada) trae el motor completo, con paridad demostrada en Python 3.10 + pandas 2 y Python 3.11 + pandas 3, y la documentación para retomar (`docs/REANUDAR.md`).
 No hay PR abierto para ella; el PR #4 (cierre de F2) espera el merge de Enrique. Plan ≈ 51 %, F3 ≈ 38 %. Sin versión ni tag.
+
+
+## IT-31 · F3.1b, los arreglos declarados del motor de vinculación (sin publicar)
+
+Continuación de IT-30. Enrique mezcló el PR #4 (cierre de F2) y el PR #5 (hito F3.1) y pidió retomar la culminación del plan con «la mayor precisión y el mayor recall»: hacer
+todos los arreglos de F3.1b que garanticen que el motor funcione bien, declarando cada uno porque **cambian resultados del motor** respecto del original. Rama `claude/f3-arreglos`
+(base `main`), 17 commits, sin versión ni tag.
+
+### Qué se hizo y cómo se decidió
+
+* **Orden:** primero lo que hace daño en silencio (ausente leído como «NA»; identificador igual que sube países distintos a EMPRESA/A; uniones que mezclan «J Martinez» con «A Martinez»),
+  después lo que pierde recall (sigla en el destino, `'NA'` de Namibia), luego robustez, mensajes y Excel. El detalle por hallazgo, con las tablas de los escenarios que cambian, está en
+  `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md` (sección «Estado»).
+* **Método por arreglo:** prueba que falla primero → arreglo → prueba verde → `scripts/oraculo_vinculacion/declarar_cambio.py` (nueva herramienta) escribe la huella nueva y el motivo en
+  `tests/lineas_base_vinculacion_cambios.json` solo donde una tabla de los 4 escenarios cambió. La línea base del original (`HUELLAS_MOTOR_ORIGINAL`) no se toca: es el registro del oráculo.
+* **Algoritmo nuevo:** `componentes_restringidas` (union-find con restricciones): una decisión DISTINTA se respeta aunque haya un puente, las uniones automáticas no mezclan familias legales
+  incompatibles y las decisiones humanas se aplican primero. Antes el resultado dependía del orden de unión (g3-O1, g3-O2).
+* **Una dependencia entre arreglos que conviene recordar:** con A2 (`'NA'` es texto) el texto «nan» que llega de un CSV ya no se vuelve ausente en la lectura; por eso A4 (HS6 con nan/inf) y el
+  descarte de `pd.NA` en `unir_valores` se hicieron en el mismo bloque.
+
+### Lo que el arnés mostró al final
+
+`scripts/oraculo_vinculacion/comparar.py` contra el original (py311 + pandas 3, 4 escenarios): las únicas diferencias son las declaradas — `ENLACES.MOTIVO` (1 celda), `CONTROL_QA` (la invariante de palabras alineadas
+pasa de FALLA a OK), `PARAMETROS`, `resumen`, `COMPARACION_REVISIONES` (columna `RAZON_ULTIMA`) y, en `errata_doble`, 9 filas menos en `REVISION` y 4 exportadores que dejan de pedir revisión. **Ningún vínculo cambia.**
+Eso dice que los arreglos no rompen los escenarios, no que mejoren la precisión o el recall sobre empresas reales: eso no se midió (ver abajo).
+
+### Lo que NO se pudo hacer (y es lo que más importa para «recall y precisión»)
+
+* **No hay medición con datos reales.** Al reciclarse el contenedor se perdieron los insumos del piloto; no se puede reproducir la huella `9e3950f469ae0523` ni medir precisión/recall del motor nuevo contra la
+  referencia adjudicada. Todo lo que dice «mejora» se apoya en pruebas unitarias y en 4 escenarios inventados. El primer trabajo cuando Enrique devuelva los insumos: correr el motor original y el nuevo sobre
+  los mismos insumos y comparar (el arnés ya lo hace).
+* **Decisiones que dependen de datos reales y quedaron sin tocar:** C9 (propagar por web solo desde vínculos ALTA), M-c (umbral de «parecido»: hoy la rama es inalcanzable con el valor por defecto) y B7 (IDs con guion).
+* El `except`/`print` y la deuda no subieron (`scripts/deuda.py`: PASA); mypy en frío: 0 errores en 32 archivos de los dos paquetes.
+
+### Lo que la iteración enseñó
+
+* Un arreglo de «precisión» puede cambiar una tabla de un escenario pensado para otra cosa (`errata_doble` existe para probar `max_ediciones_palabra=2` y B8 lo toca). Se midió fila por fila
+  antes de declararlo: 9 preguntas de revisión entre empresas distintas desaparecen y no se pierde ningún vínculo.
+* `declarar_cambio.py` atribuye todo lo que cambió desde la última declaración al identificador que se le pasa. Si dos arreglos conviven en el árbol, hay que neutralizar uno para declarar el otro
+  (se hizo así con M-b y B8). Regla práctica: declarar justo después de cada arreglo.
+* Un test que fija un defecto (`test_hallazgo_f3_...`) es la forma de encontrar todos los lugares que el arreglo toca: se reescribieron una veintena, cada una con el arreglo que la cambió en su comentario.
+
+### Estado al cierre
+
+Plan ≈ 53 % (F0 + F1 + F2 = 44 %; F3 ≈ 48 % de su 18 %: F3.0, F3.1 y F3.1b hechos; F3.2 a F3.7 pendientes). Siguen F3.2 (catálogos y locale), F3.3 (`vincular_empresas` → `ResultadoLinkage`), F3.4 (decisiones unificadas),
+F3.5/F3.6 (notebooks 10 y 09; **no** se crea el 11), F3.7 (ADR-0014, `docs/VINCULACION.md`, skill), luego F4 y F5/F6. Pendiente de Enrique: borrar las ramas viejas desde GitHub (el proxy de las sesiones no puede).
