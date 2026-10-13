@@ -270,7 +270,7 @@ def _na_solo_en_los_paises(df: pd.DataFrame, f: Fuente) -> None:
     for j, c in enumerate(df.columns):
         if c not in paises:
             col = df.iloc[:, j]
-            df.isetitem(j, col.mask(col == "NA"))
+            df.isetitem(j, col.mask(col == "NA").to_numpy())
 
 
 def leer_fuente(f: Fuente) -> pd.DataFrame:
