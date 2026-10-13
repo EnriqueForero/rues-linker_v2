@@ -50,11 +50,13 @@ def _pares_automaticos(a: pd.DataFrame) -> _Automaticos:
     """Los vínculos, los candidatos y, por par, el ``MISMO_PAIS`` y el ``NIVEL_AUTO`` de los pares ``a``."""
     # ``strict=False`` como el ``zip`` a secas del original: no se endurece a ``strict=True`` para no cambiar el
     # comportamiento con tablas mal formadas (p. ej., una columna con la etiqueta repetida).
+    if a.empty:
+        # F3.1b (C10): sin ningún par candidato ``L_auto`` no trae las columnas (p. ej. MISMO_PAIS) y con una referencia
+        # la validación caía con KeyError en vez de dar métricas en cero.
+        return _Automaticos(set(), set(), {}, {})
     es_vinculo = a["BANDA_AUTO"].isin(["A", "B"]) & a["NIVEL_AUTO"].isin(_NIVELES_VINCULO)
     pos_auto = set(zip(a.loc[es_vinculo, "ENT"], a.loc[es_vinculo, "pos_b"], strict=False))
     cand = set(zip(a["ENT"], a["pos_b"], strict=False))
-    # Hallazgo F3: sin ningún par candidato en toda la corrida ``L_auto`` no trae la columna MISMO_PAIS y, si hay
-    # una referencia, esta línea falla con KeyError('MISMO_PAIS') en vez de dar métricas en cero.
     mismo = dict(zip(zip(a["ENT"], a["pos_b"], strict=False), a["MISMO_PAIS"], strict=False))
     nivel_auto = dict(zip(zip(a["ENT"], a["pos_b"], strict=False), a["NIVEL_AUTO"], strict=False))
     return _Automaticos(pos_auto, cand, mismo, nivel_auto)
@@ -83,13 +85,14 @@ def _fila_de_metricas(
     prec = len(tp) / len(auto_eval) if auto_eval else float("nan")
     rec = len(tp) / len(ref_pos) if ref_pos else float("nan")
     rec_c = (len(ref_pos) - len(fn_c)) / len(ref_pos) if ref_pos else float("nan")
-    # Hallazgo F3: con precisión o recall en 0 el F1 sale NaN (``prec and rec`` es falso); debería ser 0,0
-    # cuando ambos están definidos (hay vínculos automáticos y de referencia, y ningún acierto).
-    f1 = (
-        2 * prec * rec / (prec + rec)
-        if prec and rec and not math.isnan(prec + rec)
-        else float("nan")
-    )
+    # F3.1b (C11): el original daba NaN cuando la precisión o el recall valían 0 (``prec and rec`` es falso). El F1 solo
+    # no está definido si no hay vínculos automáticos NI de referencia; sin aciertos pero con algo que medir vale 0,0.
+    if not auto_eval and not ref_pos:
+        f1 = float("nan")
+    elif not tp:
+        f1 = 0.0
+    else:
+        f1 = 2 * prec * rec / (prec + rec)
     ic_p, ic_r = wilson(len(tp), len(auto_eval)), wilson(len(tp), len(ref_pos))
     return {
         "FUENTE_DESTINO": f,
