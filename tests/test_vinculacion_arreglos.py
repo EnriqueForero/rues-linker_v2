@@ -10,8 +10,20 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from apoyo_comparacion_vinculacion import (
+    CORPUS,
+    FilaAncla,
+    NormalizadorDoble,
+    comparador,
+    config_prueba,
+    prep_ancla,
+)
 
 from record_linkage.flujo.vinculacion import controles
+from record_linkage.flujo.vinculacion.config import ConfigVinculacion, Fuente
+from record_linkage.flujo.vinculacion.decisiones import clave_ancla, clave_texto, leer_decisiones
+from record_linkage.flujo.vinculacion.deduplicar import deduplicar_ancla, familias_legales
+from record_linkage.flujo.vinculacion.ejecutar import _avisos_de_decisiones_de_la_ancla
 from record_linkage.flujo.vinculacion.normalizar import (
     digitos_telefono,
     dominio_email,
@@ -86,20 +98,6 @@ def test_m_a_un_a_con_palabras_sin_alinear_y_sin_identificador_sigue_incumpliend
 
 
 # ── B1 · mismas letras pero iniciales o números distintos: nunca se unen solas ─────────────────────
-from apoyo_comparacion_vinculacion import (  # noqa: E402
-    CORPUS,
-    FilaAncla,
-    NormalizadorDoble,
-    comparador,
-    config_prueba,
-    prep_ancla,
-)
-
-from record_linkage.flujo.vinculacion.decisiones import leer_decisiones  # noqa: E402
-from record_linkage.flujo.vinculacion.deduplicar import (  # noqa: E402
-    deduplicar_ancla,
-    familias_legales,
-)
 
 
 def _ancla(*filas: FilaAncla):
@@ -168,7 +166,6 @@ def test_g3_o6_las_formas_legales_latinoamericanas_tienen_familia(nombre, famili
 
 
 # ── g3-O5 · la clave de una grafía no depende de la versión de pandas ──────────────────────────────
-from record_linkage.flujo.vinculacion.decisiones import clave_ancla, clave_texto  # noqa: E402
 
 ESPACIOS_RAROS = ["\u00a0", "\u2007", "\u202f", "\u3000", "\x0b", "\x85", "\t", "  "]
 
@@ -190,7 +187,6 @@ def test_g3_o5_la_clave_conserva_los_ausentes_como_vacio_y_el_orden():
 
 
 def test_g3_o3_el_aviso_de_una_decision_de_una_grafia_contra_si_misma():
-    from record_linkage.flujo.vinculacion.ejecutar import _avisos_de_decisiones_de_la_ancla
 
     graf = pd.DataFrame({"x": [1]})
     graf.attrs["desconocidas"] = [("España|A", "España|B")]
@@ -202,7 +198,6 @@ def test_g3_o3_el_aviso_de_una_decision_de_una_grafia_contra_si_misma():
 
 
 # ── g1-O3 / C1(g2) · un texto suelto donde va una colección ya no se recorre letra a letra ─────────
-from record_linkage.flujo.vinculacion.config import ConfigVinculacion, Fuente  # noqa: E402
 
 
 def _fuente(clave="EXPORTADORES", **cambios):

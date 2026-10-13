@@ -36,6 +36,7 @@ from record_linkage.flujo.vinculacion.deduplicar import (
     familias_legales,
     raiz_id,
 )
+from record_linkage.flujo.vinculacion.ejecutar import _avisos_de_decisiones_de_un_destino
 
 A = FilaAncla
 D = FilaDestino
@@ -1133,6 +1134,60 @@ def test_destino_las_decisiones_se_filtran_por_la_clave_de_la_fuente_del_destino
     out, un = _destino(otra, filas, dec)  # la misma decisión no aplica a otro destino
     assert len(un) == 0
     assert out["ID_ENTIDAD"].tolist() == ["OTR-E0001", "OTR-E0002"]
+
+
+# ── F3.1b (B2) · las decisiones del destino se tratan igual que las de la ancla ───────────────────
+def _sucursales():
+    return [
+        D("ESB0000004", "Triventa SA", "TRIVENTA"),
+        D("ESB0000004-1", "Triventa SA", "TRIVENTA"),
+    ]
+
+
+def test_destino_la_ultima_decision_manda_misma_despues_de_distinta_une(tmp_path):
+    """B2: DISTINTA (archivo 1) y luego MISMA_ENTIDAD (archivo 2) sobre el mismo par: manda la última, como en la ancla.
+
+    Antes el veto quedaba en pie y la decisión humana más reciente se descartaba sin aviso.
+    """
+    dec = _leer(
+        tmp_path,
+        [(DUP, "ORBIS", "ESB0000004", "ESB0000004-1", "DISTINTA", "Uno")],
+        [(DUP, "ORBIS", "ESB0000004", "ESB0000004-1", "MISMA_ENTIDAD", "Dos")],
+    )
+    out, un = _destino(ORBIS, _sucursales(), dec)
+    assert out["ID_ENTIDAD"].tolist() == ["ORB-E0001", "ORB-E0001"]
+    assert ["decisión: Dos"] in [[r] for r in un["REGLA"]]
+
+
+def test_destino_la_ultima_decision_manda_distinta_despues_de_misma_veta(tmp_path):
+    dec = _leer(
+        tmp_path,
+        [(DUP, "ORBIS", "ESB0000004", "ESB0000004-1", "MISMA_ENTIDAD", "Uno")],
+        [(DUP, "ORBIS", "ESB0000004", "ESB0000004-1", "DISTINTA", "Dos")],
+    )
+    out, un = _destino(ORBIS, _sucursales(), dec)
+    assert out["ID_ENTIDAD"].tolist() == ["ORB-E0001", "ORB-E0002"]
+    assert len(un) == 0
+
+
+def test_destino_deja_en_attrs_las_decisiones_que_no_pudo_aplicar(tmp_path):
+    """B2: las claves que no son un ID_REGISTRO del destino y las de un registro contra sí mismo se anotan en attrs."""
+    dec = _leer(
+        tmp_path,
+        [
+            (DUP, "ORBIS", "ESB9999999", "ESB0000004", "MISMA_ENTIDAD", "x"),
+            (DUP, "ORBIS", "ESB0000004", "ESB0000004", "DISTINTA", "y"),
+        ],
+    )
+    out, _ = _destino(ORBIS, _sucursales(), dec)
+    assert out.attrs["desconocidas"] == [("ESB9999999", "ESB0000004")]
+    assert out.attrs["autopares"] == [("ESB0000004", "ESB0000004")]
+    limpio, _ = _destino(ORBIS, _sucursales())
+    assert (limpio.attrs["desconocidas"], limpio.attrs["autopares"]) == ([], [])
+    assert _avisos_de_decisiones_de_un_destino("ORBIS", out) == [
+        "ORBIS: decisión DUPLICADO con registro inexistente ESB9999999 ↔ ESB0000004",
+        "ORBIS: decisión DUPLICADO de un registro contra sí mismo (ESB0000004); se ignora",
+    ]
 
 
 # ── F3.1b · uniones con restricciones: puentes, vetos y autopares ───────────────────────────────────

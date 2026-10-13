@@ -553,23 +553,33 @@ def _uniones_por_nombre(prep: pd.DataFrame, nz: Normalizador) -> list[_Union]:
 
 def _decisiones_destino(
     prep: pd.DataFrame, dec: pd.DataFrame, clave_fuente: str
-) -> tuple[list[_Union], set[tuple[int, int]]]:
-    """Aplica las decisiones DUPLICADO de un destino (claves = ``ID_REGISTRO``); devuelve ``(uniones, vetos)``.
+) -> tuple[list[_Union], set[tuple[int, int]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """Aplica las decisiones DUPLICADO de un destino (claves = ``ID_REGISTRO``), en el orden en que llegan.
 
-    Las claves que no son un ``ID_REGISTRO`` del destino se ignoran en silencio.
+    Devuelve ``(uniones, vetos, desconocidas, autopares)``. Como en la ancla, manda la ÚLTIMA decisión sobre un par
+    (una MISMA_ENTIDAD levanta un DISTINTA anterior y al revés); las claves que no son un ``ID_REGISTRO`` del
+    destino van a ``desconocidas`` y un registro contra sí mismo a ``autopares``: no se aplican, pero se avisan.
     """
     pos = {k: i for i, k in enumerate(prep["ID_REGISTRO"])}
     vetos: set[tuple[int, int]] = set()
     uniones: list[_Union] = []
+    desconocidas: list[tuple[str, str]] = []
+    autopares: list[tuple[str, str]] = []
     r: Any  # fila de itertuples(): sus campos son las columnas de ``dec``
     for r in _filas_duplicado(dec, clave_fuente).itertuples():
-        if r.CLAVE_A in pos and r.CLAVE_B in pos:
-            p, q = sorted((pos[r.CLAVE_A], pos[r.CLAVE_B]))
-            if r.DECISION == "MISMA_ENTIDAD":
-                uniones.append((p, q, f"decisión: {r.AUTOR or r.ARCHIVO}"))
-            else:
-                vetos.add((p, q))
-    return uniones, vetos
+        if r.CLAVE_A not in pos or r.CLAVE_B not in pos:
+            desconocidas.append((r.CLAVE_A, r.CLAVE_B))
+            continue
+        if pos[r.CLAVE_A] == pos[r.CLAVE_B]:
+            autopares.append((r.CLAVE_A, r.CLAVE_B))
+            continue
+        p, q = sorted((pos[r.CLAVE_A], pos[r.CLAVE_B]))
+        if r.DECISION == "MISMA_ENTIDAD":
+            uniones.append((p, q, f"decisión: {r.AUTOR or r.ARCHIVO}"))
+            vetos.discard((p, q))
+        else:
+            vetos.add((p, q))
+    return uniones, vetos, desconocidas, autopares
 
 
 def deduplicar_destino(
@@ -577,18 +587,19 @@ def deduplicar_destino(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Entidades dentro de una base destino. Con identificador: SOLO por raíz del ID.
 
-    Sin identificador: la MISMA cadena (salvo mayúsculas y espacios) y los mismos países de
-    evidencia; en registros de grupos como fDi Markets, 'Zelvora' y 'Zelvora Inc' son matriz y filial.
+    Sin identificador: la MISMA cadena original (salvo mayúsculas y espacios) y los mismos países de
+    evidencia; en registros de grupos como fDi Markets, 'Zelvora' y 'Zelvora Inc' son matriz y filial. No se
+    compara el nombre normalizado ni la forma legal: 'Triventa SA' y 'Triventa S.A.' NO se unen (B6: así lo hacía
+    el motor original, cuyo docstring decía otra cosa; ``FORMA_LEGAL`` solo se informa).
 
     Devuelve ``(entidades, uniones)``: ``entidades`` es ``prep`` con las columnas ``ID_ENTIDAD``,
-    ``N_EN_ENTIDAD`` y ``FORMA_LEGAL``; ``uniones`` tiene las columnas ``pos_a, pos_b, REGLA``.
+    ``N_EN_ENTIDAD`` y ``FORMA_LEGAL`` (y en ``attrs`` las decisiones que no se pudieron aplicar:
+    ``desconocidas`` y ``autopares``); ``uniones`` tiene las columnas ``pos_a, pos_b, REGLA``.
     """
-    # Hallazgo F3: el docstring original prometía «mismo nombre normalizado … y misma forma legal»; el código compara
-    # la cadena original: 'Triventa SA' y 'Triventa S.A.' no se unen, y ``FORMA_LEGAL`` solo se informa.
     n = len(prep)
     forma = familias_legales(prep["NOMBRE_ORIGINAL"])
     uniones = _uniones_por_identificador(prep) if f.col_id else _uniones_por_nombre(prep, nz)
-    por_decision, vetos = _decisiones_destino(prep, dec, f.clave)
+    por_decision, vetos, desconocidas, autopares = _decisiones_destino(prep, dec, f.clave)
     uniones = [
         (p, q, m) for p, q, m in [*uniones, *por_decision] if (min(p, q), max(p, q)) not in vetos
     ]
@@ -597,5 +608,7 @@ def deduplicar_destino(
     out["ID_ENTIDAD"] = [f"{f.prefijo_id}-E{e + 1:04d}" for e in et]
     out["N_EN_ENTIDAD"] = out.groupby("ID_ENTIDAD")["ID_ENTIDAD"].transform("size").to_numpy()
     out["FORMA_LEGAL"] = forma
+    out.attrs["desconocidas"] = desconocidas
+    out.attrs["autopares"] = autopares
     un = pd.DataFrame(uniones, columns=["pos_a", "pos_b", "REGLA"])
     return out, un

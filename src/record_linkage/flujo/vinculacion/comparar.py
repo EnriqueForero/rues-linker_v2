@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from rapidfuzz.distance import Levenshtein
+from rapidfuzz.distance import Indel, Levenshtein
 
 from record_linkage.flujo.vinculacion.constantes import CONECTORES
 from record_linkage.matching.genericos import GENERICOS_ESTRUCTURALES, GENERICOS_GEOGRAFIA
@@ -58,8 +58,57 @@ def misma_palabra(t: str, u: str, max_ed: int) -> bool:
         return True
     if max_ed <= 0 or min(len(t), len(u)) < 4 or Levenshtein.distance(t, u) > max_ed:
         return False
-    # Hallazgo F3: con max_ed=2 una sustitución más una inserción (MIRVANA↔MIRVAXAS) pasa en palabras cortas.
-    return len(t) != len(u) or min(len(t), len(u)) >= 8
+    if min(len(t), len(u)) >= 8:
+        return True
+    # En palabras cortas solo se admiten inserciones y supresiones (B8 de F3.1b): la distancia con sustituciones
+    # (Levenshtein) debe valer lo mismo que sin ellas (Indel, que cuenta una sustitución como dos operaciones).
+    # El original aceptaba cualquier palabra de largo distinto y con max_ed=2 dejaba pasar una sustitución más una
+    # inserción (MIRVANA↔MIRVAXAS); con max_ed=1 el resultado es el mismo de siempre.
+    return Indel.distance(t, u) == Levenshtein.distance(t, u)
+
+
+def _pareja_de(
+    t: str,
+    k: int,
+    ta: list[str],
+    tb: list[str],
+    libres: list[int],
+    max_ed: int,
+    trunc: tuple[bool, bool],
+) -> tuple[int | None, str]:
+    """La posición en ``tb`` (entre las ``libres``) que empareja a la palabra ``t`` (la ``k``-ésima de ``ta``).
+
+    Prueba, en este orden: la palabra exacta, la errata (la de menor distancia), la truncada de ``a`` (la
+    última palabra de ``a`` es prefijo de otra) y la truncada de ``b`` (la última de ``b`` es prefijo de ``t``).
+    Devuelve ``(posición, tipo)``, o ``(None, "")`` si no hay pareja. Siempre se elige la primera posición libre
+    con esa palabra.
+    """
+    trunc_a, trunc_b = trunc
+    exacta = [j for j in libres if tb[j] == t]
+    if exacta:
+        return exacta[0], "exacta"
+    if len(t) >= 4 and max_ed > 0:
+        cand = sorted(
+            (Levenshtein.distance(t, tb[j]), tb[j], j)
+            for j in libres
+            if misma_palabra(t, tb[j], max_ed)
+        )
+        if cand:
+            return cand[0][2], "errata"
+    if trunc_a and k == len(ta) - 1 and len(t) >= 2:
+        truncadas = [j for j in libres if tb[j].startswith(t) and tb[j] != t]
+        if truncadas:
+            return truncadas[0], "truncada"
+    ultima = len(tb) - 1
+    if (
+        trunc_b
+        and len(t) >= 3
+        and ultima in libres
+        and len(tb[ultima]) >= 2
+        and t.startswith(tb[ultima])
+    ):
+        return ultima, "truncada"
+    return None, ""
 
 
 def alinear(
@@ -76,45 +125,36 @@ def alinear(
         {"exacta", "errata", "truncada"}. Un nombre truncado admite que su ÚLTIMA palabra
         sea prefijo de una palabra del otro, y que al otro le sobren palabras DESPUÉS
         de la última emparejada (se perdieron en el corte).
+
+    El corte se mide por POSICIÓN (B3 de F3.1b): con palabras repetidas el original usaba ``index()``, que toma
+    la primera aparición, y daba por diferencia lo que en realidad se había perdido en el corte.
     """
-    libres = list(tb)
-    sobra_a: list[str] = []
-    pares: list[tuple[str, str, str]] = []
+    libres = list(range(len(tb)))
+    sobra_a: list[int] = []
+    pares: list[tuple[int, int, str]] = []  # (posición en ta, posición en tb, tipo)
     for k, t in enumerate(ta):
-        hit: str | None
-        hit, tipo = (t, "exacta") if t in libres else (None, "")
-        if hit is None and len(t) >= 4 and max_ed > 0:
-            cand = sorted(
-                (Levenshtein.distance(t, u), u) for u in libres if misma_palabra(t, u, max_ed)
-            )
-            if cand:
-                hit, tipo = cand[0][1], "errata"
-        if hit is None and trunc_a and k == len(ta) - 1 and len(t) >= 2:
-            cand_u = [u for u in libres if u.startswith(t) and u != t]
-            if cand_u:
-                hit, tipo = cand_u[0], "truncada"
-        if hit is None and trunc_b and len(t) >= 3:
-            cand_u = [u for u in libres if t.startswith(u) and u == tb[-1] and len(u) >= 2]
-            if cand_u:
-                hit, tipo = cand_u[0], "truncada"
-        if hit is None:
-            sobra_a.append(t)
+        j, tipo = _pareja_de(t, k, ta, tb, libres, max_ed, (trunc_a, trunc_b))
+        if j is None:
+            sobra_a.append(k)
         else:
-            libres.remove(hit)
-            pares.append((t, hit, tipo))
+            libres.remove(j)
+            pares.append((k, j, tipo))
     sobra_b = libres
     # Pérdida por truncamiento: si la ÚLTIMA palabra del nombre truncado quedó emparejada, lo
     # que al otro le sobra DESPUÉS de esa posición se perdió en el corte (no es diferencia).
-    # Hallazgo F3: ``index`` toma la PRIMERA aparición: con palabras repetidas el corte se mide en otra posición.
-    if trunc_a and sobra_b and ta and pares and pares[-1][0] == ta[-1]:
-        corte = tb.index(pares[-1][1])
-        sobra_b = [u for u in sobra_b if tb.index(u) < corte]
+    if trunc_a and sobra_b and ta and pares and pares[-1][0] == len(ta) - 1:
+        corte = pares[-1][1]
+        sobra_b = [j for j in sobra_b if j < corte]
     if trunc_b and sobra_a and tb and pares:
-        ult_b = [p for p in pares if p[1] == tb[-1]]
+        ult_b = [kj for kj in pares if kj[1] == len(tb) - 1]
         if ult_b:
-            corte = ta.index(ult_b[0][0])
-            sobra_a = [u for u in sobra_a if ta.index(u) < corte]
-    return sobra_a, sobra_b, pares
+            corte = ult_b[0][0]
+            sobra_a = [k for k in sobra_a if k < corte]
+    return (
+        [ta[k] for k in sobra_a],
+        [tb[j] for j in sobra_b],
+        [(ta[k], tb[j], tipo) for k, j, tipo in pares],
+    )
 
 
 def es_subsecuencia(corta: str, larga: str) -> bool:
@@ -125,61 +165,64 @@ def es_subsecuencia(corta: str, larga: str) -> bool:
     return all(c in it for c in corta)
 
 
-def _cubre(
-    a: list[str],
-    b: list[str],
-    genericos: frozenset[str],
-    subsecuencia: bool,
-    i: int,
-    j: int,
-    abrevio: bool,
-    distintiva: bool,
-) -> bool:
-    """¿Las palabras ``a[i:]`` abrevian ``b[j:]``? Búsqueda recursiva de ``es_abreviatura``.
+#: Un estado de la búsqueda de ``es_abreviatura``: ``(i, j, abrevio, distintiva)``.
+_Estado = tuple[int, int, bool, bool]
 
-    ``abrevio`` y ``distintiva`` acumulan lo ya visto: si alguna palabra se acortó de verdad y si
-    alguna de las cubiertas no es genérica. Las cuatro salidas se prueban en este orden: prefijo,
-    subsecuencia (solo con ``subsecuencia``), sigla de varias palabras y saltar una palabra de ``b``.
+
+def _pasos(
+    a: list[str], b: list[str], genericos: frozenset[str], subsecuencia: bool, estado: _Estado
+) -> list[_Estado]:
+    """Los estados a los que se llega desde ``estado`` cubriendo ``a[i]`` con ``b[j:]``.
+
+    Las cuatro salidas, en este orden: prefijo, subsecuencia (solo con ``subsecuencia``), sigla de varias
+    palabras consecutivas de ``b`` y saltar una palabra de ``b`` (esta última no para la primera de ``a``).
     """
-    # Hallazgo F3: sin memoización; el costo crece ~16 veces por cada dos palabras más (12 contra 24 ≈ 4 s).
-    if i == len(a):
-        return abrevio and distintiva
-    if j >= len(b):
-        return False
-    t = a[i]
-    if b[j].startswith(t) and _cubre(
-        a,
-        b,
-        genericos,
-        subsecuencia,
-        i + 1,
-        j + 1,
-        abrevio or len(t) < len(b[j]),
-        distintiva or (len(t) < len(b[j]) and b[j] not in genericos),
-    ):
-        return True
-    if (
-        subsecuencia
-        and es_subsecuencia(t, b[j])
-        and _cubre(
-            a, b, genericos, subsecuencia, i + 1, j + 1, True, distintiva or b[j] not in genericos
+    i, j, abrevio, distintiva = estado
+    t, w = a[i], b[j]
+    salida: list[_Estado] = []
+    if w.startswith(t):
+        corta = len(t) < len(w)
+        salida.append(
+            (i + 1, j + 1, abrevio or corta, distintiva or (corta and w not in genericos))
         )
-    ):
-        return True
+    if subsecuencia and es_subsecuencia(t, w):
+        salida.append((i + 1, j + 1, True, distintiva or w not in genericos))
     n = len(t)
     if 2 <= n <= len(b) - j and all(b[j + k][0] == t[k] for k in range(n)):
-        if _cubre(
-            a,
-            b,
-            genericos,
-            subsecuencia,
-            i + 1,
-            j + n,
-            True,
-            distintiva or any(x not in genericos for x in b[j : j + n]),
-        ):
-            return True
-    return i > 0 and _cubre(a, b, genericos, subsecuencia, i, j + 1, abrevio, distintiva)
+        salida.append(
+            (i + 1, j + n, True, distintiva or any(x not in genericos for x in b[j : j + n]))
+        )
+    if i > 0:
+        salida.append((i, j + 1, abrevio, distintiva))
+    return salida
+
+
+def _cubre(a: list[str], b: list[str], genericos: frozenset[str], subsecuencia: bool) -> bool:
+    """¿Las palabras de ``a`` abrevian las de ``b``? Búsqueda de ``es_abreviatura``, sin recursión.
+
+    Cada palabra de ``a``, en orden, debe cubrir una o varias de ``b``. El estado es ``(i, j, abrevio,
+    distintiva)``: la posición en cada lista y lo ya visto (si alguna palabra se acortó de verdad y si alguna
+    de las cubiertas no es genérica). Se acepta al terminar ``a`` con las dos banderas encendidas. Como el
+    resultado solo es «¿se alcanza un estado de aceptación?», cada estado se visita una vez: el costo es
+    polinómico (el original recursivo era exponencial con palabras repetidas) y no hay límite de pila.
+    """
+    inicio: _Estado = (0, 0, False, False)
+    vistos = {inicio}
+    pendientes = [inicio]
+    while pendientes:
+        estado = pendientes.pop()
+        i, j, abrevio, distintiva = estado
+        if i == len(a):
+            if abrevio and distintiva:
+                return True
+            continue
+        if j >= len(b):
+            continue
+        for siguiente in _pasos(a, b, genericos, subsecuencia, estado):
+            if siguiente not in vistos:
+                vistos.add(siguiente)
+                pendientes.append(siguiente)
+    return False
 
 
 def es_abreviatura(
@@ -195,9 +238,7 @@ def es_abreviatura(
     """
     if not a or not b or a[0][0] != b[0][0]:
         return False
-    return (len(a) >= 2 or len(a[0]) >= 3) and _cubre(
-        a, b, genericos, subsecuencia, 0, 0, False, False
-    )
+    return (len(a) >= 2 or len(a[0]) >= 3) and _cubre(a, b, genericos, subsecuencia)
 
 
 def fichas_abreviatura(nombre: str, nz: Normalizador) -> list[list[str]]:
