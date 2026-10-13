@@ -1,0 +1,14 @@
+{
+ "base|resumen": {
+  "huella": "f47eaf7459bcc8b4",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+ },
+ "errata_doble|resumen": {
+  "huella": "ce2895231fefec46",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+ },
+ "relajado|resumen": {
+  "huella": "094e6055af68eb71",
+  "motivo": "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única celda distinta."
+ }
+}
