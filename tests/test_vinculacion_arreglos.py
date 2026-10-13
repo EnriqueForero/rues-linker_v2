@@ -165,3 +165,25 @@ def test_b1_mismas_letras_con_marcas_iguales_siguen_uniendose_solas():
 def test_g3_o6_las_formas_legales_latinoamericanas_tienen_familia(nombre, familia):
     # Antes: «Ltda», «Lda», «S. en C.», «E.U.» y «EIRL» no tenían familia (compatibles con todo) y «Unlimited» caía en LTD.
     assert familias_legales(pd.Series([nombre]))[0] == familia
+
+
+# ── g3-O5 · la clave de una grafía no depende de la versión de pandas ──────────────────────────────
+from record_linkage.flujo.vinculacion.decisiones import clave_ancla, clave_texto  # noqa: E402
+
+ESPACIOS_RAROS = ["\u00a0", "\u2007", "\u202f", "\u3000", "\x0b", "\x85", "\t", "  "]
+
+
+@pytest.mark.parametrize("espacio", ESPACIOS_RAROS, ids=lambda s: repr(s))
+def test_g3_o5_los_espacios_unicode_se_normalizan_igual_en_pandas_2_y_3(espacio):
+    # Antes, con pandas 3 el `\s` lo evaluaba Arrow/RE2 y no reconocía NBSP, U+2007, U+202F, U+3000, \x0b ni \x85:
+    # 'Zelvora<NBSP>Alimentos' daba una grafía distinta de 'Zelvora Alimentos' solo en pandas 3, y un archivo de
+    # decisiones hecho en pandas 2 no casaba con las claves de pandas 3.
+    esperado = "España|Zelvora Alimentos"
+    assert clave_ancla(["España"], [f"Zelvora{espacio}Alimentos"]).tolist() == [esperado]
+    assert clave_ancla(["España"], [f"{espacio}Zelvora{espacio}Alimentos{espacio}"]).tolist() == [
+        esperado
+    ]
+
+
+def test_g3_o5_la_clave_conserva_los_ausentes_como_vacio_y_el_orden():
+    assert clave_texto([None, np.nan, pd.NA, " a  b "]).tolist() == ["", "", "", "a b"]
