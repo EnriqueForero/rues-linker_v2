@@ -197,3 +197,57 @@ def test_m_b_la_comparacion_tiene_las_mismas_columnas_vacia_o_llena():
         assert len(vacia) == 0
         assert list(vacia.columns) == list(llena.columns)
     assert list(llena.columns)[-1] == "RAZON_ULTIMA"
+
+
+# ── E2 · ocultar columnas constantes no depende de la versión de pandas ─────────────────────────────
+def _columnas_ocultas(exportadores: pd.DataFrame) -> list[str]:
+    ancla = Fuente(
+        clave="EXPORTADORES",
+        archivo="a.xlsx",
+        col_nombre="Empresa",
+        cols_metricas=("CON_AUSENTES", "IGUAL", "VACIA", "VARIA"),
+    )
+    hoja = Workbook().active
+    hojas._ocultar_columnas_constantes(hoja, ancla, exportadores)
+    letras = {
+        c: hoja.column_dimensions[chr(65 + i)].hidden for i, c in enumerate(exportadores.columns)
+    }
+    return [c for c, oculta in letras.items() if oculta]
+
+
+def test_e2_una_columna_con_un_valor_y_ausentes_no_se_oculta_en_ninguna_version_de_pandas():
+    # Antes: con pandas 3 (los ausentes quedan en NaN y no cuentan) la columna se ocultaba y con pandas 2
+    # ('nan' contaba como un valor) no: el libro cambiaba según la versión. Ahora un ausente cuenta como un
+    # valor más, como en pandas 2: ocultar una columna con datos en algunas filas escondería información.
+    exportadores = pd.DataFrame(
+        {
+            "CON_AUSENTES": [5.0, np.nan, np.nan, np.nan],
+            "IGUAL": [1.0, 1.0, 1.0, 1.0],
+            "VACIA": [np.nan, np.nan, np.nan, np.nan],
+            "VARIA": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    assert _columnas_ocultas(exportadores) == ["IGUAL", "VACIA"]
+
+
+# ── E6 · solo un sitio web de verdad se vuelve hipervínculo ─────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("valor", "enlace"),
+    [
+        ("www.zelvora.es", "https://www.zelvora.es"),
+        ("https://kramento.com/inicio", "https://kramento.com/inicio"),
+        ("orbelia.org | otra.es", "https://orbelia.org"),
+        ("N.A.", None),
+        ("1.5", None),
+        ("x@y.com", None),
+        ("sin web", None),
+        ("192.168.1", None),
+    ],
+)
+def test_e6_los_textos_que_no_son_un_sitio_no_se_vuelven_enlace(valor, enlace):
+    # Antes: 'N.A.', '1.5' o 'x@y.com' (todo texto con punto y sin espacios) quedaban como https://N.A., etc.
+    hoja = Workbook().active
+    hoja["A1"] = "DESTINO_WEB"
+    hoja["A2"] = valor
+    hojas._enlaces_web(hoja, estilos.Estilos(), pd.DataFrame({"DESTINO_WEB": [valor]}))
+    assert (hoja["A2"].hyperlink.target if hoja["A2"].hyperlink else None) == enlace
