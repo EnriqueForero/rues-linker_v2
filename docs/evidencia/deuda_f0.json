@@ -1,7 +1,7 @@
 {
   "version": "0.22.4",
-  "commit": "d9e40e5",
-  "fecha": "2026-10-10T19:50:05+00:00",
+  "commit": "88b8171",
+  "fecha": "2026-10-13T23:47:41+00:00",
   "objetivo": "src/record_linkage",
   "herramientas": {
     "ruff": "ruff 0.15.13",
@@ -11,10 +11,10 @@
   },
   "conteos": {
     "cc_ge_20": 11,
-    "except_sin_relanzar": 101,
-    "print": 152,
-    "os_path": 117,
-    "mypy": 80
+    "except_sin_relanzar": 100,
+    "print": 147,
+    "os_path": 115,
+    "mypy": 79
   },
   "ubicaciones": {
     "cc_ge_20": [
@@ -100,7 +100,6 @@
       "src/record_linkage/pipeline/validator.py:55",
       "src/record_linkage/processing/text.py:118",
       "src/record_linkage/processing/text.py:512",
-      "src/record_linkage/processing/utilities.py:97",
       "src/record_linkage/reporting/dashboard.py:174",
       "src/record_linkage/reporting/dashboard.py:215",
       "src/record_linkage/reporting/dashboard.py:231",
@@ -195,15 +194,15 @@
       "src/record_linkage/config/profiles.py:1225",
       "src/record_linkage/config/profiles.py:1227",
       "src/record_linkage/engine/lsh/legacy.py:130",
-      "src/record_linkage/flujo/importadores.py:882",
-      "src/record_linkage/flujo/importadores.py:883",
+      "src/record_linkage/flujo/importadores.py:876",
+      "src/record_linkage/flujo/importadores.py:877",
+      "src/record_linkage/flujo/importadores.py:881",
       "src/record_linkage/flujo/importadores.py:887",
-      "src/record_linkage/flujo/importadores.py:893",
-      "src/record_linkage/flujo/importadores.py:1018",
-      "src/record_linkage/flujo/importadores.py:1019",
-      "src/record_linkage/flujo/importadores.py:1090",
-      "src/record_linkage/flujo/importadores.py:1103",
-      "src/record_linkage/flujo/importadores.py:1108",
+      "src/record_linkage/flujo/importadores.py:1012",
+      "src/record_linkage/flujo/importadores.py:1013",
+      "src/record_linkage/flujo/importadores.py:1084",
+      "src/record_linkage/flujo/importadores.py:1097",
+      "src/record_linkage/flujo/importadores.py:1102",
       "src/record_linkage/golden/containment.py:285",
       "src/record_linkage/golden/containment.py:288",
       "src/record_linkage/golden/containment.py:289",
@@ -280,12 +279,7 @@
       "src/record_linkage/utils/output.py:50",
       "src/record_linkage/utils/timer.py:32",
       "src/record_linkage/utils/timer.py:40",
-      "src/record_linkage/utils/timer.py:65",
-      "src/record_linkage/utils/validation.py:54",
-      "src/record_linkage/utils/validation.py:55",
-      "src/record_linkage/utils/validation.py:56",
-      "src/record_linkage/utils/validation.py:57",
-      "src/record_linkage/utils/validation.py:60"
+      "src/record_linkage/utils/timer.py:65"
     ],
     "os_path": [
       "src/record_linkage/classifier/data_loader.py:65",
@@ -333,8 +327,6 @@
       "src/record_linkage/golden/generator.py:1341",
       "src/record_linkage/ingestion/duckdb.py:670",
       "src/record_linkage/ingestion/duckdb.py:1228",
-      "src/record_linkage/pipeline/config_manager.py:154",
-      "src/record_linkage/pipeline/config_manager.py:161",
       "src/record_linkage/pipeline/linkage_pipeline.py:130",
       "src/record_linkage/pipeline/linkage_pipeline.py:261",
       "src/record_linkage/pipeline/linkage_pipeline.py:264",
@@ -457,7 +449,6 @@
       "src/record_linkage/processing/text.py:120",
       "src/record_linkage/processing/text.py:123",
       "src/record_linkage/processing/text.py:124",
-      "src/record_linkage/processing/utilities.py:91",
       "src/record_linkage/processing/validator.py:90",
       "src/record_linkage/processing/validator.py:101",
       "src/record_linkage/processing/validator.py:133",

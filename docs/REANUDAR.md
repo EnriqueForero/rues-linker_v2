@@ -1,7 +1,7 @@
 # Dónde estamos y cómo retomar
 
-*Actualizado: 2026-10-13. Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
-El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-31); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
+*Actualizado: 2026-10-13 (noche: Fase 0 y Fase 1 de la ruta). Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
+El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-32); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
 
 ## 1. Estado en una mirada
 
@@ -14,7 +14,7 @@ El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, e
 | F4 | Escala (4 M de registros en Colab) | pendiente | 18 % |
 | F5/F6 | Ingeniería y release 1.0 | pendiente | 18 % |
 
-**Avance del plan ≈ 53 %.** F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
+**La ruta vigente es `DIAGNOSTICO_Y_RUTA_2026-10-13.md` (seis fases); el porcentaje de abajo es del plan anterior.** Avance del plan anterior ≈ 53 %. F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
 
 Subfases de F3: **F3.0 oráculo ✅ · F3.1 extracción con paridad ✅ · F3.1b arreglos declarados ✅ (rama `claude/f3-arreglos`)** · F3.2 reutilizar la librería · F3.3 contrato estándar (`vincular_empresas`) · F3.4 decisiones unificadas · F3.5 notebook 10 delgado · F3.6 notebook 09 · F3.7 ADR, documentación, skill (sin versión ni tag).
 
@@ -52,7 +52,7 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 | # | Qué | Cómo se sabe que terminó | Costo relativo |
 |---|---|---|---|
 | 0 | ✅ PR #4 y PR #5 mezclados. **Enrique borra las ramas viejas** (sección 4) | — | mínimo |
-| 1 | **PR de F3.1b** (`claude/f3-arreglos` → `main`) | CI verde (el job «mypy visible» es rojo por diseño); Enrique mezcla | bajo |
+| 1 | **PR #6 de F3.1b** (`claude/f3-arreglos` → `main`) abierto el 13-oct; se mezcla con el CI verde (autorizado). Después: PR de `claude/fase0-vigilancia` (Fase 0 + instrumentos de la Fase 1, IT-32) | CI verde | bajo |
 | 2 | ✅ **F3.1b**: arreglos declarados del motor (nivel 1 completo + B2, B3, B8, g3-O1, g3-O2). Pendientes con decisión de Enrique: C9, B7, M-c, A13 (`PLAN_ARREGLOS_F3.1b.md`) | `pytest` de `test_vinculacion_*` verde en py311 y py310; el arnés solo difiere en lo declarado | hecho |
 | 3 | F3.2: catálogos a `matching/genericos.py`; locale por configuración (un `Normalizador` no pisa al otro) | prueba «vinculacion no define catálogos» | bajo |
 | 4 | F3.3: `vincular_empresas` → `ResultadoLinkage` (+ Excel técnico como vista). **La vista VPI queda vacía hasta resolver el Excel de Caro** | contrato de salida verde | alto |
