@@ -42,6 +42,8 @@ __all__ = [
 _Union = tuple[int, int, str]
 
 # Forma legal (familias): dos formas de familias distintas = personas jurídicas distintas.
+# F3.1b (g3-O6): se agregan las formas latinoamericanas (Ltda, Lda, S. en C., E.U., EIRL) y `\b` inicial a LIMITED/LIMITADA
+# (antes «Unlimited» caía en LTD e «Ilimitada» en SL, y las formas sin familia eran compatibles con cualquiera).
 # El orden de la tabla es la prioridad: la primera familia cuyo patrón aparece en el nombre.
 FAMILIAS_LEGALES = [
     ("STIFTUNG_KG", r"STIFTUNG (?:&|\+|UND)? ?CO KG"),
@@ -57,15 +59,18 @@ FAMILIAS_LEGALES = [
     ("SAS", r"\bSASU?\b"),
     (
         "SL",
-        r"\bSLU?\b|\bSRLS?\b|\bSARL\b|\bEURL\b|\bKFT\b|\bSP ZOO\b|LIMITADA|RESPONSABILITA LIMITATA",
+        r"\bSLU?\b|\bSRLS?\b|\bSARL\b|\bEURL\b|\bKFT\b|\bSP ZOO\b|\bLIMITADA\b|RESPONSABILITA LIMITATA"
+        r"|\bLTDA\b|\bLDA\b",
     ),
     ("SCA", r"\bSCA\b"),
+    ("SCS", r"\bS EN C\b|\bSCS\b|COMANDITA SIMPLE"),
     ("SA", r"\bSAU?\b|\bSPA\b|ANONIMA|PER AZIONI"),
     ("BV", r"\bBV\b"),
     ("NV", r"\bNV\b"),
-    ("LTD", r"\bLTD\b|LIMITED\b"),
+    ("LTD", r"\bLTD\b|\bLIMITED\b"),
     ("INC", r"\bINC\b|\bCORP\b"),
     ("LLC", r"\bLLC\b"),
+    ("EU", r"\bEU$|\bEIRL\b|UNIPERSONAL"),
 ]
 FAMILIAS_RE = [(k, re.compile(p)) for k, p in FAMILIAS_LEGALES]
 
@@ -208,13 +213,17 @@ def _motivo_de_union(
     elif por_alias and (r["SIN_SOBRAS"] or r["COMPACTO_IGUAL"]):
         motivo = "coincide con el nombre entre paréntesis (¿marca?)"
     elif r["COMPACTO_IGUAL"]:
-        # Hallazgo F3: no mira MARCAS_OK: 'J MARTINEZ' y 'A MARTINEZ' (o 'KRAMENTO 2' y '… 3') se unen solas.
-        auto, motivo = (
-            compatibles,
-            "mismas letras, otros espacios"
-            if compatibles
-            else "mismas letras, forma legal distinta",
-        )
+        if r["MARCAS_OK"]:
+            auto, motivo = (
+                compatibles,
+                "mismas letras, otros espacios"
+                if compatibles
+                else "mismas letras, forma legal distinta",
+            )
+        else:
+            # F3.1b (B1): el original no miraba MARCAS_OK y 'J MARTINEZ' = 'A MARTINEZ' (o 'KRAMENTO 2' = '… 3') se unían
+            # solas. Ahora las iniciales o los números distintos mandan el par a pendientes: lo decide una persona.
+            motivo = "mismas letras, pero difieren las iniciales o los números (¿otra persona o sucursal?)"
     elif (
         r["SIN_SOBRAS"]
         and r["N_COMPARTIDAS"]

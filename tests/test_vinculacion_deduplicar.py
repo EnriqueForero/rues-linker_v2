@@ -159,11 +159,11 @@ def test_familias_legales_trata_los_ausentes_como_vacios_y_conserva_el_orden():
 
 
 def test_tabla_de_familias_legales():
-    """La tabla es pública (otras funciones la consultan): 19 familias con su patrón ya compilado."""
+    """La tabla es pública (otras funciones la consultan): 21 familias (19 del original + SCS y EU, F3.1b) con su patrón compilado."""
     claves = [k for k, _ in FAMILIAS_LEGALES]
-    assert len(FAMILIAS_LEGALES) == 19
+    assert len(FAMILIAS_LEGALES) == 21
     assert claves[:3] == ["STIFTUNG_KG", "SE_KG", "GMBH_KG"]
-    assert claves[-3:] == ["LTD", "INC", "LLC"]
+    assert claves[-3:] == ["INC", "LLC", "EU"]
     assert [k for k, _ in FAMILIAS_RE] == claves
     assert all(hasattr(rx, "search") for _, rx in FAMILIAS_RE)
 

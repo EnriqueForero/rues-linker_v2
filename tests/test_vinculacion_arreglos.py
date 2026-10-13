@@ -83,3 +83,85 @@ def test_m_a_un_a_promovido_por_identificador_no_incumple_la_invariante_de_palab
 def test_m_a_un_a_con_palabras_sin_alinear_y_sin_identificador_sigue_incumpliendo():
     estados = _estados(_pares_a(""))
     assert estados["Todo vínculo automático A tiene todas las palabras alineadas"] == "FALLA"
+
+
+# ── B1 · mismas letras pero iniciales o números distintos: nunca se unen solas ─────────────────────
+from apoyo_comparacion_vinculacion import (  # noqa: E402
+    CORPUS,
+    FilaAncla,
+    NormalizadorDoble,
+    comparador,
+    config_prueba,
+    prep_ancla,
+)
+
+from record_linkage.flujo.vinculacion.decisiones import leer_decisiones  # noqa: E402
+from record_linkage.flujo.vinculacion.deduplicar import (  # noqa: E402
+    deduplicar_ancla,
+    familias_legales,
+)
+
+
+def _ancla(*filas: FilaAncla):
+    cfg = config_prueba()
+    corpus = [*CORPUS, *(f.norm for f in filas)]
+    return deduplicar_ancla(
+        prep_ancla(list(filas)),
+        NormalizadorDoble(),
+        comparador(cfg, corpus),
+        cfg,
+        leer_decisiones([]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("J MARTINEZ", "A MARTINEZ"),
+        ("KRAMENTO 2", "KRAMENTO 3"),
+        ("PELUVIKA 1 SL", "PELUVIKA 2 SL"),
+    ],
+)
+def test_b1_mismas_letras_con_iniciales_o_numeros_distintos_van_a_pendientes_no_a_union(a, b):
+    # Antes: la rama «mismas letras, otros espacios» no miraba MARCAS_OK y 'J Martinez' = 'A Martinez' se unían solas.
+    _, union, pendientes = _ancla(
+        FilaAncla("España", a.title(), a), FilaAncla("España", b.title(), b)
+    )
+    assert union.empty
+    assert pendientes.values.tolist() == [
+        [
+            0,
+            1,
+            "mismas letras, pero difieren las iniciales o los números (¿otra persona o sucursal?)",
+        ]
+    ]
+
+
+def test_b1_mismas_letras_con_marcas_iguales_siguen_uniendose_solas():
+    _, union, pendientes = _ancla(
+        FilaAncla("España", "Kra Mento Foods", "KRA MENTO FOODS"),
+        FilaAncla("España", "Kramento Foods", "KRAMENTO FOODS"),
+    )
+    assert union.values.tolist() == [[0, 1, "mismas letras, otros espacios"]] and pendientes.empty
+
+
+# ── g3-O6 · formas legales latinoamericanas ────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("nombre", "familia"),
+    [
+        ("ZELVORA LTDA", "SL"),
+        ("ZELVORA LDA", "SL"),
+        ("ZELVORA L T D A", "SL"),
+        ("ZELVORA S EN C", "SCS"),
+        ("ZELVORA EU", "EU"),
+        ("ZELVORA EIRL", "EU"),
+        ("ZELVORA SAS", "SAS"),
+        ("UNLIMITED FOODS", ""),
+        ("ILIMITADA FOODS", ""),
+        ("ZELVORA LIMITADA", "SL"),
+        ("ZELVORA LIMITED", "LTD"),
+    ],
+)
+def test_g3_o6_las_formas_legales_latinoamericanas_tienen_familia(nombre, familia):
+    # Antes: «Ltda», «Lda», «S. en C.», «E.U.» y «EIRL» no tenían familia (compatibles con todo) y «Unlimited» caía en LTD.
+    assert familias_legales(pd.Series([nombre]))[0] == familia
