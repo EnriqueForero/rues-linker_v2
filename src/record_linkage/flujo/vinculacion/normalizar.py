@@ -66,6 +66,17 @@ def _es_ausente(x: object) -> bool:
     return isinstance(x, (float, np.floating)) and math.isnan(x)
 
 
+def _texto_de_celda(x: object) -> str:
+    """``str(x)``, pero un número entero guardado como ``float`` (``900123456.0``) se escribe sin el «.0».
+
+    F3.1b (g1-O2): un NIT o un teléfono que viene de una columna numérica con ausentes (Parquet ``float64``, ``Int64``)
+    es ``float``; ``str`` le agregaba un dígito al unirse con el texto de la otra base.
+    """
+    if isinstance(x, (float, np.floating)) and math.isfinite(x) and float(x).is_integer():
+        return str(int(x))
+    return str(x)
+
+
 def dominio_registrable(dominio: str) -> str:
     """El dominio por el que se identifica a un sitio: ``tienda.zelvora.co.uk`` → ``zelvora.co.uk``.
 
@@ -122,7 +133,7 @@ def digitos_telefono(x: object) -> str:
     """Los últimos 8 dígitos del teléfono (sin prefijo de país ni signos); vacío si tiene menos de 8."""
     if _es_ausente(x):
         return ""
-    d = re.sub(r"\D", "", str(x))
+    d = re.sub(r"\D", "", _texto_de_celda(x))
     return d[-8:] if len(d) >= 8 else ""
 
 
@@ -130,7 +141,7 @@ def id_comparable(x: object) -> str:
     """Identificador sin signos y en mayúsculas (``'B-1234 5678'`` → ``'B12345678'``) para compararlo entre bases."""
     if _es_ausente(x):
         return ""
-    return re.sub(r"[^A-Z0-9]", "", str(x).upper())
+    return re.sub(r"[^A-Z0-9]", "", _texto_de_celda(x).upper())
 
 
 class Normalizador:

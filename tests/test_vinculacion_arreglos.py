@@ -27,3 +27,30 @@ AUSENTES = [None, np.nan, np.float32("nan"), pd.NA, pd.NaT]
 def test_g1_o1_los_extractores_tratan_cualquier_ausente_de_pandas_como_vacio(extractor, ausente):
     # Antes: id_comparable(pd.NA) daba 'NA' y dos empresas sin NIF «compartían identificador» (EMPRESA/A).
     assert extractor(ausente) == ""
+
+
+# ── g1-O2 · un número entero guardado como float conserva sus dígitos ───────────────────────────────
+@pytest.mark.parametrize(
+    ("valor", "esperado"),
+    [
+        (900123456.0, "900123456"),
+        (np.float64(1234567890.0), "1234567890"),
+        (900123456, "900123456"),
+    ],
+)
+def test_g1_o2_id_comparable_no_agrega_un_cero_a_un_entero_en_float(valor, esperado):
+    # Antes: 900123456.0 → '9001234560' y no coincidía con el mismo NIT escrito como texto.
+    assert id_comparable(valor) == esperado == id_comparable(str(int(valor)))
+
+
+@pytest.mark.parametrize(
+    "valor", [3001234567.0, np.float64(3001234567.0), 3001234567, "300 123 4567"]
+)
+def test_g1_o2_el_telefono_en_float_da_los_mismos_ocho_digitos_que_en_texto(valor):
+    # Antes: 3001234567.0 → '12345670' (el '.0' aportaba un dígito) frente a '01234567' del texto.
+    assert digitos_telefono(valor) == "01234567"
+
+
+def test_g1_o2_un_float_con_decimales_se_conserva_como_viene():
+    assert id_comparable(12.5) == "125"
+    assert digitos_telefono(12.5) == ""
