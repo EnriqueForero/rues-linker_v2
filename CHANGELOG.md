@@ -68,6 +68,9 @@ Nada de esto está en una versión publicada.
   etiquetados con intervalo de Wilson y kappa), `docs/PROTOCOLO_GROUND_TRUTH.md`, `docs/evidencia/compuertas.json` +
   `tests/test_compuertas.py`.
 - **Arreglos:** `--ajuste a=1 --ajuste b=2` dejaba solo `b=2` en `banco.py` y `escala.py`; `nargs="*"` sin `action="extend"`.
+- **Plan y pruebas (IT-34):** `docs/PLAN_DETALLADO_2026-10-14.md` (el plan vigente, paso a paso); los demás perfiles base medidos
+  con y sin el comparador nuevo; pruebas de la exención por identificador idéntico, de la cobertura en streaming, de la simetría de
+  Soft TF-IDF y de los instrumentos de la Fase 2; README y CLAUDE.md al día.
 - **Vigilancia:** pines del runtime en todos los jobs del CI y del Nightly (dos jobs: pinado = compuerta; rangos frescos = aviso);
   suite rápida con `pytest-xdist`; cotas del perfil SIN_NIT declaradas (ADR-0014, `docs/DEUDA_SIN_NIT.md`); cuatro módulos muertos
   retirados.

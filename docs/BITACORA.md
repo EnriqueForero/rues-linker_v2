@@ -1927,3 +1927,42 @@ Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fas
 
 Puntaje probabilístico (Fellegi–Sunter/EM) y umbrales por costo; otras variables en el puntaje de producción; verdad real (depende de
 Enrique); medición de escala y Colab con el nuevo perfil (Fase 4). Sin versión ni tag.
+
+## IT-34 · Pruebas, documentación y el plan detallado paso a paso (sin publicar)
+
+*2026-10-14, noche. Rama `claude/plan-detallado` sobre `main` (PR #7 mezclado). Créditos restantes de la sesión usados en lo que
+no depende de Enrique.*
+
+### Qué se hizo
+
+* **Pruebas nuevas (29 → todas verdes):** la exención por identificador idéntico y la contención sin NIT en el scorer con el perfil de
+  producción (`tests/test_comparador_nombre.py`); una componente de 2.500 nombres resuelta en streaming (guarda del OOM de 139k,
+  `tests/test_cobertura_estrella_v022.py`); simetría de Soft TF-IDF y la colisión de genéricos iguales declarada
+  (`tests/test_soft_tfidf.py`); `scripts/recall_bloqueo.py` y `scripts/anatomia_fp.py` de punta a punta sobre una corrida pequeña de
+  `linkage()` (`tests/test_instrumentos_fase2.py`).
+* **Los demás perfiles base, medidos** con y sin el comparador nuevo sobre `ground_truth_grande.csv`
+  (`docs/evidencia/fase3_comparador_nombre.md`, «Los demás perfiles base»): `fuentes_mixtas` pasa de 111 a 0 uniones sobre negativos
+  y pierde 0,0017 de F1; `produccion_calibrada` y `alta_precision` (umbral 0,6: nada sin NIT) ganan +0,004 de F1 a la mitad del
+  tiempo. Cambiarlos es la tarea 3.1 del plan; `fuentes_mixtas` espera la decisión de Enrique (E6).
+* **Documentación al día:** README (pipeline, perfil de producción con la tabla banco/139k, tabla de perfiles remedida), CLAUDE.md
+  (mapa con `engine/candidatos`, `matching/soft_tfidf`, los scripts de medición, la línea base vigente y `compuertas.json`),
+  REANUDAR (lo que queda a Enrique, E1–E6).
+* **`docs/PLAN_DETALLADO_2026-10-14.md`:** el plan vigente, escrito para un modelo de menor tamaño: reglas, chuleta de comandos,
+  definición de «terminado», cómo declarar un cambio (ocho pasos), punto de partida con cifras, las seis tareas de Enrique con fecha,
+  Fase 3 restante (perfiles, variables, Fellegi–Sunter con EM con fórmulas, archivos, pruebas y compuerta; umbrales por costo;
+  calibración con verdad real; L3 sin bucles), Fase 4 (463k, presupuesto de memoria fail-fast, reanudación probada, 1 M/4 M con el
+  hecho duro de que TF-IDF global es cuadrático y la vía por token que lo resuelve, notebook Colab), Fase 5 (F3.2–F3.7 con aceptación
+  por tarea), Fase 6 (camino único, partir los seis módulos gigantes, deuda a cero por lotes, release 1.0), compuertas con regla de
+  decisión en cuatro pasos, riesgos con señal y respuesta, glosario y calendario de nueve semanas.
+
+### Lo que la iteración enseñó
+
+* Dos perfiles «de precisión» (`produccion_calibrada`, `alta_precision`) no unen ningún par sin identificador porque el puntaje lineal
+  no pasa de 0,5 sin NIT y su umbral es 0,6: la precisión 1,0 que presume el README era, en parte, recall cero en ese régimen. Queda
+  escrito en la tabla de perfiles.
+* Un plan para un modelo menor no puede decir «medir y decidir»: tiene que decir qué comando, qué archivo, qué número y qué hacer
+  con cada resultado posible. Eso es lo que distingue este plan de los anteriores.
+
+### Estado al cierre
+
+Todo en `main` tras el PR #8. Siguen las tareas 3.1 a 3.6 y 4.1 a 4.5 del plan; de Enrique, E1 a E6.

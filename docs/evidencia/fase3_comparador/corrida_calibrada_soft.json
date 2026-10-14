@@ -1,0 +1,87 @@
+{
+  "etiqueta": "calibrada_soft",
+  "version": "0.22.4",
+  "perfil": "produccion_calibrada",
+  "marca_tiempo": "2026-10-14T02:28:04",
+  "entorno": {
+    "python": "3.11.17",
+    "pandas": "3.0.6",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v130-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 5418,
+    "pares_verdaderos": 22073,
+    "tp": 16671,
+    "fp": 0,
+    "fn": 5402,
+    "precision": 1.0,
+    "recall": 0.7553,
+    "f1": 0.8606,
+    "b3_precision": 1.0,
+    "b3_recall": 0.8362,
+    "b3_f1": 0.9108,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9574,
+      "SIN_NIT": 0.0
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9574,
+      "positivo_sin_nit": 0.0,
+      "negativo_intermediario": 0.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 0,
+    "calidad_por_estrato": {},
+    "macro_f1": NaN,
+    "grupo_mayor_sin_identificador": {
+      "filas": 1,
+      "entidades": 1,
+      "grupos": 2342,
+      "grupos_grandes": 0
+    }
+  },
+  "recursos": {
+    "segundos_total": 17.81,
+    "segundos_por_fase": {
+      "L1_prep": 0.8,
+      "L2_lsh_candidates": 4.68,
+      "L3_scoring": 8.81,
+      "L4_clustering": 0.23,
+      "L5_golden": 2.46
+    },
+    "rss_por_fase": {
+      "L1_prep": 245.7,
+      "L2_lsh_candidates": 390.8,
+      "L3_scoring": 513.8,
+      "L4_clustering": 389.2,
+      "L5_golden": 388.5
+    },
+    "rss_pico_mib": 501.2,
+    "rss_inicial_mib": 215.7,
+    "muestras_rss": 62,
+    "bytes_disco": 9987747,
+    "candidatos": 626510,
+    "pares_scoreados": 15503,
+    "candidatos_por_valido": 40.4
+  },
+  "huella": "385eff910809f8c17bb2b0b396f5a280d792d6d492eb9a63257133bfd858adca",
+  "especificacion": {
+    "datos": "/home/user/rues-linker_v2/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_calibrada",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "motor_candidatos": "hibrido",
+      "comparador_nombre": "soft_tfidf",
+      "soft_tfidf_umbral_token": 0.9,
+      "similitud_compacta_min": 0.95,
+      "nit_identical_overrides_name_filter": true
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "medición de perfiles con el comparador de ADR-0015"
+}
