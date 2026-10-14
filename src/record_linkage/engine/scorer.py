@@ -195,6 +195,15 @@ def _a_booleano(valores: np.ndarray) -> np.ndarray:
     return texto.isin(["1", "true", "t", "si", "sí", "yes", "y"]).to_numpy(dtype=bool)
 
 
+#: F4.1: una página de ``candidate_pairs`` a partir del último par leído, por la clave primaria
+#: ``(idx_0, idx_1)``: O(lote) por página en las dos rutas de puntuación. ``OFFSET`` obligaba a SQLite a
+#: recorrer de nuevo todas las filas anteriores (O(n²) sobre millones de candidatos).
+CONSULTA_PAGINA_CANDIDATOS = (
+    "SELECT idx_0, idx_1 FROM candidate_pairs WHERE (idx_0, idx_1) > (?, ?) "
+    "ORDER BY idx_0, idx_1 LIMIT ?"
+)
+
+
 @runtime_checkable
 class PairScorer(Protocol):
     """Protocolo para calcular scores de pares."""
@@ -1691,14 +1700,15 @@ class VectorizedScorer:
 
         all_results = []
         offset = 0
-        query = "SELECT idx_0, idx_1 FROM candidate_pairs ORDER BY idx_0, idx_1 LIMIT ? OFFSET ?"
+        ultimo = (-1, -1)
 
         with tqdm(total=total_candidates, desc="Calculando scores desde disco") as pbar:
             while offset < total_candidates:
-                cursor.execute(query, (self.batch_size, offset))
+                cursor.execute(CONSULTA_PAGINA_CANDIDATOS, (*ultimo, self.batch_size))
                 batch_rows = cursor.fetchall()
                 if not batch_rows:
                     break
+                ultimo = (int(batch_rows[-1][0]), int(batch_rows[-1][1]))
 
                 batch_candidates = np.array(batch_rows)
 
@@ -1896,14 +1906,8 @@ class VectorizedScorer:
         write_buffer = []
         write_buffer_size = 10000
 
-        # Query para leer batches
-        query = """
-            SELECT idx_0, idx_1
-            FROM candidate_pairs
-            WHERE idx_0 > ? OR (idx_0 = ? AND idx_1 > ?)
-            ORDER BY idx_0, idx_1
-            LIMIT ?
-        """
+        # Query para leer batches (F4.1: una sola consulta de página para las dos rutas)
+        query = CONSULTA_PAGINA_CANDIDATOS
 
         completed = False
         try:
@@ -1914,10 +1918,7 @@ class VectorizedScorer:
                 while total_scored < total_candidates:
                     # Paginación por clave sobre la PK, O(batch). OFFSET obliga
                     # a SQLite a volver a recorrer todas las filas anteriores.
-                    cursor.execute(
-                        query,
-                        (last_idx_0, last_idx_0, last_idx_1, self.batch_size),
-                    )
+                    cursor.execute(query, (last_idx_0, last_idx_1, self.batch_size))
                     batch_rows = cursor.fetchall()
 
                     if not batch_rows:
@@ -1952,28 +1953,30 @@ class VectorizedScorer:
                         else:
                             phon_arr = np.zeros(len(valid_scores), dtype=np.float64)
 
-                        for k in range(len(valid_scores)):
-                            write_buffer.append(
-                                (
-                                    int(idx_0_arr[k]),
-                                    int(idx_1_arr[k]),
-                                    float(score_arr[k]),
-                                    float(name_sim_arr[k]),
-                                    float(nit_sim_arr[k]),
-                                    int(nit_dist_arr[k]),
-                                    float(phon_arr[k]),
-                                )
+                        # F4.3: ``tolist`` convierte cada columna a escalares nativos de una vez;
+                        # ``zip`` arma las tuplas sin un bucle Python por par.
+                        write_buffer.extend(
+                            zip(
+                                idx_0_arr.tolist(),
+                                idx_1_arr.tolist(),
+                                score_arr.tolist(),
+                                name_sim_arr.tolist(),
+                                nit_sim_arr.tolist(),
+                                nit_dist_arr.tolist(),
+                                phon_arr.tolist(),
+                                strict=True,
                             )
+                        )
 
-                            # Escribir buffer cuando esté lleno
-                            if len(write_buffer) >= write_buffer_size:
-                                scored_cursor.executemany(
-                                    """INSERT INTO scored_pairs
-                                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                    write_buffer,
-                                )
-                                total_passed += len(write_buffer)
-                                write_buffer = []
+                        # Escribir buffer cuando esté lleno
+                        if len(write_buffer) >= write_buffer_size:
+                            scored_cursor.executemany(
+                                """INSERT INTO scored_pairs
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                write_buffer,
+                            )
+                            total_passed += len(write_buffer)
+                            write_buffer = []
 
                     # Actualizar estadísticas
                     total_scored += len(batch_rows)
