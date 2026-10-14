@@ -28,6 +28,10 @@ verdad (``L3_scoring/scored.db`` y ``L2_lsh_candidates/candidates.db`` del direc
   encima pero vetado por identificador distinto o por la cobertura);
 - ``no_unido_lejos``: nunca fue candidato (par de control al azar).
 
+La lectura de las hojas, ``correr_motor`` y la evaluación por casos y por pares viven en
+``record_linkage.evaluation.plantilla_base_real`` (desde 2026-10-14; antes aquí): este script
+las importa y añade el muestreo de pares y el CSV del banco.
+
 Qué debe hacer el motor según CASOS: ``unir`` = todos los registros de cada grupo verdadero del
 caso quedan en un mismo grupo predicho; ``no unir`` = ningún par de registros de grupos verdaderos
 distintos del caso queda en el mismo grupo predicho; ``revisar`` = el motor no une solo; el caso
@@ -47,16 +51,9 @@ Uso::
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
-import os
 import sqlite3
 import sys
-import warnings
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -69,231 +66,26 @@ from generar_plantilla_base_real import (
     BANDAS,
     COLUMNAS_BANDAS,
     COLUMNAS_PARES_A_ETIQUETAR,
-    FUENTES,
     MARGEN_BANDA,
-    PREFIJO_HOJA_FUENTE,
     construir_banco,
 )
 
-from record_linkage.evaluation.banco import silenciar_pipeline
+# La lectura de las hojas, el motor y la medición por casos y pares viven en el paquete (una
+# sola implementación, compartida con el notebook 13 y scripts/multicriterio_plantilla.py).
+from record_linkage.evaluation.plantilla_base_real import (
+    COL_ID,
+    correr_motor,
+    evaluar_casos,
+    leer_plantilla,
+    metricas_pares,
+    tabla_markdown,
+)
 from record_linkage.evaluation.verdad_real import regimen_de_los_pares
 from record_linkage.salida.completar import RUTA_SCORED_DB
 
-COL_ID = "ID_REGISTRO_FUENTE"
 #: Los candidatos de L2 (la misma ruta que lee ``reporting/time_estimator.py``).
 RUTA_CANDIDATOS_DB = Path("L2_lsh_candidates") / "candidates.db"
-PREFIJO_CSV_FUENTE = "plantilla_fuente_"
 REGIMENES: tuple[str, ...] = ("CON_ID", "SIN_ID", "MIXTO")
-COLUMNAS_TABLA = (
-    "CASO",
-    "ESPERADO",
-    "ACERTO",
-    "GRUPOS",
-    "GRUPOS_UNIDOS",
-    "PARES_ENTRE_GRUPOS_UNIDOS",
-    "DETALLE",
-)
-
-
-@dataclass
-class LibroPlantilla:
-    """Las hojas que el verificador necesita; ``verdad`` y ``casos`` faltan en una base real."""
-
-    fuentes: dict[str, pd.DataFrame]
-    verdad: pd.DataFrame | None
-    casos: pd.DataFrame | None
-
-
-def _orden_fuentes(nombres: list[str]) -> list[str]:
-    """Primero las fuentes de la plantilla en su orden (CRM, RUES, ADUANAS), luego las demás."""
-    conocidas = [f for f in FUENTES if f in nombres]
-    return conocidas + sorted(f for f in nombres if f not in FUENTES)
-
-
-def leer_plantilla(datos: Path) -> LibroPlantilla:
-    """Las hojas ``FUENTE_*`` (por prefijo) y, si existen, VERDAD_GRUPOS y CASOS.
-
-    ``datos`` es el Excel (archivo) o la carpeta con los CSV ``plantilla_<hoja>.csv``. Todo se lee
-    como texto (``dtype=str, keep_default_na=False``): así el NIT conserva los ceros y los vacíos.
-    """
-    if datos.is_file():
-        hojas = pd.read_excel(datos, sheet_name=None, dtype=str, keep_default_na=False)
-        fuentes = {
-            nombre[len(PREFIJO_HOJA_FUENTE) :]: hoja
-            for nombre, hoja in hojas.items()
-            if nombre.startswith(PREFIJO_HOJA_FUENTE)
-        }
-        verdad, casos = hojas.get("VERDAD_GRUPOS"), hojas.get("CASOS")
-        donde = f"hojas {PREFIJO_HOJA_FUENTE}*"
-    else:
-
-        def csv(nombre: str) -> pd.DataFrame | None:
-            ruta = datos / f"plantilla_{nombre}.csv"
-            if not ruta.is_file():
-                return None
-            return pd.read_csv(ruta, dtype=str, keep_default_na=False)
-
-        fuentes = {
-            ruta.stem[len(PREFIJO_CSV_FUENTE) :].upper(): pd.read_csv(
-                ruta, dtype=str, keep_default_na=False
-            )
-            for ruta in sorted(datos.glob(f"{PREFIJO_CSV_FUENTE}*.csv"))
-        }
-        verdad, casos = csv("verdad_grupos"), csv("casos")
-        donde = f"archivos {PREFIJO_CSV_FUENTE}*.csv"
-    if not fuentes:
-        raise ValueError(
-            f"{datos} no tiene {donde}. Cada fuente va en una hoja cuyo nombre empieza por "
-            f"{PREFIJO_HOJA_FUENTE} (FUENTE_CRM, FUENTE_DIAN…) con las columnas de la plantilla."
-        )
-    for nombre, hoja in fuentes.items():
-        faltan = [c for c in (COL_ID, "RAZON_SOCIAL") if c not in hoja.columns]
-        if faltan:
-            raise ValueError(
-                f"A la fuente {nombre} le faltan {faltan}: sin {COL_ID} no se puede nombrar un par y "
-                "sin RAZON_SOCIAL el motor no tiene con qué vincular."
-            )
-    fuentes = {f: fuentes[f] for f in _orden_fuentes(list(fuentes))}
-    return LibroPlantilla(fuentes=fuentes, verdad=verdad, casos=casos)
-
-
-@contextmanager
-def _en_silencio() -> Iterator[None]:
-    previo = os.environ.get("TQDM_DISABLE")
-    os.environ["TQDM_DISABLE"] = "1"
-    try:
-        with silenciar_pipeline(), warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            yield
-    finally:
-        if previo is None:
-            os.environ.pop("TQDM_DISABLE", None)
-        else:
-            os.environ["TQDM_DISABLE"] = previo
-
-
-def correr_motor(fuentes: dict[str, pd.DataFrame], dir_trabajo: Path) -> pd.DataFrame:
-    """La correlativa de ``linkage()`` sobre las fuentes, con ``ID_REGISTRO_FUENTE`` en cada fila.
-
-    No se pasa ``col_id``: el motor antepondría la fuente otra vez (``CRM-CRM-000001``); la
-    correlativa conserva la columna de la fuente tal cual y es con ella con la que se mide.
-    """
-    from record_linkage import linkage
-
-    with _en_silencio(), contextlib.redirect_stderr(io.StringIO()):
-        resultado = linkage(
-            {f: df.copy() for f, df in fuentes.items()},
-            col_nit="NIT",
-            col_name="RAZON_SOCIAL",
-            col_ciudad="MUNICIPIO",
-            work_dir=str(dir_trabajo),
-            skip_reporting=True,
-        )
-    correlativa = resultado.correlativa
-    if COL_ID not in correlativa.columns:
-        raise RuntimeError(
-            f"la correlativa no trae {COL_ID}; columnas: {list(correlativa.columns)}"
-        )
-    return correlativa
-
-
-def evaluar_casos(
-    correlativa: pd.DataFrame, verdad: pd.DataFrame, casos: pd.DataFrame
-) -> pd.DataFrame:
-    """Una fila por CASO: qué se esperaba, si el motor acertó y el detalle."""
-    predicho = pd.Series(
-        correlativa["ID_GRUPO"].astype(str).to_numpy(), index=correlativa[COL_ID].astype(str)
-    )
-    faltan = sorted(set(verdad[COL_ID]) - set(predicho.index))
-    if faltan:
-        raise RuntimeError(
-            f"{len(faltan)} registros de VERDAD_GRUPOS no están en la correlativa: {faltan[:5]}"
-        )
-    marco = verdad[[COL_ID, "ID_GRUPO", "CASO"]].copy()
-    marco["PRED"] = marco[COL_ID].map(predicho).to_numpy()
-    filas = []
-    for caso, esperado in zip(casos["CASO"], casos["QUE_DEBE_HACER_EL_MOTOR"], strict=True):
-        sub = marco[marco["CASO"] == caso]
-        por_grupo = sub.groupby("ID_GRUPO")["PRED"].agg(["nunique", "size"])
-        multi = por_grupo[por_grupo["size"] >= 2]
-        grupos_unidos = int((multi["nunique"] == 1).sum())
-        # pares de registros del caso que caen en grupos verdaderos distintos y predicho igual
-        cruce = sub.merge(sub, on="PRED", suffixes=("_1", "_2"))
-        cruce = cruce[
-            (cruce[f"{COL_ID}_1"] < cruce[f"{COL_ID}_2"])
-            & (cruce["ID_GRUPO_1"] != cruce["ID_GRUPO_2"])
-        ]
-        mezclados = len(cruce)
-        # registros del caso unidos con registros de CUALQUIER otro grupo verdadero
-        otros = marco[marco["ID_GRUPO"].isin(sub["ID_GRUPO"]) == False]  # noqa: E712
-        fuga = sub.merge(otros[["PRED", "ID_GRUPO"]], on="PRED", suffixes=("", "_otro"))
-        fuga_n = int(fuga[COL_ID].nunique())
-        if esperado == "unir":
-            acerto = grupos_unidos == len(multi) and fuga_n == 0
-            detalle = f"{grupos_unidos}/{len(multi)} grupos unidos completos"
-        elif esperado == "revisar":
-            acerto = grupos_unidos == 0 and mezclados == 0 and fuga_n == 0
-            detalle = (
-                f"{grupos_unidos}/{len(multi)} grupos unidos y {mezclados} pares entre grupos unidos "
-                "(se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
-            )
-        elif caso == "singleton":
-            acerto = fuga_n == 0 and mezclados == 0
-            detalle = f"{fuga_n + mezclados} de {len(sub)} singletons mezclados con otro registro"
-        else:  # no unir
-            acerto = mezclados == 0 and fuga_n == 0
-            detalle = (
-                f"{mezclados} pares de entidades distintas unidos; "
-                f"{grupos_unidos}/{len(multi)} entidades con varios registros unidas internamente"
-            )
-        if fuga_n and esperado != "no unir" and caso != "singleton":
-            detalle += f"; {fuga_n} registro(s) mezclados con otro grupo ajeno al caso"
-        elif fuga_n and esperado == "no unir":
-            detalle += f"; {fuga_n} registro(s) mezclados con un grupo ajeno al caso"
-        filas.append(
-            {
-                "CASO": caso,
-                "ESPERADO": esperado,
-                "ACERTO": bool(acerto),
-                "GRUPOS": int(sub["ID_GRUPO"].nunique()),
-                "GRUPOS_UNIDOS": grupos_unidos,
-                "PARES_ENTRE_GRUPOS_UNIDOS": mezclados,
-                "DETALLE": detalle,
-            }
-        )
-    return pd.DataFrame(filas, columns=list(COLUMNAS_TABLA))
-
-
-def metricas_pares(correlativa: pd.DataFrame, verdad: pd.DataFrame) -> dict[str, float | int]:
-    """Precisión, recall y F1 por pares contra la partición completa de VERDAD_GRUPOS."""
-    predicho = pd.Series(
-        correlativa["ID_GRUPO"].astype(str).to_numpy(), index=correlativa[COL_ID].astype(str)
-    )
-    marco = verdad[[COL_ID, "ID_GRUPO"]].copy()
-    marco["PRED"] = marco[COL_ID].map(predicho).to_numpy()
-
-    def pares(col: str) -> set[tuple[str, str]]:
-        m = marco.merge(marco, on=col, suffixes=("_1", "_2"))
-        m = m[m[f"{COL_ID}_1"] < m[f"{COL_ID}_2"]]
-        return set(zip(m[f"{COL_ID}_1"], m[f"{COL_ID}_2"], strict=True))
-
-    verdaderos, predichos = pares("ID_GRUPO"), pares("PRED")
-    tp = len(verdaderos & predichos)
-    fp = len(predichos - verdaderos)
-    fn = len(verdaderos - predichos)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {
-        "pares_verdaderos": len(verdaderos),
-        "pares_predichos": len(predichos),
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "precision": round(precision, 4),
-        "recall": round(recall, 4),
-        "f1": round(f1, 4),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -485,17 +277,6 @@ def muestrear_pares(
     para_anotar = muestra[list(COLUMNAS_PARES_A_ETIQUETAR)].copy()
     bandas = muestra[list(COLUMNAS_BANDAS)].copy()
     return para_anotar, bandas
-
-
-def tabla_markdown(tabla: pd.DataFrame) -> str:
-    lineas = [
-        "| CASO | Esperado | Motor | Detalle |",
-        "|---|---|---|---|",
-    ]
-    for fila in tabla.itertuples(index=False):
-        veredicto = "acertó" if fila.ACERTO else "**falló**"
-        lineas.append(f"| `{fila.CASO}` | {fila.ESPERADO} | {veredicto} | {fila.DETALLE} |")
-    return "\n".join(lineas)
 
 
 def _ruta_bandas(ruta: Path) -> Path:
