@@ -198,6 +198,9 @@ def _a_booleano(valores: np.ndarray) -> np.ndarray:
 #: F4.1: una página de ``candidate_pairs`` a partir del último par leído, por la clave primaria
 #: ``(idx_0, idx_1)``: O(lote) por página en las dos rutas de puntuación. ``OFFSET`` obligaba a SQLite a
 #: recorrer de nuevo todas las filas anteriores (O(n²) sobre millones de candidatos).
+#: Comparadores de nombre que acepta el perfil (``comparador_nombre``).
+COMPARADORES_NOMBRE = frozenset({"legado", "soft_tfidf"})
+
 CONSULTA_PAGINA_CANDIDATOS = (
     "SELECT idx_0, idx_1 FROM candidate_pairs WHERE (idx_0, idx_1) > (?, ?) "
     "ORDER BY idx_0, idx_1 LIMIT ?"
@@ -427,6 +430,22 @@ class VectorizedScorer:
         self.idf_default: float = float(self.profile.get("idf_default", 1.0))
         self._pesos_idf: object | None = None
         self._corpus_idf: int = -1
+
+        # ── Fase 3: COMPARADOR DE NOMBRE ─────────────────────────────────
+        # "legado": token_set_ratio + refinamientos (contención = 1,0: el 100 %
+        # de los falsos positivos del banco eran «RODRIGUEZ» dentro de «LAURA
+        # RODRIGUEZ»). "soft_tfidf": coseno de tokens ponderados por IDF con
+        # tolerancia Jaro-Winkler entre tokens (matching/soft_tfidf.py).
+        self.comparador_nombre: str = str(self.profile.get("comparador_nombre", "legado"))
+        if self.comparador_nombre not in COMPARADORES_NOMBRE:
+            raise ValueError(
+                f"comparador_nombre={self.comparador_nombre!r} no existe. "
+                f"Los comparadores de nombre son {sorted(COMPARADORES_NOMBRE)}; "
+                "corrija el perfil o el --ajuste."
+            )
+        self.soft_tfidf_umbral_token: float = float(
+            self.profile.get("soft_tfidf_umbral_token", 0.90)
+        )
 
         # ── v2.7.0 (P2 Camino #1): VARIABLES ADICIONALES ─────────────────
         # Soporta features extra opcionales (CIUDAD, TELEFONO, etc.) sin
@@ -757,7 +776,7 @@ class VectorizedScorer:
         # Camino rápido: idénticos → 1.0
         name_similarities[identical_mask] = 1.0
 
-        if tsr_mask.any():
+        if tsr_mask.any() and self.comparador_nombre == "legado":
             tsr_idx = np.where(tsr_mask)[0]
             # cpdist: pairwise(queries[k], choices[k]) en C++.
             tsr_scores = (
@@ -803,6 +822,23 @@ class VectorizedScorer:
                 tsr_scores[refine_local_mask] = refined
 
             name_similarities[tsr_idx] = tsr_scores
+
+        # ── Fase 3: COMPARADOR SOFT TF-IDF ───────────────────────────────
+        # Sustituye al bloque anterior cuando el perfil lo pide. Idénticos ya
+        # valen 1,0 y los no viables 0,0; aquí solo se puntúan los demás. El
+        # IDF del corpus se construye una vez por corrida (_obtener_pesos_idf).
+        if tsr_mask.any() and self.comparador_nombre == "soft_tfidf":
+            pesos_idf = self._obtener_pesos_idf(df)
+            if pesos_idf is not None and not pesos_idf.vacio:
+                from ..matching.soft_tfidf import similitud_soft_tfidf
+
+                _pos = np.where(tsr_mask)[0]
+                name_similarities[_pos] = similitud_soft_tfidf(
+                    pesos_idf,
+                    names_0_s[_pos],
+                    names_1_s[_pos],
+                    umbral_token=self.soft_tfidf_umbral_token,
+                )
 
         # ── SIMILITUD DE CADENA COMPACTADA (v0.18.0) ─────────────────────
         # El comparador por tokens se rompe cuando el error mueve un espacio:

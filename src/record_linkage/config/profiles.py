@@ -700,6 +700,13 @@ PERFILES_BASE = {
 for _perfil in PERFILES_BASE.values():
     _perfil.setdefault("motor_candidatos", "lsh")
     _perfil.setdefault("candidatos_hibrido", {})
+    # Fase 3: comparador de nombre de L3. "legado" = token_set_ratio con sus refinamientos;
+    # "soft_tfidf" = tokens ponderados por IDF con tolerancia Jaro-Winkler entre tokens.
+    _perfil.setdefault("comparador_nombre", "legado")
+    _perfil.setdefault("soft_tfidf_umbral_token", 0.90)
+    # La perilla existía en el scorer (v2.8.0) y en los perfiles heredados, pero no en los base, así que un
+    # --ajuste la rechazaba. False = el valor que el scorer ya asumía: sin cambio de comportamiento.
+    _perfil.setdefault("nit_identical_overrides_name_filter", False)
 
 # NOTA: en el notebook fuente (celda 260), `output_directory` y `lsh_storage_dir`
 # referenciaban globales `WORKSPACE` y `NOMBRE_EJECUCION` definidas en runtime.
