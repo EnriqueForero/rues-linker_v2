@@ -82,12 +82,16 @@ src/record_linkage/
     banco.py                Banco de pruebas reproducible
     comparador.py           Veredicto entre dos corridas
     verdad_real.py          Precisión y recall sobre pares etiquetados reales (Wilson, kappa)
+    plantilla_base_real.py  Leer la plantilla de base real (hojas FUENTE_*), correr el motor, medir por casos y pares
+    multicriterio/          Variables extra OFF contra ON: aporte, pares que cambian, exportación (notebook 13).
+                            Paquete de 4 módulos ≤ 600 líneas: configuraciones, datos, medicion, informe
 scripts/
   banco.py, escala.py       Las dos compuertas de calidad y de escala (--ajuste CLAVE=VALOR)
   recall_bloqueo.py         Recall de pares del bloqueo por régimen sobre un directorio de trabajo
   anatomia_fp.py            Anatomía de los pares de L3 (TP/FP por régimen, NIT y vía de candidatos)
   barrido_comparador_nombre.py  Barrido de umbral a nivel de par: legado contra Soft TF-IDF
   medir_verdad_real.py      Lo que Enrique corre con etiquetas reales
+  multicriterio_plantilla.py  Doce configuraciones de variables extra sobre la plantilla (envoltorio de evaluation/multicriterio)
 docs/
   PLAN_DETALLADO_2026-10-14.md  El plan vigente, paso a paso (léalo antes que cualquier otro plan)
   DIAGNOSTICO_Y_RUTA_2026-10-13.md  El diagnóstico que lo motiva y las seis fases

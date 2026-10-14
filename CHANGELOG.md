@@ -18,6 +18,45 @@ ni versión ni tag; ver `docs/REANUDAR.md`.
   `scripts/active_labeling.py`, que no produce ids medibles) y escribe el CSV del banco (`--banco`, `construir_banco`).
   `scripts/medir_verdad_real.py --hoja` lee las etiquetas de una hoja distinta de la primera. El `.gitignore` deja entrar
   `data/ejemplos/*.csv` (el `.xlsx` sigue fuera).
+- **Multicriterio sobre la plantilla** (`scripts/multicriterio_plantilla.py`, `docs/PLANTILLA_BASE_REAL.md` §5.1): doce
+  configuraciones de `extra_features` medidas contra `VERDAD_GRUPOS`, `ETIQUETAS_PARES` y la base, el aporte de cada variable y
+  el determinismo en subprocesos (`docs/evidencia/plantilla_base_real_multicriterio.json`). `correr_motor` ganó
+  `extra_features` y `ajustes_perfil` (opcionales, sin cambio por defecto) y nació `pares_por_particion`; desde la viñeta
+  siguiente los dos viven en `record_linkage.evaluation.plantilla_base_real` y `verificar_plantilla_base_real.py` los importa
+  de ahí (ya no los define). Hallazgos
+  escritos: `MUNICIPIO` se declara como `CIUDAD` en las extras; las extras se suman tras el filtro de nombre y el de NIT;
+  `categorical` no firmado premia el dato ausente; las etiquetas de la plantilla no ven el multicriterio.
+- **Notebook 13 y `evaluation.multicriterio`** (`notebooks/13_multicriterio_plantilla_base_real.ipynb`, `docs/PLANTILLA_BASE_REAL.md`
+  §8): la prueba multicriterio con UNA configuración editable (Celda B: Excel con hojas `FUENTE_*`, variables extra con peso y
+  tipo, nombre de la corrida), OFF contra ON sobre la plantilla de `data/ejemplos` (la localiza o la descarga de `main`) y sobre
+  su base, con la tabla de comparadores generada desde el registro, el aporte por variable, los pares que cambian de decisión
+  con los valores de las dos filas y la exportación (Excel con RESUMEN, PARES_QUE_CAMBIAN, CORRELATIVA_ON/OFF, CASOS, APORTE
+  + JSON). La lógica se movió al paquete: `evaluation/plantilla_base_real.py` (leer la plantilla, `correr_motor`, casos y pares)
+  y el paquete `evaluation/multicriterio/` (`configuraciones.py`, `datos.py`, `medicion.py`, `informe.py`; nació como un archivo
+  de 1.180 líneas y se dividió el mismo día en cuatro módulos de ≤ 600 líneas sin cambiar lógica ni cifras, por la compuerta de
+  ingeniería del plan; `comparar_off_on`, `medir_configuracion`, `tabla_pares_que_cambian`, `exportar_comparacion`,
+  `descripcion_tipos`, `localizar_plantilla`); `scripts/verificar_plantilla_base_real.py` y `scripts/multicriterio_plantilla.py`
+  son envoltorios delgados (una sola implementación). Sin verdad también corre (solo los pares que cambian). 36 pruebas en
+  `tests/test_multicriterio.py` (cifras de §5.1, `MUNICIPIO` → `CIUDAD`, validación fail-fast, sin verdad, exportación,
+  determinismo en subprocesos, scripts delgados); el 13 entra al contrato de notebooks y corre entero con `nbclient`.
+  **Correcciones tras la verificación del mismo día** (tres verificadores; detalle en `docs/BITACORA.md`): `leer_plantilla`
+  rechaza `ID_REGISTRO_FUENTE` repetidos entre hojas y una `VERDAD_GRUPOS` sin `ID_REGISTRO_FUENTE`/`ID_GRUPO`, y avisa si una
+  fuente no trae `NIT` o `MUNICIPIO`; una `VERDAD_GRUPOS` mínima (sin `CASO`) da precisión y recall por pares (antes
+  `KeyError`) y sin hoja `CASOS` ya no calla las cifras; `medir_configuracion` se detiene si una columna extra no llegó al
+  scorer; el aporte cuenta premia/castiga/neutro solo sobre pares con ambos lados llenos y el lado vacío aparte
+  (`categorical` ya no muestra 255 premiados de 59 llenos); el llenado se redondea medio hacia arriba (EMAIL 49,3 %, no
+  49,2 %); el texto `DETALLE` del caso `singleton` recupera el denominador («1 de 60…», como la evidencia de §5) y una prueba
+  compara la tabla por caso del verificador con `plantilla_base_real_casos.json`; `pares_de_prueba` reutiliza
+  `pares_verdaderos`; el resumen trae `ETIQUETAS_P/R` a 4 decimales y `Medicion.tabla_etiquetas` la tabla por régimen con
+  Wilson 95 %. Notebook 13: la Celda A reinstala con `--force-reinstall --no-deps` cuando el paquete instalado no trae el
+  módulo (pip no reinstala una URL git con la misma versión), distingue «el origen no trae el módulo» de «hay otra versión
+  en memoria», exige versión ≥ 0.22.4 en vez de igualdad y dice que hasta el merge `main` no trae el módulo; la primera
+  celda EJECUTAR crea `RUTA_DATOS`; la sección 1 dice qué `tipo_*` NO castigan (`tipo_conjunto`, `tipo_geo`,
+  `tipo_numerico`) y trae la tabla columna → tipo / peso sugerido y la regla de pesos; la sección 3, las columnas mínimas
+  y el id único; las celdas imprimen qué cifras va a haber, las columnas que vio el motor, la leyenda y la tabla por régimen;
+  la exportación avisa si no corrió la sección 3; «Interpretación y límites» dice qué hacer con cada fila de
+  `PARES_QUE_CAMBIAN`; glosario y tamaño pensado. `tests/test_notebooks_v014.py`: el 13 entra a los dos contratos de la
+  celda de entorno (tercera estrategia: GitHub + comprobación del módulo por archivo) y el 12 al de «nunca editable».
 - **Paquete** `flujo/vinculacion/` (26 módulos, ninguno > 600 líneas, complejidad ≤ 15, sin `print`, mypy en el anillo bloqueante):
   `ejecutar(cfg, verboso, registro)`, `ConfigVinculacion`, `Fuente`, `Resultado`, `leer_decisiones`, `plantilla_decisiones`.
   Excel de 16 hojas en `flujo/vinculacion_excel/` (`exportar_vinculacion_excel`, alias `exportar_excel`; carga perezosa desde el paquete).

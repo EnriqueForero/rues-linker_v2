@@ -130,6 +130,7 @@ secrets.json
 !notebooks/07_deduplicar_importadores_razon_social_pais.ipynb
 !notebooks/08_PUBLICAR_GITHUB.ipynb
 !notebooks/12_optimizar_parametros_con_optuna.ipynb
+!notebooks/13_multicriterio_plantilla_base_real.ipynb
 !tests/data/baseline_multicampo.json
 !tests/data/baseline_v0_9_0.json
 !tests/data/golden_truth.csv
