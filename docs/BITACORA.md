@@ -1905,6 +1905,11 @@ Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fas
   arreglada en streaming) y la regla «unir mal duele más» decidió el punto estricto. Las compuertas suben su piso (`compuertas.json`). Los demás perfiles base siguen en el
   legado hasta medirse. Las variantes por borrado del índice de tokens quedan apagadas (no cambiaban nada; +138.000 candidatos).
 
+* **Escala 139k con el perfil final:** F1 0,9722 (referencia 0,9662), recall 0,9652 (0,9475), 5 FP que tocan un negativo (34),
+  6,8 M de candidatos (12,7 M), 309 s (333 s), RSS pico 1.174 MiB. Dos arreglos salieron de ahí: la cobertura por estrellas en
+  streaming para componentes gigantes (la matriz k×k pedía 13,5 GB) y el producto TF-IDF en lotes de 500 filas (RSS de L2 1.599 →
+  1.135 MiB, mismos pares).
+
 ### Lo que la iteración enseñó
 
 * Un bloqueo con más recall no mejora nada si el comparador no es honesto: primero el comparador, después el recall.

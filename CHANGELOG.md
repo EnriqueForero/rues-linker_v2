@@ -59,6 +59,8 @@ Nada de esto está en una versión publicada.
   trigramas + llaves exactas (`candidatos_hibrido.*`). Recall de pares SIN_ID 0,718 → 0,925; L2 39 s → 13 s. El LSH sigue disponible.
 - **L3:** paginación de `candidate_pairs` por la clave primaria en las dos rutas (la no streaming usaba `OFFSET`) y escritura
   vectorizada; sin cambio de resultados.
+- **Escala 139k** (`docs/evidencia/escala_f3_default.json`): F1 0,9662 → 0,9722, recall 0,9475 → 0,9652, FP que tocan un negativo
+  34 → 5, candidatos 12,7 M → 6,8 M, 333 s → 309 s, RSS pico 1.154 → 1.174 MiB. La compuerta de escala sube su piso (F1 ≥ 0,97).
 - **L5:** la cobertura por estrellas resuelve en streaming (líder por masa, O(k) de memoria) las componentes de más de 2.000 nombres;
   la matriz k×k pedía 13,5 GB a 139k registros.
 - **Instrumentos:** `scripts/recall_bloqueo.py` (recall de pares del bloqueo por régimen), `scripts/anatomia_fp.py`,

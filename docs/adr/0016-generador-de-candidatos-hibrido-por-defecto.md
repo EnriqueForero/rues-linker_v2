@@ -31,6 +31,9 @@ comparador de ADR-0015 se convierte en calidad.
 ## Consecuencias
 
 - La compuerta del bloqueo (`compuertas.json`) sube su piso a lo que el híbrido cumple (SIN_ID ≥ 0,92).
+- A 139.028 registros (`docs/evidencia/escala_f3_default.json`): 6,77 M de candidatos (12,7 M con el LSH), L2 158 s (268 s), F1
+  0,9722 (0,9662), 5 FP que tocan un negativo (34), RSS pico 1.174 MiB (1.154). El producto TF-IDF va en lotes de 500 filas: con
+  2.000 el RSS de L2 era 1.599 MiB.
 - TF-IDF de trigramas guarda la matriz dispersa del corpus en memoria: sobre 4 M de nombres son ~1,5 GB; `tfidf_max_filas` (1,5 M)
   apaga la vía por encima y la Fase 4 debe medir y, si hace falta, partirla por bloques de filas con índice en disco.
 - `scripts/recall_bloqueo.py` es la medición de referencia del bloqueo; vive junto al banco.

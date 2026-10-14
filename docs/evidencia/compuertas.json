@@ -8,8 +8,8 @@
     "objetivo": {"macro_f1": 0.92, "precision": 0.95, "recall_SIN_ID": 0.80, "fp_que_tocan_negativo_max": 246}
   },
   "escala_139k": {
-    "evidencia": "docs/evidencia/escala_f2.json",
-    "piso": {"f1": 0.96, "candidatos_max": 12739949, "rss_pico_mib_max": 1250},
+    "evidencia": "docs/evidencia/escala_f3_default.json",
+    "piso": {"f1": 0.97, "candidatos_max": 6774079, "rss_pico_mib_max": 1250},
     "objetivo": {"f1": 0.96, "candidatos_por_registro_max": 20, "rss_pico_mib_max": 1024, "segundos_total_max": 60}
   },
   "bloqueo": {

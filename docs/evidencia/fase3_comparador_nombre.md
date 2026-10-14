@@ -99,3 +99,16 @@ misma calidad, 138.000 candidatos más.
 `produccion_estandar` pasa a `comparador_nombre = "soft_tfidf"`, `soft_tfidf_umbral_token = 0,90`, `similitud_compacta_min = 0,95`,
 `nit_identical_overrides_name_filter = True` (ADR-0015) y `motor_candidatos = "hibrido"` (ADR-0016). Huella nueva del banco:
 `0b4ea2ec` (`docs/evidencia/corrida_base_f3.json`). Los demás perfiles base conservan el legado hasta medirse.
+
+## Escala 139k (`scripts/escala.py`, 139.028 filas, 54.136 grupos; máquina de 4 vCPU compartida con otras corridas)
+
+| corrida | comparador | candidatos | pares L3 | P | R | F1 | FP que tocan negativo | grupo mayor sin id | L2 s | L3 s | L5 s | total s | RSS pico MiB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `escala_f2` (referencia) | LSH + legado | 12,739,949 | — | 0.9856 | 0.9475 | 0.9662 | 34 | 13 | 268 | 168 | — | 333 | 1,154 |
+| `escala_f3_tolerancia085` | híbrido + soft 0,85 + c. 0,93 + exención | 6,774,079 | 228,690 | 0.7666 | 0.9405 | 0.8447 | 34 | 34 | 209 | 96 | 57 | 374 | 1,514 |
+| **`escala_f3_default`** | **híbrido + soft 0,90 + c. 0,95 + exención** | 6,774,079 | 207,205 | **0.9794** | **0.9652** | **0.9722** | **5** | 16 | 158 | 108 | 30 | **309** | **1,174** |
+
+La tolerancia 0,85 encadena las raíces cortas del generador sintético de importadores (precisión 0,77); con 0,90 + 0,95 el perfil
+supera a la referencia en F1 (+0,006), recall (+1,8 puntos) y FP que tocan un negativo (34 → 5), con la mitad de candidatos y 7 %
+menos de tiempo total; la precisión cede 0,6 puntos. El RSS pico de L2 bajó de 1.599 MiB a 1.135 al pasar el producto TF-IDF a
+lotes de 500 filas (mismos pares). `compuertas.json` apunta a esta evidencia: piso F1 0,97, candidatos ≤ 6.774.079, RSS ≤ 1.250 MiB.
