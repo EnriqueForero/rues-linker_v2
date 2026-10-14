@@ -68,7 +68,8 @@ Con el híbrido, soft 0,85 + compacta 0,93 da **+13 puntos de recall SIN_ID de p
 | `h_s085c093` | 1,254,470 | 0.9969 / 0.9469 | 42,989 | 0.9688 | 0.8066 | **0.8853** | 207 | 0.6486 | 19.6 | 21.2 | 54.4 | `521c7022` |
 | `lsh_legado_id` | 968,673 | 0.9964 / 0.7183 | 42,306 | 0.9553 | 0.8015 | **0.8893** | 252 | 0.5836 | 38.0 | 6.3 | 57.2 | `7d9cc9bd` |
 | `lsh_s085c093_id` | 968,673 | 0.9964 / 0.7183 | 40,066 | 0.9820 | 0.8178 | **0.9061** | 112 | 0.6183 | 39.5 | 15.4 | 67.8 | `9739d0ae` |
-| **`h_s085c093_id`** | 1,116,045 | 0.9969 / 0.9251 | 44,141 | **0.9697** | **0.8319** | **0.9104** | 207 | **0.6484** | 12.9 | 18.6 | 45.1 | `969145ac` |
+| `h_s085c093_id` | 1,116,045 | 0.9969 / 0.9251 | 44,141 | 0.9697 | 0.8319 | 0.9104 | 207 | 0.6484 | 12.9 | 18.6 | 45.1 | `969145ac` |
+| **`h_s090c095_id`** (el perfil) | 1,116,045 | 0.9969 / 0.9251 | — | **0.9844** | **0.8255** | **0.9107** | **73** | **0.6347** | 12.5 | 18.1 | 43.8 | `0b4ea2ec` |
 
 `_id` = `nit_identical_overrides_name_filter = True`. `h_s085c093_id` corre sin variantes por borrado (ADR-0016); `h_s085c093` con ellas:
 misma calidad, 138.000 candidatos más.
@@ -81,14 +82,20 @@ misma calidad, 138.000 candidatos más.
    795 pares verdaderos con el mismo NIT válido y sin tokens en común (siglas) que el legado pasaba con 0,31–0,43 de solapamiento de
    letras. `nit_identical_overrides_name_filter = True` (ADR-0015) los recupera en los dos comparadores (CON_ID 0,9935) sin tocar los
    FP que tocan un negativo (en el banco ningún negativo comparte NIT válido; en una base real, el veto por NIT distinto sigue).
-3. **Con el híbrido, el comparador convierte el recall de bloqueo en calidad:** macro-F1 0,9104 (antes 0,8803), P 0,9697 (0,9557),
-   R 0,8319 (0,7927), recall SIN_ID 0,6484 (0,5836), FP que tocan un negativo 207 (246), 45 s (59 s).
+3. **Con el híbrido, el comparador convierte el recall de bloqueo en calidad:** con 0,85 + 0,93, macro-F1 0,9104 (antes 0,8803),
+   P 0,9697 (0,9557), R 0,8319 (0,7927), recall SIN_ID 0,6484 (0,5836), FP que tocan un negativo 207 (246), 45 s (59 s).
+   **Pero a 139.028 registros (`scripts/escala.py`) la tolerancia 0,85 encadena raíces cortas distintas** («HANSHIN STEEL» ~ «HANSUN
+   STEEL», «DAEYOO GREEN» ~ «DAEWOO GREEN»: Jaro-Winkler 0,87–0,93 entre tokens de 6 letras) en un componente de 13.844 filas y 4.616
+   entidades sin identificador, con 29.770 aristas falsas de `name_sim` 0,90–0,98. La matriz k×k de la cobertura por estrellas
+   pidió 13,5 GB y el proceso murió por OOM (arreglado: componentes gigantes en streaming). Con **0,90 + 0,95**, el banco da
+   macro-F1 0,9107, P 0,9844, R 0,8255, recall SIN_ID 0,6347 y **73** FP que tocan un negativo: 1,4 puntos de recall SIN_ID por
+   134 uniones malas menos. «Unir mal duele más» decide.
 4. **Lo que ningún comparador de nombre resuelve:** negativos con el mismo nombre normalizado («MORALES BOGOTA» vs «MORALES BOGOTA»,
    «HIJOS VALDORIA» vs «VALDORIA HIJOS»). Son el grueso de los 207 FP que quedan. Hacen falta otras variables (ciudad, dirección,
    teléfono: `extra_features`) y el puntaje probabilístico que las pese.
 
 ## Decisión
 
-`produccion_estandar` pasa a `comparador_nombre = "soft_tfidf"`, `soft_tfidf_umbral_token = 0,85`, `similitud_compacta_min = 0,93`,
+`produccion_estandar` pasa a `comparador_nombre = "soft_tfidf"`, `soft_tfidf_umbral_token = 0,90`, `similitud_compacta_min = 0,95`,
 `nit_identical_overrides_name_filter = True` (ADR-0015) y `motor_candidatos = "hibrido"` (ADR-0016). Huella nueva del banco:
-`969145ac`. Los demás perfiles base conservan el legado hasta medirse.
+`0b4ea2ec` (`docs/evidencia/corrida_base_f3.json`). Los demás perfiles base conservan el legado hasta medirse.

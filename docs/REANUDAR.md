@@ -68,7 +68,7 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 Nadie empuja a `main`: se hace por PR y **Enrique mezcla** (regla del proyecto).
 1. ✅ PR #4, PR #5 y PR #6 ya están mezclados. Desde la interfaz de GitHub (Branches → papelera; el proxy de las sesiones no puede borrar ramas) borrar `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12`, `claude/f2-cierre`, `claude/f3-vinculacion` y, una vez mezclado su PR, `claude/f3-arreglos` y `claude/fase0-vigilancia`. **Conservar** `feature/vinculacion-0.23.0` hasta que F3.7 decida.
 2. ✅ PR #6 (F3.1b) mezclado el 14-oct.
-3. PR de `claude/fase0-vigilancia` → `main`: **cambia el perfil `produccion_estandar`** (ADR-0015 y ADR-0016, huella del banco `5bfed0d1` → `969145ac`) y las cotas de `compuertas.json`. Nada de esto está en una versión publicada. Después de mezclarlo, la siguiente rama sale de `main`.
+3. PR de `claude/fase0-vigilancia` → `main`: **cambia el perfil `produccion_estandar`** (ADR-0015 y ADR-0016, huella del banco `5bfed0d1` → `0b4ea2ec`) y las cotas de `compuertas.json`. Nada de esto está en una versión publicada. Después de mezclarlo, la siguiente rama sale de `main`.
 
 ## 5. Decisiones y preguntas abiertas (de Enrique)
 

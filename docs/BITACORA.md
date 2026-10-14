@@ -1898,9 +1898,11 @@ Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fas
   de los falsos). En el banco completo, el recall CON_ID caía (0,977 → 0,946): 795 pares con el mismo NIT y nombres sin tokens en común
   (siglas) que el piso de nombre vetaba y el legado pasaba por azar. La perilla `nit_identical_overrides_name_filter` existía desde
   v2.8.0 pero los perfiles base no la declaraban; declarada y activada, los recupera.
-* **Nuevo perfil de producción** (ADR-0015, ADR-0016): híbrido + soft 0,85 + compacta 0,93 + exención por identificador idéntico.
-  Banco: macro-F1 **0,9104** (0,8803), P 0,9697 (0,9557), R 0,8319 (0,7927), recall SIN_ID 0,6484 (0,5836), FP que tocan un negativo
-  207 (246), 45 s (59 s). Huella `969145ac`. Las compuertas suben su piso (`compuertas.json`). Los demás perfiles base siguen en el
+* **Nuevo perfil de producción** (ADR-0015, ADR-0016): híbrido + soft 0,90 + compacta 0,95 + exención por identificador idéntico.
+  Banco: macro-F1 **0,9107** (0,8803), P 0,9844 (0,9557), R 0,8255 (0,7927), recall SIN_ID 0,6347 (0,5836), FP que tocan un negativo
+  73 (246), 44 s (59 s). Huella `0b4ea2ec`. Primero elegí 0,85 + 0,93 por 0,001 de macro-F1 (207 FP): la escala a 139k lo
+  desmintió (raíces cortas distintas encadenadas en un componente de 13.844 filas, OOM de 13,5 GB en la cobertura por estrellas,
+  arreglada en streaming) y la regla «unir mal duele más» decidió el punto estricto. Las compuertas suben su piso (`compuertas.json`). Los demás perfiles base siguen en el
   legado hasta medirse. Las variantes por borrado del índice de tokens quedan apagadas (no cambiaban nada; +138.000 candidatos).
 
 ### Lo que la iteración enseñó

@@ -51,11 +51,11 @@ def _name_sim(perfil: dict, pares: list[tuple[int, int]]) -> list[float]:
 
 
 def test_produccion_estandar_usa_soft_tfidf_y_el_legado_sigue_disponible():
-    """ADR-0015: el perfil de producción compara con Soft TF-IDF (0,85) y respaldo compactado 0,93."""
+    """ADR-0015: el perfil de producción compara con Soft TF-IDF (0,90) y respaldo compactado 0,95."""
     perfil = PERFILES_BASE["produccion_estandar"]
     assert perfil["comparador_nombre"] == "soft_tfidf"
-    assert perfil["soft_tfidf_umbral_token"] == 0.85
-    assert perfil["similitud_compacta_min"] == 0.93
+    assert perfil["soft_tfidf_umbral_token"] == 0.90
+    assert perfil["similitud_compacta_min"] == 0.95
     assert perfil["nit_identical_overrides_name_filter"] is True
     # Sin perilla en el perfil, el scorer sigue en el legado: la contención vale 1,0.
     assert _name_sim(_perfil(), [(0, 1)]) == [1.0]

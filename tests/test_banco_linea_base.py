@@ -44,6 +44,7 @@ import pytest
 from lineas_base import (
     BANCO_F0,
     BANCO_F2,
+    BANCO_F3,
     BANCO_VIGENTE,
     LineaBaseBanco,
     discrepancias_con_linea_base,
@@ -69,7 +70,7 @@ def _leer_evidencia(linea: LineaBaseBanco = BANCO_VIGENTE) -> dict:
 
 #: Todas las líneas base, históricas y vigente: cada una debe seguir documentada
 #: y coincidir con su JSON (la historia tampoco deriva).
-LINEAS_BASE_CONOCIDAS = (BANCO_F0, BANCO_F2)
+LINEAS_BASE_CONOCIDAS = (BANCO_F0, BANCO_F2, BANCO_F3)
 
 
 @pytest.mark.parametrize("linea", LINEAS_BASE_CONOCIDAS, ids=lambda lb: lb.evidencia.stem)

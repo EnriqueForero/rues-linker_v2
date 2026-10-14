@@ -3,8 +3,8 @@
   "fuente": "docs/DIAGNOSTICO_Y_RUTA_2026-10-13.md, sección 4",
   "regla": "«piso» es lo que la evidencia comprometida en docs/evidencia debe cumplir HOY (tests/test_compuertas.py falla si una medición nueva lo rompe); «objetivo» es la meta de la ruta: se sube el piso a medida que se alcanza. Los tiempos no se comparan aquí (dependen de la máquina): los compara scripts/escala.py --comparar.",
   "banco_institucional": {
-    "evidencia": "docs/evidencia/fase3_comparador/corrida_h_s085c093_id.json",
-    "piso": {"macro_f1": 0.90, "precision": 0.96, "recall_SIN_ID": 0.64, "fp_que_tocan_negativo_max": 207, "grupo_mayor_sin_identificador_filas_max": 50},
+    "evidencia": "docs/evidencia/corrida_base_f3.json",
+    "piso": {"macro_f1": 0.91, "precision": 0.98, "recall_SIN_ID": 0.63, "fp_que_tocan_negativo_max": 73, "grupo_mayor_sin_identificador_filas_max": 50},
     "objetivo": {"macro_f1": 0.92, "precision": 0.95, "recall_SIN_ID": 0.80, "fp_que_tocan_negativo_max": 246}
   },
   "escala_139k": {

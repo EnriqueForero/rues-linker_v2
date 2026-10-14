@@ -19,8 +19,8 @@ verdaderos con el mismo NIT y ningún token en común (siglas: «FZA SCA» vs «
 ## Decisión
 
 1. **`comparador_nombre = "soft_tfidf"`** en `produccion_estandar`: coseno de tokens ponderados por IDF del corpus, con emparejamiento
-   uno a uno entre tokens distintos cuando su Jaro-Winkler ≥ **0,85** (`soft_tfidf_umbral_token`), y respaldo de cadena compactada
-   **0,93** (`similitud_compacta_min`) para erratas que mueven espacios o nombres truncados. Contención ya no es identidad; una
+   uno a uno entre tokens distintos cuando su Jaro-Winkler ≥ **0,90** (`soft_tfidf_umbral_token`), y respaldo de cadena compactada
+   **0,95** (`similitud_compacta_min`) para erratas que mueven espacios o nombres truncados. Contención ya no es identidad; una
    errata dentro de un token conserva casi toda la evidencia.
 2. **`nit_identical_overrides_name_filter = True`** en `produccion_estandar`: un par cuyos dos identificadores son válidos e idénticos
    (en base canónica, ADR del DV) no lo veta el piso de nombre. Es la lógica de Fellegi–Sunter: el acuerdo en un identificador único
@@ -36,16 +36,20 @@ verdaderos con el mismo NIT y ningún token en común (siglas: «FZA SCA» vs «
 | antes (LSH + legado) | 0,9557 | 0,7927 | 0,8803 | 246 | 0,9768 | 0,5836 |
 | LSH + legado + exención | 0,9553 | 0,8015 | 0,8893 | 252 | 0,9935 | 0,5836 |
 | LSH + soft 0,85 + compacta 0,93 + exención | 0,9820 | 0,8178 | 0,9061 | 112 | 0,9936 | 0,6183 |
-| **híbrido + soft 0,85 + compacta 0,93 + exención** (ADR-0016) | **0,9697** | **0,8319** | **0,9104** | **207** | **0,9934** | **0,6484** |
+| híbrido + soft 0,85 + compacta 0,93 + exención | 0,9697 | 0,8319 | 0,9104 | 207 | 0,9934 | 0,6484 |
+| **híbrido + soft 0,90 + compacta 0,95 + exención** (el perfil; ADR-0016) | **0,9844** | **0,8255** | **0,9107** | **73** | **0,9936** | **0,6347** |
 
 A nivel de par, soft 0,85 + compacta 0,93 domina al legado en su propio umbral: misma recall SIN_ID (0,663 vs 0,661), precisión 0,971
-vs 0,919, un tercio de los falsos. Los falsos que quedan son negativos con el mismo nombre («LACTEOS DULCEVENT» vs «LACTEOS DULCEVENT
+vs 0,919, un tercio de los falsos. Pero a 139.028 registros la tolerancia 0,85 trata raíces cortas distintas como erratas («HANSHIN»
+~ «HANSUN», «DAEYOO» ~ «DAEWOO») y encadena 4.616 entidades sin identificador en un componente de 13.844 filas; con 0,90 + 0,95 el
+banco pierde 1,4 puntos de recall SIN_ID (0,648 → 0,635) y baja los FP que tocan un negativo de 207 a 73. La regla «unir mal duele
+más» decide: **0,90 + 0,95**. Los falsos que quedan son negativos con el mismo nombre («LACTEOS DULCEVENT» vs «LACTEOS DULCEVENT
 S»): no los separa ningún comparador de nombre; hacen falta otras variables (Fase 3.3).
 
 ## Consecuencias
 
-- La huella del banco cambia (`5bfed0d1` → `969145ac`): toda comparación anterior a esta fecha es contra el comparador legado.
-- L3 tarda más (6,8 s → 18,6 s sobre 1,1 M de candidatos): el IDF se construye una vez y el emparejamiento de tokens va en C++, pero
+- La huella del banco cambia (`5bfed0d1` → `0b4ea2ec`): toda comparación anterior a esta fecha es contra el comparador legado.
+- L3 tarda más (6,8 s → 18,1 s sobre 1,1 M de candidatos): el IDF se construye una vez y el emparejamiento de tokens va en C++, pero
   las tablas de tokens por lote tienen costo. Sobre 4 M de registros se mide en la Fase 4.
 - `min_name_similarity` ya no decide los pares con identificador idéntico: en una base real con NIT reutilizados (error de captura),
   esos pares se unen. El veto por NIT distinto y la verdad real de Enrique (Fase 1) son la red.

@@ -46,12 +46,12 @@ Cada arreglo tiene su prueba y su declaración (`tests/lineas_base_vinculacion_c
 ## [Sin publicar] — Ruta 2026-10-13, Fases 0 a 3 · vigilancia en verde, candidatos híbridos y comparador Soft TF-IDF
 
 **Cambia el perfil `produccion_estandar`** (ADR-0015, ADR-0016; evidencia en `docs/evidencia/fase2_candidatos_hibridos.md` y
-`docs/evidencia/fase3_comparador_nombre.md`). Huella del banco institucional `5bfed0d1` → `969145ac`: macro-F1 0,8803 → 0,9104,
-precisión 0,9557 → 0,9697, recall 0,7927 → 0,8319, recall SIN_ID 0,5836 → 0,6484, FP que tocan un negativo 246 → 207, 59 s → 45 s.
+`docs/evidencia/fase3_comparador_nombre.md`). Huella del banco institucional `5bfed0d1` → `0b4ea2ec`: macro-F1 0,8803 → 0,9107,
+precisión 0,9557 → 0,9844, recall 0,7927 → 0,8255, recall SIN_ID 0,5836 → 0,6347, FP que tocan un negativo 246 → 73, 59 s → 44 s.
 Nada de esto está en una versión publicada.
 
 - **Comparador de nombre** `comparador_nombre = "soft_tfidf"` (`matching/soft_tfidf.py`): coseno de tokens ponderados por IDF con
-  tolerancia Jaro-Winkler 0,85 entre tokens y respaldo de cadena compactada 0,93. La contención («RODRIGUEZ» en «LAURA RODRIGUEZ») ya
+  tolerancia Jaro-Winkler 0,90 entre tokens y respaldo de cadena compactada 0,95. La contención («RODRIGUEZ» en «LAURA RODRIGUEZ») ya
   no vale 1,0. El legado (`token_set_ratio`) sigue disponible y es el valor de los demás perfiles base.
 - **Identificador válido idéntico** ya no lo veta el piso de nombre (`nit_identical_overrides_name_filter = True`): la perilla existía en
   el scorer y los perfiles heredados; ahora todo perfil base la declara. El veto por NIT base distinto no cambia.
@@ -59,6 +59,8 @@ Nada de esto está en una versión publicada.
   trigramas + llaves exactas (`candidatos_hibrido.*`). Recall de pares SIN_ID 0,718 → 0,925; L2 39 s → 13 s. El LSH sigue disponible.
 - **L3:** paginación de `candidate_pairs` por la clave primaria en las dos rutas (la no streaming usaba `OFFSET`) y escritura
   vectorizada; sin cambio de resultados.
+- **L5:** la cobertura por estrellas resuelve en streaming (líder por masa, O(k) de memoria) las componentes de más de 2.000 nombres;
+  la matriz k×k pedía 13,5 GB a 139k registros.
 - **Instrumentos:** `scripts/recall_bloqueo.py` (recall de pares del bloqueo por régimen), `scripts/anatomia_fp.py`,
   `scripts/barrido_comparador_nombre.py`, `evaluation/verdad_real.py` + `scripts/medir_verdad_real.py` (precisión y recall sobre pares
   etiquetados con intervalo de Wilson y kappa), `docs/PROTOCOLO_GROUND_TRUTH.md`, `docs/evidencia/compuertas.json` +
