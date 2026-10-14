@@ -1,0 +1,81 @@
+{
+  "etiqueta": "estandar_gtg",
+  "version": "0.22.4",
+  "perfil": "produccion_estandar",
+  "marca_tiempo": "2026-10-14T02:27:06",
+  "entorno": {
+    "python": "3.11.17",
+    "pandas": "3.0.6",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v130-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 3747,
+    "pares_verdaderos": 22073,
+    "tp": 21076,
+    "fp": 105,
+    "fn": 997,
+    "precision": 0.995,
+    "recall": 0.9548,
+    "f1": 0.9745,
+    "b3_precision": 0.9978,
+    "b3_recall": 0.9691,
+    "b3_f1": 0.9832,
+    "recall_por_regimen": {
+      "CON_NIT": 1.0,
+      "SIN_NIT": 0.7861
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 1.0,
+      "positivo_sin_nit": 0.7857,
+      "negativo_intermediario": 1.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 0,
+    "calidad_por_estrato": {},
+    "macro_f1": NaN,
+    "grupo_mayor_sin_identificador": {
+      "filas": 10,
+      "entidades": 2,
+      "grupos": 865,
+      "grupos_grandes": 0
+    }
+  },
+  "recursos": {
+    "segundos_total": 18.12,
+    "segundos_por_fase": {
+      "L1_prep": 0.39,
+      "L2_lsh_candidates": 4.18,
+      "L3_scoring": 8.29,
+      "L4_clustering": 0.27,
+      "L5_golden": 4.09
+    },
+    "rss_por_fase": {
+      "L1_prep": 243.2,
+      "L2_lsh_candidates": 392.2,
+      "L3_scoring": 483.1,
+      "L4_clustering": 439.5,
+      "L5_golden": 369.5
+    },
+    "rss_pico_mib": 475.8,
+    "rss_inicial_mib": 215.2,
+    "muestras_rss": 67,
+    "bytes_disco": 9777559,
+    "candidatos": 569214,
+    "pares_scoreados": 21723,
+    "candidatos_por_valido": 26.2
+  },
+  "huella": "7380652eeb8fa56fa4c5cfb9e50fb84bd7ff3366b10945ea633b3d398546cc4f",
+  "especificacion": {
+    "datos": "/home/user/rues-linker_v2/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "produccion_estandar",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": null,
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "medición de perfiles con el comparador de ADR-0015"
+}

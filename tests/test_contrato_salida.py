@@ -459,9 +459,17 @@ def test_id_entidad_nit_y_ent(resultado: ResultadoLinkage) -> None:
     # Un ID_GRUPO ↔ un ID_ENTIDAD.
     assert (c.groupby("ID_GRUPO")["ID_ENTIDAD"].nunique() == 1).all()
     assert (c.groupby("ID_ENTIDAD")["ID_GRUPO"].nunique() == 1).all()
-    # NIT-<base sin DV>: la base es la del NIT_FINAL del grupo.
-    fila = con_nit.iloc[0]
-    assert fila["ID_ENTIDAD"] == "NIT-" + str(fila["NIT"]).lstrip("0")
+    # NIT-<base sin DV>: la base es la canónica del NIT_FINAL del grupo, en TODAS las filas.
+    # (Hasta IT-34 se miraba solo «la primera fila con NIT» contra su propio NIT: en ``cruce_disco`` el
+    # orden de filas no es fijo y esa fila podía ser 800200007, cuyo 7 valida como DV de 80020000.)
+    from record_linkage.matching.identificadores import bases_canonicas
+
+    esperado = "NIT-" + pd.Series(
+        bases_canonicas(con_nit["NIT_FINAL"].astype(str).to_numpy()), index=con_nit.index
+    ).str.lstrip("0")
+    pd.testing.assert_series_equal(
+        con_nit["ID_ENTIDAD"].astype(str), esperado.astype(str), check_names=False
+    )
 
 
 def test_ent_es_determinista_entre_corridas(res_linkage: ResultadoLinkage, tmp_path: Path) -> None:

@@ -61,14 +61,17 @@ src/record_linkage/
     text.py, nit.py         Limpieza de texto y canonicalización de identificadores
     saneamiento.py          Entidades HTML, mojibake, siglas partidas (v0.22.0)
   engine/
-    lsh/                    Bloqueo: MinHash-LSH, bloqueo por NIT, política de pares
-    scorer.py               Scoring vectorizado de pares candidatos
+    candidatos/             Generador híbrido de candidatos: identificador + tokens distintivos +
+                            TF-IDF de trigramas + llaves (ADR-0016; motor por defecto)
+    lsh/                    Bloqueo MinHash-LSH, bloqueo por NIT, política de pares (motor "lsh")
+    scorer.py               Scoring vectorizado de pares candidatos (comparador_nombre: soft_tfidf | legado)
     cannot_link.py          Restricciones duras entre registros
-    cobertura.py            Cobertura por estrellas: corta el encadenamiento (v0.22.0)
+    cobertura.py            Cobertura por estrellas: corta el encadenamiento; componentes gigantes en streaming
   matching/
+    soft_tfidf.py           Comparador de nombre Soft TF-IDF (ADR-0015; el de produccion_estandar)
     comparadores_extra.py   Registro de comparadores de variables adicionales
     idf.py                  Ponderación de tokens por informatividad
-    nombre_idf.py           Comparador de razones sociales sin NIT (v0.22.0)
+    nombre_idf.py           Comparador de razones sociales sin NIT (v0.22.0; lo usa la cobertura)
     genericos.py            Términos no distintivos, DECLARADOS (v0.22.0)
   paises/                   Catálogo ISO 3166 en español + canonizador (v0.22.0)
   golden/                   Selección del registro consolidado
@@ -78,14 +81,23 @@ src/record_linkage/
   evaluation/
     banco.py                Banco de pruebas reproducible
     comparador.py           Veredicto entre dos corridas
+    verdad_real.py          Precisión y recall sobre pares etiquetados reales (Wilson, kappa)
+scripts/
+  banco.py, escala.py       Las dos compuertas de calidad y de escala (--ajuste CLAVE=VALOR)
+  recall_bloqueo.py         Recall de pares del bloqueo por régimen sobre un directorio de trabajo
+  anatomia_fp.py            Anatomía de los pares de L3 (TP/FP por régimen, NIT y vía de candidatos)
+  barrido_comparador_nombre.py  Barrido de umbral a nivel de par: legado contra Soft TF-IDF
+  medir_verdad_real.py      Lo que Enrique corre con etiquetas reales
 docs/
+  PLAN_DETALLADO_2026-10-14.md  El plan vigente, paso a paso (léalo antes que cualquier otro plan)
+  DIAGNOSTICO_Y_RUTA_2026-10-13.md  El diagnóstico que lo motiva y las seis fases
   BITACORA.md               Qué se hizo, cuándo, con qué evidencia
   PLAN.md                   Los 32 criterios de mejora y su estado
   BANCO.md                  Cómo se mide
   BENCHMARK.md              Qué mide el conjunto de referencia y qué no
   CONFORMIDAD.md            Los 43 casos frontera, con veredicto por caso
   adr/                      Decisiones de arquitectura, una por archivo
-  evidencia/                JSON de cada corrida del banco
+  evidencia/                JSON de cada corrida del banco; compuertas.json = pisos que las pruebas vigilan
 ```
 
 Las fases del pipeline se llaman L1…L6 en todo el código:
@@ -126,6 +138,18 @@ El banco mide en una sola pasada calidad (precision, recall, F1, B³, recall
 por régimen y por caso, precisión/recall/F1 **por estrato** y macro-F1),
 tiempo total y por fase, pico de RSS, bytes en disco, candidatos generados y
 huella de la partición.
+
+**Línea base vigente:** `tests/lineas_base.py::BANCO_VIGENTE` (hoy `BANCO_F3`, huella
+`0b4ea2ec…`, `docs/evidencia/corrida_base_f3.json`). Los pisos que ninguna medición
+nueva puede romper viven en `docs/evidencia/compuertas.json` y los vigila
+`tests/test_compuertas.py`. Cuando un cambio de motor mueve la huella: ADR +
+constante nueva en `lineas_base.py` + `BANCO_VIGENTE` apuntando a ella + pisos.
+
+Para entender un resultado, no solo medirlo: `scripts/recall_bloqueo.py --trabajo DIR`
+(¿el bloqueo propone los pares verdaderos?), `scripts/anatomia_fp.py --trabajo DIR --hibrido`
+(¿qué pares acepta L3 y por qué vía llegaron?) y `scripts/barrido_comparador_nombre.py`
+(¿qué umbral y qué comparador separan mejor?). Todos leen el directorio de trabajo
+que deja `scripts/banco.py --dir-trabajo`.
 
 **Lea el macro-F1, no solo el F1.** Los pares crecen con el cuadrado del
 tamaño de grupo, así que el estrato de grupos grandes domina el F1 global y

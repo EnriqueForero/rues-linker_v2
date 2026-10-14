@@ -38,10 +38,34 @@ A partir de varias fuentes con razones sociales y NITs que se superponen
 único por empresa real** (golden record) usando:
 
 1. **Limpieza** vectorizada de texto y NITs (`processing/`)
-2. **Bloqueo LSH** con MinHash sobre n-gramas (`engine/lsh/`)
-3. **Scoring** de pares candidatos (similitud de nombre + NIT + fonética)
-4. **Clustering** de entidades por componentes conexos
+2. **Candidatos** por un generador híbrido (`engine/candidatos/`, ADR-0016): identificador, tokens distintivos
+   por IDF y TF-IDF de trigramas de caracteres; el bloqueo MinHash-LSH (`engine/lsh/`) sigue disponible con
+   `motor_candidatos="lsh"`
+3. **Scoring** de pares candidatos: nombre con Soft TF-IDF (`matching/soft_tfidf.py`, ADR-0015) + NIT + fonética
+4. **Clustering** de entidades por componentes conexos, cannot-link por identificador y cobertura por estrellas
 5. **Golden record** generado por reglas de prioridad + pesos de calidad de fuente
+
+### El perfil de producción (2026-10-14, ADR-0015 y ADR-0016)
+
+`produccion_estandar` compara nombres con **Soft TF-IDF** (coseno de tokens ponderados por IDF con tolerancia
+Jaro-Winkler 0,90 entre tokens y respaldo de cadena compactada 0,95), genera candidatos con el **híbrido** y no deja
+que el piso de nombre vete un **identificador válido idéntico**. Lo que cambió, medido sobre el banco institucional
+(30.486 registros) y la escala de 139.028 registros, todo con huella y JSON en `docs/evidencia/`:
+
+| | banco: antes | banco: ahora | 139k: antes | 139k: ahora |
+|---|---:|---:|---:|---:|
+| macro-F1 / F1 | 0,8803 | **0,9107** | 0,9662 | **0,9722** |
+| precisión | 0,9557 | **0,9844** | 0,9856 | 0,9794 |
+| recall | 0,7927 | **0,8255** | 0,9475 | **0,9652** |
+| uniones que tocan un negativo diseñado | 246 | **73** | 34 | **5** |
+| candidatos | 968.673 | 1.116.045 | 12,7 M | **6,8 M** |
+| tiempo total | 59 s | **44 s** | 333 s | **309 s** |
+
+Por qué: el comparador heredado (`token_set_ratio`) daba 1,0 a la contención («RODRIGUEZ» dentro de «LAURA
+RODRIGUEZ») y el 100 % de los falsos positivos del banco eran de esa forma; el bloqueo LSH solo tapaba el defecto
+porque no proponía esos pares. Las cifras son sobre datos sintéticos: la medición sobre empresas reales se hace con
+`scripts/medir_verdad_real.py` y el protocolo de `docs/PROTOCOLO_GROUND_TRUTH.md`. El comparador anterior sigue
+disponible (`comparador_nombre="legado"`), igual que el LSH.
 
 Trabaja con una arquitectura **híbrida disco/memoria**. En el flujo 0.17.3,
 DuckDB proyecta, limita y colapsa los archivos comprimidos en disco; pandas
@@ -109,17 +133,20 @@ resultado = linkage(fuentes, profile="fuentes_mixtas")
 Medido sobre `data/ground_truth/ground_truth_grande.csv` (12.427 registros,
 22.073 pares verdaderos, 81 % con identificador):
 
-| métrica | `produccion_estandar` | `fuentes_mixtas` |
+| métrica | `produccion_estandar` (2026-10-14) | `fuentes_mixtas` |
 |---|---|---|
-| precision | 0,9760 | **0,9866** |
-| recall | 0,9560 | **0,9733** |
-| F1 | 0,9659 | **0,9799** |
-| recall SIN identificador | 0,8344 | **0,9165** |
-| tiempo | 25,6 s | 39,8 s |
+| precision | **0,9950** | 0,9866 |
+| recall | 0,9548 | **0,9733** |
+| F1 | 0,9745 | **0,9799** |
+| recall SIN identificador | 0,7861 | **0,9165** |
+| uniones que tocan un negativo | **0** | 111 |
+| tiempo | 18 s | 54 s |
 
-Validado fuera de muestra en tres pliegues por grupo: ΔF1 medio +0,0105.
-Cuesta 55 % más de tiempo, porque el bloqueo más abierto genera 1,4 M de
-candidatos en vez de 850 K.
+`fuentes_mixtas` se calibró en 0.18.0 con el comparador heredado y conserva ese comparador: con el perfil de
+producción de ADR-0015 la brecha de F1 bajó de 0,014 a 0,005 y las uniones que tocan un negativo pasaron de 111 a 0.
+Con el comparador nuevo, `fuentes_mixtas` da F1 0,9782, recall SIN identificador 0,9328 y 0 uniones sobre negativos
+(`docs/evidencia/fase3_comparador/corrida_mixtas_soft.json`); su cambio de perfil es una tarea de la Fase 3
+(`docs/PLAN_DETALLADO_2026-10-14.md`). Validado fuera de muestra en 0.18.0 en tres pliegues por grupo: ΔF1 medio +0,0105.
 
 ### Variables de contacto como evidencia
 
@@ -515,15 +542,20 @@ print(f"Partial: {reporte['partial']}")
 
 ## Perfiles disponibles
 
-| Perfil | Cuándo usar | Métricas medidas |
+| Perfil | Cuándo usar | Métricas medidas (2026-10-14, `ground_truth_grande.csv`; banco y 139k arriba) |
 |---|---|---|
-| **`produccion_calibrada`** ⭐ | Producción real (calibrado vs GT) | F1=0.84, P=1.00, R=0.73 |
-| `alta_precision` | Cuando un FP es costoso | F1=0.83, P=1.00 |
-| `produccion_estandar` | Balanceado, configuración heredada | No medido contra GT |
+| **`produccion_estandar`** ⭐ | Producción: el perfil medido en banco, escala y conformidad (ADR-0015, ADR-0016) | F1 0,9745 · P 0,995 · R 0,955 · 0 uniones sobre negativos |
+| `fuentes_mixtas` | Padrones donde pocos registros traen identificador; comparador heredado | F1 0,9799 · P 0,987 · recall sin identificador 0,917 · 111 uniones sobre negativos |
+| `produccion_calibrada` | Precisión absoluta con identificador; **no une nada sin NIT** (umbral 0,6) | F1 0,857 · P 1,00 · R 0,750 |
+| `alta_precision` | Igual que la anterior, bloqueo más estrecho | F1 0,857 · P 1,00 · R 0,750 |
 | `produccion_exhaustiva` | Máxima cobertura, tolera FP | No medido contra GT |
 | `deduplicacion_simple` | Solo dedup intra-fuente | — |
 | `prueba_rapida` | Smoke tests | — |
 | `config_produccion_it7` (constante) | **Retrocompat** con notebook IT-7 | F1=0.05 (no recomendado) |
+
+Solo `produccion_estandar` lleva el comparador Soft TF-IDF y el generador híbrido; los demás conservan el comparador heredado
+hasta que se midan y se declaren (tarea 3.1 de `docs/PLAN_DETALLADO_2026-10-14.md`; la medición ya está en
+`docs/evidencia/fase3_comparador_nombre.md`).
 
 `config_produccion_it7` se mantiene por retrocompatibilidad documental.
 Tiene parámetros dead/deprecated que el validador reporta.

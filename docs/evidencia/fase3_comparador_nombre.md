@@ -112,3 +112,21 @@ La tolerancia 0,85 encadena las raíces cortas del generador sintético de impor
 supera a la referencia en F1 (+0,006), recall (+1,8 puntos) y FP que tocan un negativo (34 → 5), con la mitad de candidatos y 7 %
 menos de tiempo total; la precisión cede 0,6 puntos. El RSS pico de L2 bajó de 1.599 MiB a 1.135 al pasar el producto TF-IDF a
 lotes de 500 filas (mismos pares). `compuertas.json` apunta a esta evidencia: piso F1 0,97, candidatos ≤ 6.774.079, RSS ≤ 1.250 MiB.
+
+## Los demás perfiles base, medidos con y sin el comparador nuevo (`ground_truth_grande.csv`, 12.427 registros)
+
+| perfil | comparador y motor | P | R | F1 | recall SIN identificador | uniones sobre negativos | tiempo | corrida |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| `produccion_estandar` | soft (perfil) | 0.9950 | 0.9548 | 0.9745 | 0.7861 | 0 | 18 s | `estandar_gtg` |
+| `fuentes_mixtas` | legado (perfil) | 0.9866 | 0.9733 | 0.9799 | 0.9165 | 111 | 54 s | `mixtas_legado` |
+| `fuentes_mixtas` | soft + híbrido + exención | 0.9706 | 0.9858 | 0.9782 | 0.9328 | 0 | 18 s | `mixtas_soft` |
+| `produccion_calibrada` | legado (perfil) | 1.0000 | 0.7496 | 0.8569 | 0.0000 | 0 | 37 s | `calibrada_legado` |
+| `produccion_calibrada` | soft + híbrido + exención | 1.0000 | 0.7553 | 0.8606 | 0.0000 | 0 | 18 s | `calibrada_soft` |
+| `alta_precision` | legado (perfil) | 1.0000 | 0.7498 | 0.8570 | 0.0000 | 0 | 31 s | `altaprec_legado` |
+| `alta_precision` | soft + híbrido + exención | 1.0000 | 0.7548 | 0.8603 | 0.0000 | 0 | 15 s | `altaprec_soft` |
+
+Lectura: `fuentes_mixtas` (calibrado en 0.18.0 con el comparador legado) pierde 0,0017 de F1 con el comparador nuevo pero pasa de
+111 a 0 uniones sobre negativos y sube el recall sin identificador de 0,917 a 0,933; `produccion_calibrada` y `alta_precision`
+tienen umbral 0,6, que no deja pasar ningún par sin identificador (el puntaje lineal da como máximo 0,5 sin NIT), y con el
+comparador nuevo ganan +0,004 de F1 a la mitad del tiempo. Cambiarles el perfil es la tarea 3.1 del plan detallado: exige mover sus
+cotas declaradas (`tests/test_perfil_fuentes_mixtas_v018.py`, README) con la evidencia de arriba.

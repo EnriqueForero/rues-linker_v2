@@ -1,0 +1,87 @@
+{
+  "etiqueta": "altaprec_soft",
+  "version": "0.22.4",
+  "perfil": "alta_precision",
+  "marca_tiempo": "2026-10-14T02:28:54",
+  "entorno": {
+    "python": "3.11.17",
+    "pandas": "3.0.6",
+    "numpy": "2.3.5",
+    "plataforma": "Linux-6.18.44-fc-v130-x86_64-with-glibc2.39"
+  },
+  "calidad": {
+    "registros": 12427,
+    "grupos_verdad": 3486,
+    "grupos_predichos": 5421,
+    "pares_verdaderos": 22073,
+    "tp": 16661,
+    "fp": 0,
+    "fn": 5412,
+    "precision": 1.0,
+    "recall": 0.7548,
+    "f1": 0.8603,
+    "b3_precision": 1.0,
+    "b3_recall": 0.8359,
+    "b3_f1": 0.9106,
+    "recall_por_regimen": {
+      "CON_NIT": 0.9569,
+      "SIN_NIT": 0.0
+    },
+    "recall_por_caso": {
+      "positivo_con_nit": 0.9569,
+      "positivo_sin_nit": 0.0,
+      "negativo_intermediario": 0.0,
+      "negativo_generico": NaN
+    },
+    "fp_que_tocan_negativo": 0,
+    "calidad_por_estrato": {},
+    "macro_f1": NaN,
+    "grupo_mayor_sin_identificador": {
+      "filas": 1,
+      "entidades": 1,
+      "grupos": 2342,
+      "grupos_grandes": 0
+    }
+  },
+  "recursos": {
+    "segundos_total": 15.09,
+    "segundos_por_fase": {
+      "L1_prep": 0.8,
+      "L2_lsh_candidates": 3.81,
+      "L3_scoring": 7.01,
+      "L4_clustering": 0.26,
+      "L5_golden": 2.4
+    },
+    "rss_por_fase": {
+      "L1_prep": 245.4,
+      "L2_lsh_candidates": 394.0,
+      "L3_scoring": 409.5,
+      "L4_clustering": 409.5,
+      "L5_golden": 369.6
+    },
+    "rss_pico_mib": 409.5,
+    "rss_inicial_mib": 215.4,
+    "muestras_rss": 56,
+    "bytes_disco": 9986707,
+    "candidatos": 626510,
+    "pares_scoreados": 15503,
+    "candidatos_por_valido": 40.4
+  },
+  "huella": "da4a751c0b4498e122b10337ed37d021671a86159b1bc82778b12b4ff30f89ab",
+  "especificacion": {
+    "datos": "/home/user/rues-linker_v2/data/ground_truth/ground_truth_grande.csv",
+    "perfil": "alta_precision",
+    "confiables": [],
+    "variables_extra": null,
+    "ajustes_perfil": {
+      "motor_candidatos": "hibrido",
+      "comparador_nombre": "soft_tfidf",
+      "soft_tfidf_umbral_token": 0.9,
+      "similitud_compacta_min": 0.95,
+      "nit_identical_overrides_name_filter": true
+    },
+    "perfil_multicampo": null,
+    "semilla": 42
+  },
+  "nota": "medición de perfiles con el comparador de ADR-0015"
+}

@@ -116,3 +116,15 @@ def test_falla_rapido_ante_largos_distintos_o_umbral_invalido(pesos):
         similitud_soft_tfidf(pesos, np.array(["A B"], dtype=object), np.array([], dtype=object))
     with pytest.raises(ValueError, match="umbral_token"):
         _sim(pesos, "KRONOS", "KRONOS", umbral_token=0.0)
+
+
+def test_es_simetrico_y_los_tokens_genericos_iguales_siguen_valiendo_uno(pesos):
+    """Coseno: sim(a, b) == sim(b, a). Y dos nombres hechos solo de genéricos iguales valen 1,0: esa colisión
+    («INVERSIONES SAS» = «INVERSIONES SAS») no la separa ningún comparador de nombre; es trabajo de otras variables."""
+    pares = [
+        ("KRONOS EMPRESARIAL VALDORIA", "VALDORIA KRONOS SAS"),
+        ("TRIVENTA INVERSIONES", "TRIVENTE INVERSIONES SAS"),
+    ]
+    for a, b in pares:
+        assert _sim(pesos, a, b) == pytest.approx(_sim(pesos, b, a))
+    assert _sim(pesos, "INVERSIONES SAS", "INVERSIONES SAS") == pytest.approx(1.0)

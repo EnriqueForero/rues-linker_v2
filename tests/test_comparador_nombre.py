@@ -99,3 +99,48 @@ def test_la_perilla_y_su_umbral_existen_en_todos_los_perfiles_base():
         assert 0.0 < perfil["soft_tfidf_umbral_token"] <= 1.0, nombre
         # El scorer ya leía esta perilla; ahora todo perfil base la declara y --ajuste la acepta.
         assert isinstance(perfil["nit_identical_overrides_name_filter"], bool), nombre
+
+
+# ── ADR-0015 en el scorer: exención por identificador idéntico y contención sin NIT ──────────────────
+
+
+def _df_con_nit() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "NOMBRE_LIMPIO": [
+                "FZA SCA",  # 0: sigla, mismo NIT que 1, ningún token en común
+                "FONDO ZELVORA AHORRO",  # 1
+                "RODRIGUEZ",  # 2: contención sin NIT
+                "LAURA RODRIGUEZ",  # 3
+                "KRONOS VALDORIA",  # 4: mismo nombre, NIT válidos distintos
+                "KRONOS VALDORIA",  # 5
+                "TRIVENTA INVERSIONES SAS",  # 6: relleno para el IDF
+                "PELUVIKA TEXTIL SAS",  # 7
+            ],
+            "NIT_OK": ["899999007", "899999007", "", "", "900100200", "900100300", "", ""],
+        }
+    )
+
+
+def _pares_aceptados(ajustes: dict | None = None) -> set[tuple[int, int]]:
+    perfil = dict(PERFILES_BASE["produccion_estandar"])
+    perfil.update(ajustes or {})
+    pares = np.array([[0, 1], [2, 3], [4, 5]])
+    res = VectorizedScorer(perfil)._score_batch_vectorized(pares, _df_con_nit())
+    return set(zip(res["idx_0"].tolist(), res["idx_1"].tolist(), strict=True))
+
+
+def test_el_perfil_de_produccion_une_por_identificador_identico_y_no_por_contencion():
+    aceptados = _pares_aceptados()
+    assert (0, 1) in aceptados, (
+        "mismo NIT válido y nombres sin tokens en común: el identificador decide"
+    )
+    assert (2, 3) not in aceptados, "contención sin NIT: con Soft TF-IDF no llega a 0,9 de nombre"
+    assert (4, 5) in aceptados, (
+        "nombres iguales con NIT distintos: el puntaje los acepta (sin veto por NIT base)"
+    )
+
+
+def test_sin_la_exencion_el_piso_de_nombre_vetaba_la_sigla():
+    aceptados = _pares_aceptados({"nit_identical_overrides_name_filter": False})
+    assert (0, 1) not in aceptados

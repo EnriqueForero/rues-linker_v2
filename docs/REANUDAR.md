@@ -1,6 +1,6 @@
 # Dónde estamos y cómo retomar
 
-*Actualizado: 2026-10-14 (Fases 0 a 3 de la ruta: vigilancia, verdad real, candidatos híbridos, comparador Soft TF-IDF). Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
+*Actualizado: 2026-10-14, noche (Fases 0 a 3 en `main`; plan detallado paso a paso en [`PLAN_DETALLADO_2026-10-14.md`](PLAN_DETALLADO_2026-10-14.md): léalo antes que cualquier otro plan). Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
 El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-33); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
 
 ## 1. Estado en una mirada
@@ -14,7 +14,7 @@ El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, e
 | F4 | Escala (4 M de registros en Colab) | pendiente | 18 % |
 | F5/F6 | Ingeniería y release 1.0 | pendiente | 18 % |
 
-**La ruta vigente es `DIAGNOSTICO_Y_RUTA_2026-10-13.md` (seis fases).** Su estado: Fase 0 ✅ (vigilancia, IT-32) · Fase 1 ✅ instrumentos (la verdad real la produce Enrique) · Fase 2 ✅ (híbrido por defecto, ADR-0016) · Fase 3 ≈ 50 % (comparador y exención por identificador, ADR-0015; falta el puntaje probabilístico y las otras variables) · Fase 4 empezada (escala 139k medida con el perfil nuevo: F1 0,9722, RSS 1.174 MiB; falta 463k, 1 M/4 M, presupuesto de memoria, reanudación y notebook Colab) · Fases 5 y 6 pendientes. **Todo lo de IT-32 e IT-33 vive en la rama `claude/fase0-vigilancia` hasta que su PR se mezcle.** El porcentaje de abajo es del plan anterior. Avance del plan anterior ≈ 53 %. F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
+**La ruta vigente es `DIAGNOSTICO_Y_RUTA_2026-10-13.md` (seis fases).** Su estado: Fase 0 ✅ (vigilancia, IT-32) · Fase 1 ✅ instrumentos (la verdad real la produce Enrique) · Fase 2 ✅ (híbrido por defecto, ADR-0016) · Fase 3 ≈ 50 % (comparador y exención por identificador, ADR-0015; falta el puntaje probabilístico y las otras variables) · Fase 4 empezada (escala 139k medida con el perfil nuevo: F1 0,9722, RSS 1.174 MiB; falta 463k, 1 M/4 M, presupuesto de memoria, reanudación y notebook Colab) · Fases 5 y 6 pendientes. **Todo lo de IT-32, IT-33 e IT-34 está en `main` (PR #7 y PR #8).** El plan vigente, con cada tarea paso a paso, es `PLAN_DETALLADO_2026-10-14.md`; este documento solo resume el estado. El porcentaje de abajo es del plan anterior. Avance del plan anterior ≈ 53 %. F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
 
 Subfases de F3: **F3.0 oráculo ✅ · F3.1 extracción con paridad ✅ · F3.1b arreglos declarados ✅ (rama `claude/f3-arreglos`)** · F3.2 reutilizar la librería · F3.3 contrato estándar (`vincular_empresas`) · F3.4 decisiones unificadas · F3.5 notebook 10 delgado · F3.6 notebook 09 · F3.7 ADR, documentación, skill (sin versión ni tag).
 
@@ -52,7 +52,7 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 | # | Qué | Cómo se sabe que terminó | Costo relativo |
 |---|---|---|---|
 | 0 | ✅ PR #4 y PR #5 mezclados. **Enrique borra las ramas viejas** (sección 4) | — | mínimo |
-| 1 | ✅ PR #6 mezclado (14-oct). **PR de `claude/fase0-vigilancia`** (Fases 0 a 3: IT-32 e IT-33) abierto; se mezcla con el CI verde (autorizado) | CI verde | bajo |
+| 1 | ✅ PR #6 y PR #7 mezclados (14-oct). ✅ PR #8 (pruebas, documentación y plan detallado) | — | hecho |
 | 1b | **Fase 3 restante:** puntaje probabilístico (Fellegi–Sunter/EM) sobre el comparador nuevo, otras variables en producción (`extra_features` medidas), umbrales por costo cuando exista verdad real | banco ≥ compuertas; verdad real medida | alto |
 | 1c | **Fase 4:** `scripts/escala.py` con el nuevo perfil (139k y 463k), presupuesto de memoria fail-fast, reanudación probada, 1 M/4 M sintéticos, notebook Colab delgado | `compuertas.json` colab_4M con evidencia | alto |
 | 2 | ✅ **F3.1b**: arreglos declarados del motor (nivel 1 completo + B2, B3, B8, g3-O1, g3-O2). Pendientes con decisión de Enrique: C9, B7, M-c, A13 (`PLAN_ARREGLOS_F3.1b.md`) | `pytest` de `test_vinculacion_*` verde en py311 y py310; el arnés solo difiere en lo declarado | hecho |
@@ -71,6 +71,15 @@ Nadie empuja a `main`: se hace por PR y **Enrique mezcla** (regla del proyecto).
 3. PR de `claude/fase0-vigilancia` → `main`: **cambia el perfil `produccion_estandar`** (ADR-0015 y ADR-0016, huella del banco `5bfed0d1` → `0b4ea2ec`) y las cotas de `compuertas.json`. Nada de esto está en una versión publicada. Después de mezclarlo, la siguiente rama sale de `main`.
 
 ## 5. Decisiones y preguntas abiertas (de Enrique)
+
+**Lo que queda de su parte, en orden** (detalle y fechas en `PLAN_DETALLADO_2026-10-14.md` §2):
+
+1. **E1 · Borrar ramas** en GitHub (Branches → papelera): `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12`, `claude/f2-cierre`, `claude/f3-vinculacion`, `claude/f3-arreglos`, `claude/fase0-vigilancia`, `claude/plan-detallado` (tras su merge). Decidir `feature/vinculacion-0.23.0`. El proxy de las sesiones no puede hacerlo.
+2. **E2 · Verdad real**: ≥ 3.000 pares reales etiquetados por dos anotadores con `docs/PROTOCOLO_GROUND_TRUTH.md`, medidos con `scripts/medir_verdad_real.py`. Sin esto, ninguna cifra de calidad vale para empresas reales. Es el cuello de botella del proyecto.
+3. **E3 · Costo relativo** de una unión falsa frente a una unión perdida (un número).
+4. **E4 · Insumos del piloto de vinculación** (`decisiones_revision_2026-09-29.csv`, `referencia_revision_2026-09-24.csv`, Excel del 5-oct) o declarar que se perdieron.
+5. **E5 · Versión y tag** al cerrar la Fase 6. **E6 · Decidir `fuentes_mixtas`** con la tabla de `docs/evidencia/fase3_comparador_nombre.md` («Los demás perfiles base»).
+
 
 - **Excel de Caro / formato VPI → al final** (2026-10-11). No pedir archivo nuevo: releer las cuatro «matrices VPI» del Drive (ids en el archivo de decisiones de Enrique del 2026-10-07) con la hipótesis de que alguna hoja (`LÍNEA 1–3`, `CASOS DE ÉXITO`…) es el formato; **no inventar columnas**. Hasta entonces la vista VPI queda vacía.
 - **Notebook 11**: solo existe en el plan («notebooks 01–11»); no existe en el repositorio, el Drive ni el zip entregado. Recomendación: no crear un 11 ahora; cuando se resuelva el Excel de Caro, un notebook de tres celdas que genere la vista VPI. Por defecto F3.5 cubre solo el 10. Falta que Enrique elija (o confirme el defecto).
