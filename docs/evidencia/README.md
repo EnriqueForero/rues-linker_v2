@@ -21,6 +21,17 @@ este párrafo decía que ambos se versionaban; el `.gitignore` nunca lo hizo.)
 | `fase2_candidatos/` | las corridas del generador híbrido (`corrida_*.json`) y el recall de pares del bloqueo (`recall_*.json`); lectura en `fase2_candidatos_hibridos.md` |
 | `fase3_comparador/` | las corridas del comparador Soft TF-IDF y del perfil nuevo; lectura en `fase3_comparador_nombre.md`; `corrida_h_s085c093_id.json` reproduce, con `--ajuste`, la huella de `corrida_base_f3.json` (la línea base F3 y la evidencia de `compuertas.json`) |
 
+## Plantilla de base real (2026-10-14)
+
+| Archivo | Contenido |
+|---|---|
+| `plantilla_base_real_casos.json` | `scripts/verificar_plantilla_base_real.py` sobre `data/ejemplos/`: 536 registros, 281 grupos predichos vs 278, pares P 0,9875 / R 0,9754 / F1 0,9814 y la tabla caso → acertó/falló (18 de 24); lectura en `docs/PLANTILLA_BASE_REAL.md` §5 |
+| `plantilla_base_real_verdad_real.json` | `scripts/medir_verdad_real.py` contra `plantilla_etiquetas_pares.csv` (106 pares, 3 UNCLEAR descartados): precisión y recall con Wilson 95 % por régimen (CON_ID, SIN_ID, MIXTO) |
+| `plantilla_base_real_verdad_real_AB.json` | lo mismo con los dos archivos «a ciegas» (`_anotador_A.csv`, `_anotador_B.csv`): kappa 0,703, 12 desacuerdos |
+
+Es sintético: certifica el formato de la base real y de la verdad real, no el motor. No entra en
+`compuertas.json` ni en `tests/lineas_base.py`.
+
 ## Corridas de referencia de 0.18.0
 
 | etiqueta | qué es |

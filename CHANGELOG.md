@@ -7,6 +7,17 @@ Aditivo: ningún comportamiento **publicado** cambia (el motor de vinculación n
 en 4 escenarios inventados y en Python 3.10 + pandas 2.3 y Python 3.11 + pandas 3.0). Aún no hay `vincular_empresas` (contrato estándar), ni notebooks delgados,
 ni versión ni tag; ver `docs/REANUDAR.md`.
 
+- **Plantilla de base real y verdad real** (`docs/PLANTILLA_BASE_REAL.md`): `scripts/generar_plantilla_base_real.py` escribe
+  `data/ejemplos/plantilla_base_real.xlsx` (ocho hojas: LEEME, FUENTE_CRM/RUES/ADUANAS, VERDAD_GRUPOS, ETIQUETAS_PARES, DICCIONARIO, CASOS)
+  y sus CSV, deterministas con semilla 42, con 24 casos (NIT con y sin DV, sufijos, erratas, siglas, truncados, sucursales, personas
+  naturales, mojibake, homónimos, filial/matriz, NIT a un dígito, raíces confundibles…), NIT inventados con DV módulo 11 correcto
+  (`digito_verificacion_dian` de la librería), correos y sitios en el dominio reservado `.example` y nombres que no identifican a
+  ninguna empresa. `scripts/verificar_plantilla_base_real.py` descubre las hojas `FUENTE_*` por prefijo, corre el motor también sin
+  `VERDAD_GRUPOS`/`CASOS` (base real), dice caso por caso qué hizo (18 de 24 aciertos; los fallos quedan escritos), guarda la
+  correlativa, muestrea los pares para los anotadores por régimen y banda real del motor (`--pares-a-etiquetar`, en lugar de
+  `scripts/active_labeling.py`, que no produce ids medibles) y escribe el CSV del banco (`--banco`, `construir_banco`).
+  `scripts/medir_verdad_real.py --hoja` lee las etiquetas de una hoja distinta de la primera. El `.gitignore` deja entrar
+  `data/ejemplos/*.csv` (el `.xlsx` sigue fuera).
 - **Paquete** `flujo/vinculacion/` (26 módulos, ninguno > 600 líneas, complejidad ≤ 15, sin `print`, mypy en el anillo bloqueante):
   `ejecutar(cfg, verboso, registro)`, `ConfigVinculacion`, `Fuente`, `Resultado`, `leer_decisiones`, `plantilla_decisiones`.
   Excel de 16 hojas en `flujo/vinculacion_excel/` (`exportar_vinculacion_excel`, alias `exportar_excel`; carga perezosa desde el paquete).

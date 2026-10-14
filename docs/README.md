@@ -6,6 +6,7 @@
 | [`REANUDAR.md`](REANUDAR.md) | **Empiece aquí si retoma el trabajo:** dónde estamos (fases y porcentaje), qué contiene cada rama, qué falta en orden, cómo llevarlo a `main`, decisiones abiertas y cómo comprobar el estado |
 | [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md) | El plan «v2 → producción» (F0 a F6), con la tarea, el archivo y el criterio de cada paso |
 | [`vinculacion/`](vinculacion/) | Hallazgos del motor original de vinculación, plan de arreglos (F3.1b) y encargo de revisión de equivalencia |
+| [`PLANTILLA_BASE_REAL.md`](PLANTILLA_BASE_REAL.md) | La plantilla (Excel + CSV en `data/ejemplos/`) para estructurar la base real y su verdad real: paso a paso para una persona no técnica, y qué hizo el motor caso por caso |
 | [`BANCO.md`](BANCO.md) | El banco de pruebas: conjunto de referencia, métricas, uso |
 | [`BENCHMARK.md`](BENCHMARK.md) | El conjunto de referencia institucional: cómo se armó, qué mide y qué no |
 | [`CONFORMIDAD.md`](CONFORMIDAD.md) | La suite de 43 casos: qué sabe hacer la librería, caso por caso |

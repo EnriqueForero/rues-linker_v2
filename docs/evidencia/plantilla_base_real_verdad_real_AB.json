@@ -1,0 +1,104 @@
+{
+  "archivo": "data/ejemplos/plantilla_etiquetas_anotador_A.csv",
+  "n_etiquetados": 106,
+  "n_descartados": 3,
+  "global": {
+    "tp": 70,
+    "fp": 1,
+    "fn": 6,
+    "precision": 0.9859154929577465,
+    "recall": 0.9210526315789473,
+    "f1": 0.9523809523809524,
+    "n_pares_etiquetados": 106,
+    "n_pares_evaluados": 106,
+    "n_pares_sin_registro": 0,
+    "n_registros": 197
+  },
+  "por_regimen": {
+    "CON_ID": {
+      "tp": 50,
+      "fp": 0,
+      "fn": 2,
+      "precision": 1.0,
+      "recall": 0.9615384615384616,
+      "f1": 0.9803921568627451,
+      "n_pares_etiquetados": 78,
+      "n_pares_evaluados": 78,
+      "n_pares_sin_registro": 0,
+      "n_registros": 143
+    },
+    "SIN_ID": {
+      "tp": 11,
+      "fp": 0,
+      "fn": 4,
+      "precision": 1.0,
+      "recall": 0.7333333333333333,
+      "f1": 0.846153846153846,
+      "n_pares_etiquetados": 16,
+      "n_pares_evaluados": 16,
+      "n_pares_sin_registro": 0,
+      "n_registros": 32
+    },
+    "MIXTO": {
+      "tp": 9,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.9,
+      "recall": 1.0,
+      "f1": 0.9473684210526316,
+      "n_pares_etiquetados": 12,
+      "n_pares_evaluados": 12,
+      "n_pares_sin_registro": 0,
+      "n_registros": 23
+    }
+  },
+  "intervalos": {
+    "GLOBAL": {
+      "precision": [
+        0.9244376915206172,
+        0.997509460865222
+      ],
+      "recall": [
+        0.8382706480636879,
+        0.9633164944785457
+      ]
+    },
+    "CON_ID": {
+      "precision": [
+        0.9286499658256813,
+        1.0
+      ],
+      "recall": [
+        0.8701857125563401,
+        0.9893885116779224
+      ]
+    },
+    "SIN_ID": {
+      "precision": [
+        0.7411599827511859,
+        1.0
+      ],
+      "recall": [
+        0.4804911034231324,
+        0.8910272389681718
+      ]
+    },
+    "MIXTO": {
+      "precision": [
+        0.5958436145024278,
+        0.9821242504842788
+      ],
+      "recall": [
+        0.7008472464490407,
+        1.0
+      ]
+    }
+  },
+  "notas": [],
+  "acuerdo": {
+    "n_comunes": 106,
+    "acuerdo_observado": 0.8867924528301887,
+    "kappa": 0.7030812324929973,
+    "desacuerdos": 12
+  }
+}

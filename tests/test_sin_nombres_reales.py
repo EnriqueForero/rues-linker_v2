@@ -96,6 +96,14 @@ ARCHIVOS_VIGILADOS = (
     "docs/evidencia/corrida_base_f3.json",
     "docs/adr/0015-*.md",
     "docs/adr/0016-*.md",
+    "data/ejemplos/*.csv",
+    "docs/PLANTILLA_BASE_REAL.md",
+    "scripts/generar_plantilla_base_real.py",
+    "scripts/verificar_plantilla_base_real.py",
+    "tests/test_plantilla_base_real.py",
+    "docs/evidencia/plantilla_base_real_*.json",
+    "docs/README.md",
+    "docs/evidencia/README.md",
 )
 _PALABRA = re.compile(r"[a-záéíóúüñ0-9]+")
 

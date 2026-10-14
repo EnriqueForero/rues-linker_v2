@@ -100,6 +100,8 @@ secrets.json
 !tests/data/**
 !tests/data_sintetica/
 !tests/data_sintetica/**
+!data/ejemplos/
+!data/ejemplos/*.csv
 !data/benchmark/benchmark_institucional.csv.gz
 !data/benchmark/benchmark_institucional.json
 !data/conformidad/catalogo_casos.csv
