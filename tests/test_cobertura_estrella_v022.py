@@ -215,3 +215,21 @@ def test_una_componente_gigante_se_resuelve_en_streaming_sin_matriz(monkeypatch)
     # Tres estrellas: ABC (líder «ABC dos», masa 5), XYZ (líder «XYZ dos», masa 9) y QQQ sola.
     assert streaming.n_grupos_despues == 3
     assert streaming.es_lider[[1, 3, 5]].all()
+
+
+def test_una_componente_de_dos_mil_quinientos_nombres_termina_en_streaming():
+    """Guarda del OOM de 139k: por encima de FILAS_MATRIZ_MAX no se arma la matriz k×k.
+
+    Con el comparador de prefijo y 2.500 nombres repartidos en 50 prefijos, el camino en streaming debe
+    devolver 50 estrellas (una por prefijo) y marcar la componente como resuelta en streaming.
+    """
+    from record_linkage.engine.cobertura import FILAS_MATRIZ_MAX
+
+    n = FILAS_MATRIZ_MAX + 500
+    valores = np.array([f"P{i % 50:02d} nombre {i}" for i in range(n)], dtype=object)
+    etiquetas = np.zeros(n, dtype=np.int64)
+    masa = np.ones(n)
+    res = cobertura_estrella(valores, etiquetas, masa, ComparadorPrefijo(), similitud_minima=0.0)
+    assert res.componentes_en_streaming == 1
+    assert res.n_grupos_despues == 50
+    assert int(res.es_lider.sum()) == 50
