@@ -57,6 +57,7 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--ajuste",
         nargs="*",
+        action="extend",
         default=[],
         metavar="CLAVE=VALOR",
         help="sobrescritura puntual del perfil",
