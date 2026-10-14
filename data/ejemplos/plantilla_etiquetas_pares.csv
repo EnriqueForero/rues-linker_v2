@@ -1,0 +1,110 @@
+ID_1,ID_2,IS_MATCH,ANOTADOR,BANDA_ESPERADA,COMENTARIO
+CRM-000004,RUES-000069,1,A,unido_holgado,mismo NIT; sucursal con ciudad en el nombre
+RUES-000166,ADUANAS-000057,0,B,no_unido_lejos,control: nombre y NIT distintos
+RUES-000164,ADUANAS-000068,0,resuelto,no_unido_borde,"mismo nombre completo, cédulas y ciudades distintas: dos personas"
+CRM-000136,ADUANAS-000087,1,A,unido_holgado,mismo NIT y mismo nombre
+RUES-000075,ADUANAS-000120,1,B,unido_holgado,eñe y tildes rotas en aduanas
+RUES-000158,CRM-000168,0,A,no_unido_borde,nombre genérico; NIT distintos
+CRM-000093,RUES-000027,1,B,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+RUES-000078,ADUANAS-000022,1,A,unido_holgado,NIT limpio vs puntos
+ADUANAS-000026,CRM-000071,0,resuelto,no_unido_borde,NIT a un dígito (890442957 vs 840442957); empresas distintas
+CRM-000187,CRM-000121,0,B,no_unido_borde,"razón social idéntica, NIT válidos distintos (ciudades distintas)"
+RUES-000091,ADUANAS-000091,1,A,unido_holgado,"errata de 2 letra(s): YARUMBA → YRAUMBA, PLASTICOS → PLASTICIS"
+CRM-000096,RUES-000133,1,B,unido_holgado,NIT ceros vs limpio
+CRM-000130,RUES-000119,UNCLEAR,A,no_unido_borde,nombre parcial sin NIT; podría ser la misma o un homónimo
+RUES-000144,ADUANAS-000170,1,B,unido_borde,nombre truncado a 30 caracteres
+CRM-000043,RUES-000163,1,A,unido_holgado,sufijo LTDA vs LIMITADA
+CRM-000172,CRM-000021,0,resuelto,no_unido_borde,"razón social idéntica, NIT válidos distintos (ciudades distintas)"
+ADUANAS-000153,ADUANAS-000151,0,B,no_unido_lejos,control: nombre y NIT distintos
+CRM-000100,CRM-000083,0,resuelto,no_unido_borde,"matriz y filial: misma raíz, NIT distintos, personas jurídicas distintas"
+CRM-000088,RUES-000018,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000044,ADUANAS-000076,1,B,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000101,RUES-000081,1,A,unido_holgado,mismo NIT; sucursal con ciudad en el nombre
+CRM-000165,RUES-000059,0,B,no_unido_borde,NIT a un dígito (890776555 vs 890776515); empresas distintas
+RUES-000051,ADUANAS-000021,1,A,unido_holgado,mismo NIT y mismo nombre
+CRM-000036,ADUANAS-000164,1,B,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000091,RUES-000104,1,A,unido_holgado,mismo NIT: sin DV y con DV pegado
+CRM-000145,CRM-000016,0,resuelto,no_unido_borde,raíces casi iguales (KALMIRA vs KALMIRO): empresas distintas
+RUES-000162,ADUANAS-000017,1,B,unido_holgado,"sigla vs nombre largo, mismo NIT"
+CRM-000037,RUES-000016,UNCLEAR,A,no_unido_borde,nombre de persona muy común sin cédula en el CRM: no se puede decidir
+RUES-000133,ADUANAS-000099,1,B,unido_holgado,NIT limpio vs guion_dv
+CRM-000018,RUES-000135,1,A,unido_holgado,mismo NIT: sin DV y con DV pegado
+RUES-000026,ADUANAS-000054,1,B,unido_holgado,mismas palabras en otro orden
+RUES-000019,ADUANAS-000111,1,A,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+RUES-000125,ADUANAS-000152,1,B,unido_holgado,mismo NIT y mismo nombre
+CRM-000080,RUES-000032,1,A,unido_holgado,sufijo SAS vs S.A.S.
+CRM-000001,RUES-000172,1,B,unido_holgado,mismo NIT y mismo nombre
+RUES-000022,ADUANAS-000028,1,A,unido_holgado,sufijo LTDA vs SAS
+CRM-000029,RUES-000065,1,B,unido_holgado,mismo NIT y mismo nombre
+CRM-000105,RUES-000113,1,A,unido_holgado,mismo NIT y mismo nombre
+CRM-000181,RUES-000147,1,B,unido_holgado,"nombre comercial en el CRM vs razón social en el RUES, mismo NIT"
+CRM-000079,RUES-000050,1,A,unido_holgado,misma persona natural; orden de nombres y apellidos distinto
+CRM-000120,ADUANAS-000005,1,B,unido_holgado,errata de 1 letra(s): SOLUCIONES → SOLUCIOONES
+ADUANAS-000029,CRM-000166,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000075,ADUANAS-000121,1,B,unido_holgado,nombre truncado a 25 caracteres
+CRM-000091,ADUANAS-000001,1,A,unido_holgado,"mismo NIT: con puntos, guion y DV"
+CRM-000179,RUES-000013,1,B,unido_holgado,"sigla vs nombre largo, mismo NIT"
+CRM-000156,RUES-000042,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000115,ADUANAS-000027,UNCLEAR,B,no_unido_borde,sin NIT en el CRM y ciudad distinta: no se puede decidir con los datos
+CRM-000098,ADUANAS-000036,1,A,unido_holgado,"errata de 2 letra(s): CALDUMA → CAALDUMA, FLORES → FOORES"
+CRM-000068,ADUANAS-000108,0,B,no_unido_borde,"mismo nombre completo, cédulas y ciudades distintas: dos personas"
+CRM-000059,ADUANAS-000003,1,resuelto,unido_borde,"errata de 2 letra(s): INVERSIONES → INVERSIOONES, LOPEZ → LPOEZ"
+RUES-000097,CRM-000103,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000086,ADUANAS-000150,0,B,no_unido_borde,NIT a un dígito (805365254 vs 835365254); empresas distintas
+CRM-000116,ADUANAS-000016,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000018,ADUANAS-000110,1,B,unido_holgado,"mismo NIT: con puntos, guion y DV"
+CRM-000005,ADUANAS-000162,1,A,unido_holgado,mismo NIT y mismo nombre
+CRM-000031,CRM-000164,0,B,no_unido_borde,"mismo nombre completo, cédulas y ciudades distintas: dos personas"
+CRM-000060,RUES-000072,1,A,unido_borde,mismas palabras en otro orden
+RUES-000146,ADUANAS-000072,1,B,unido_holgado,mismas palabras en otro orden
+CRM-000047,ADUANAS-000159,1,A,unido_holgado,nombre truncado a 20 caracteres
+CRM-000107,RUES-000110,1,B,unido_holgado,NIT espacios vs limpio
+ADUANAS-000166,ADUANAS-000085,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000092,ADUANAS-000144,1,B,unido_holgado,mismo NIT y mismo nombre
+CRM-000174,RUES-000134,1,A,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000182,ADUANAS-000172,1,resuelto,no_unido_borde,sigla vs nombre largo sin NIT: se confirmó por fuera (RUES) que es la misma
+CRM-000141,RUES-000120,0,resuelto,no_unido_borde,"matriz y filial: misma raíz, NIT distintos, personas jurídicas distintas"
+CRM-000045,ADUANAS-000070,1,B,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000002,ADUANAS-000010,1,A,unido_holgado,"errata de 2 letra(s): EXPORTACIONES → EXPROTACIONES, HELIXTRA → HELLIXTRA"
+CRM-000068,ADUANAS-000114,0,B,no_unido_lejos,control: nombre y NIT distintos
+RUES-000088,ADUANAS-000079,1,A,unido_holgado,mismo NIT y mismo nombre
+CRM-000155,ADUANAS-000020,0,B,no_unido_lejos,control: nombre y NIT distintos
+CRM-000024,RUES-000023,1,A,unido_holgado,mismo NIT; sucursal con ciudad en el nombre
+RUES-000174,ADUANAS-000146,1,B,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000102,RUES-000145,1,A,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000007,CRM-000062,0,B,no_unido_borde,nombre genérico; NIT distintos
+CRM-000039,ADUANAS-000041,0,resuelto,no_unido_borde,"matriz y filial: misma raíz, NIT distintos, personas jurídicas distintas"
+CRM-000089,ADUANAS-000130,1,A,unido_borde,errata de 1 letra(s): PILTREX → PITREX
+RUES-000105,ADUANAS-000044,1,B,unido_borde,eñe y tildes rotas en aduanas
+CRM-000035,ADUANAS-000078,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000170,RUES-000052,1,B,unido_holgado,sufijo S.A. vs SA
+RUES-000110,ADUANAS-000046,1,A,unido_holgado,NIT limpio vs guiones
+CRM-000127,RUES-000139,1,B,unido_holgado,misma persona natural; orden de nombres y apellidos distinto
+CRM-000050,RUES-000086,1,A,unido_holgado,mismo NIT: sin DV y con DV pegado
+CRM-000185,RUES-000007,1,B,unido_holgado,mismo NIT y mismo nombre
+RUES-000031,CRM-000113,0,A,no_unido_borde,"razón social idéntica, NIT válidos distintos (ciudades distintas)"
+CRM-000094,RUES-000078,1,B,unido_holgado,NIT ceros vs limpio
+RUES-000170,ADUANAS-000147,1,resuelto,no_unido_borde,sigla vs nombre largo sin NIT: se confirmó por fuera (RUES) que es la misma
+RUES-000079,ADUANAS-000093,1,A,unido_holgado,"sigla vs nombre largo, mismo NIT"
+CRM-000126,RUES-000175,0,B,no_unido_borde,nombre genérico; NIT distintos
+RUES-000160,CRM-000176,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000013,RUES-000165,1,B,unido_borde,misma persona natural; orden de nombres y apellidos distinto
+CRM-000074,RUES-000066,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000051,RUES-000066,0,B,no_unido_lejos,control: nombre y NIT distintos
+ADUANAS-000036,RUES-000175,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000119,ADUANAS-000113,1,B,unido_holgado,errata de 1 letra(s): ORIENTE → ORIENE
+CRM-000094,ADUANAS-000118,0,A,no_unido_lejos,control: nombre y NIT distintos
+CRM-000009,ADUANAS-000135,1,B,unido_holgado,mismo NIT y mismo nombre
+RUES-000063,ADUANAS-000089,1,A,unido_holgado,eñe y tildes rotas en aduanas
+RUES-000159,ADUANAS-000161,1,B,unido_holgado,errata de 1 letra(s): MANUFACTURAS → MANUFACTUAS
+RUES-000011,ADUANAS-000090,1,A,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000050,ADUANAS-000085,1,B,unido_holgado,"mismo NIT: con puntos, guion y DV"
+CRM-000157,CRM-000106,0,resuelto,no_unido_borde,raíces casi iguales (ZELVORA vs ZELVORO): empresas distintas
+CRM-000008,RUES-000043,1,A,unido_holgado,misma persona natural; orden de nombres y apellidos distinto
+RUES-000125,ADUANAS-000161,0,B,no_unido_lejos,control: nombre y NIT distintos
+CRM-000070,RUES-000131,1,A,unido_holgado,"nombre comercial en el CRM vs razón social en el RUES, mismo NIT"
+CRM-000177,ADUANAS-000062,1,B,unido_borde,mismo nombre; NIT solo en una fuente (par mixto)
+CRM-000077,ADUANAS-000029,0,resuelto,no_unido_borde,raíces casi iguales (TRUVEL vs TRUVELA): empresas distintas
+CRM-000146,RUES-000142,1,A,unido_borde,sin NIT en ninguna fuente: mismo nombre y municipio
+CRM-000162,ADUANAS-000115,1,B,unido_holgado,mismo NIT y mismo nombre
+CRM-000082,RUES-000094,1,A,unido_holgado,"nombre comercial en el CRM vs razón social en el RUES, mismo NIT"

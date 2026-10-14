@@ -1,0 +1,25 @@
+CASO,DESCRIPCION,QUE_DEBE_HACER_EL_MOTOR,EJEMPLO_IDS,N_REGISTROS
+positivo_nit_igual,La misma empresa en dos o tres fuentes con el mismo NIT y el mismo nombre (a lo sumo cambia la forma del municipio o los espacios).,unir,CRM-000005; ADUANAS-000162,289
+positivo_nit_con_y_sin_dv,"El mismo NIT escrito sin dígito de verificación, con el DV pegado y con puntos y guion.",unir,CRM-000050; RUES-000086,9
+positivo_nit_con_ceros_o_puntuacion,"El mismo NIT con ceros a la izquierda, con puntos, con guiones o con espacios de borde.",unir,CRM-000094; RUES-000078,9
+positivo_sufijo_legal,Misma empresa y mismo NIT; el sufijo legal cambia (SAS / S.A.S. / LTDA / LIMITADA) o la empresa cambió de forma legal.,unir,CRM-000080; RUES-000032,11
+positivo_errata_1_letra,"Misma empresa; el nombre trae una letra cambiada, omitida, duplicada o transpuesta.",unir,RUES-000159; ADUANAS-000161,8
+positivo_errata_2_letras,Misma empresa; el nombre trae dos erratas.,unir,CRM-000002; ADUANAS-000010,8
+positivo_orden_de_palabras,Misma empresa; las palabras del nombre vienen en otro orden.,unir,RUES-000146; ADUANAS-000072,6
+positivo_sigla,"La sigla frente al nombre largo, con el mismo NIT en las dos fuentes.",unir,RUES-000079; ADUANAS-000093,6
+positivo_sigla_sin_nit,La sigla frente al nombre largo sin NIT en ninguna fuente: con el nombre solo no se puede saber; va a revisión manual.,revisar,RUES-000170; ADUANAS-000147,4
+positivo_truncado,Misma empresa; una fuente cortó el nombre (campo de ancho fijo).,unir,CRM-000047; ADUANAS-000159,6
+positivo_nombre_comercial_vs_razon_social,"Una fuente trae la razón social y la otra el nombre comercial, con el mismo NIT.",unir,CRM-000070; RUES-000131,6
+positivo_sin_nit_en_una_fuente,Misma empresa y mismo nombre; el NIT solo viene en una fuente (par de régimen mixto).,unir,CRM-000177; ADUANAS-000062,16
+positivo_sin_nit_en_ninguna,Misma empresa sin NIT en ninguna fuente: solo nombre y municipio.,unir,CRM-000116; ADUANAS-000016,18
+positivo_sucursal,Mismo NIT; el nombre lleva la ciudad de la sucursal y el municipio cambia.,unir,CRM-000024; RUES-000023,6
+positivo_persona_natural,Persona natural con cédula; nombres y apellidos en orden distinto según la fuente.,unir,CRM-000008; RUES-000043,8
+positivo_mojibake,Misma empresa; una fuente trae la eñe y las tildes rotas (Ñ → Ã‘).,unir,RUES-000063; ADUANAS-000089,6
+negativo_homonimo_persona,Dos personas distintas con el mismo nombre completo y cédulas distintas.,no unir,CRM-000068; ADUANAS-000108,9
+negativo_nombre_identico_nit_distinto,Dos empresas distintas con razón social idéntica y NIT válidos distintos.,no unir,CRM-000172; CRM-000021,9
+negativo_nombre_generico,Dos empresas distintas con nombre genérico (INVERSIONES SAS vs INVERSIONES S.A.S.) y NIT distintos.,no unir,CRM-000126; RUES-000175,9
+negativo_filial_matriz,Matriz y filial comparten la raíz del nombre y tienen NIT distintos: son personas jurídicas distintas.,no unir,CRM-000100; CRM-000083,9
+negativo_nit_corrupto_un_digito,Dos empresas distintas cuyos NIT difieren en un solo dígito.,no unir,CRM-000086; ADUANAS-000150,9
+negativo_raiz_confundible,Dos empresas distintas con raíces casi iguales (ZELVORA vs ZELVORO).,no unir,CRM-000157; CRM-000106,9
+singleton,Empresas o personas que aparecen una sola vez en todas las fuentes.,no unir,ADUANAS-000064,60
+ambiguo_revisar,"Pares que una persona no puede decidir con los datos (sin NIT en un lado, nombre parcial o muy común): en ETIQUETAS_PARES van como UNCLEAR y en VERDAD_GRUPOS son grupos distintos.",revisar,CRM-000115; ADUANAS-000027,6

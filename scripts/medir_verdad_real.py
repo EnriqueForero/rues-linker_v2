@@ -8,8 +8,9 @@ Uso:
     python scripts/medir_verdad_real.py --etiquetas etiquetas_revisadas.xlsx \\
         --correlativa salida/correlativa.parquet --col-nit NIT --salida docs/evidencia/verdad_real_2026-10-20.json
 
-Con dos anotadores (columna ANOTADOR en el archivo, o dos archivos con --etiquetas-b) imprime además el kappa y los
-desacuerdos.
+Con dos anotadores (columna ANOTADOR con exactamente dos valores, o dos archivos con --etiquetas-b) imprime además el
+kappa y los desacuerdos. Si las etiquetas no están en la primera hoja del Excel (p. ej. la hoja ETIQUETAS_PARES de
+data/ejemplos/plantilla_base_real.xlsx), --hoja NOMBRE la elige; aplica a --etiquetas y a --etiquetas-b.
 """
 
 from __future__ import annotations
@@ -48,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--etiquetas-b", type=Path, help="segundo anotador (opcional) para el kappa")
     p.add_argument(
+        "--hoja",
+        default="0",
+        help="hoja del Excel de etiquetas: nombre o posición desde 0 (por defecto la primera)",
+    )
+    p.add_argument(
         "--correlativa",
         type=Path,
         required=True,
@@ -61,7 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--salida", type=Path, help="JSON con las cifras (sin datos)")
     args = p.parse_args(argv)
 
-    etiquetas = leer_etiquetas(args.etiquetas)
+    hoja: str | int = int(args.hoja) if args.hoja.isdigit() else args.hoja
+    etiquetas = leer_etiquetas(args.etiquetas, hoja=hoja)
     correlativa = _leer_correlativa(args.correlativa)
     res = medir_verdad_real(
         etiquetas, correlativa, col_id=args.col_id, col_grupo=args.col_grupo, col_nit=args.col_nit
@@ -75,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
 
     acuerdo = None
     if args.etiquetas_b is not None:
-        acuerdo = acuerdo_entre_anotadores(etiquetas, leer_etiquetas(args.etiquetas_b))
+        acuerdo = acuerdo_entre_anotadores(etiquetas, leer_etiquetas(args.etiquetas_b, hoja=hoja))
     elif "ANOTADOR" in etiquetas.columns and etiquetas["ANOTADOR"].nunique() == 2:
         a, b = (
             etiquetas[etiquetas["ANOTADOR"] == x] for x in sorted(etiquetas["ANOTADOR"].unique())

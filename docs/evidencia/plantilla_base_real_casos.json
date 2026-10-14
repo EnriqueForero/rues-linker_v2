@@ -1,0 +1,237 @@
+{
+  "version": "0.22.4",
+  "datos": "data/ejemplos",
+  "registros": 536,
+  "grupos_predichos": 281,
+  "grupos_verdaderos": 278,
+  "pares": {
+    "pares_verdaderos": 325,
+    "pares_predichos": 321,
+    "tp": 317,
+    "fp": 4,
+    "fn": 8,
+    "precision": 0.9875,
+    "recall": 0.9754,
+    "f1": 0.9814
+  },
+  "casos_acertados": 18,
+  "casos_total": 24,
+  "por_caso": [
+    {
+      "CASO": "positivo_nit_igual",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 118,
+      "GRUPOS_UNIDOS": 118,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "118/118 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_nit_con_y_sin_dv",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_nit_con_ceros_o_puntuacion",
+      "ESPERADO": "unir",
+      "ACERTO": false,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 1,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "1/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sufijo_legal",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 4,
+      "GRUPOS_UNIDOS": 4,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "4/4 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_errata_1_letra",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 4,
+      "GRUPOS_UNIDOS": 4,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "4/4 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_errata_2_letras",
+      "ESPERADO": "unir",
+      "ACERTO": false,
+      "GRUPOS": 4,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/4 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_orden_de_palabras",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sigla",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sigla_sin_nit",
+      "ESPERADO": "revisar",
+      "ACERTO": true,
+      "GRUPOS": 2,
+      "GRUPOS_UNIDOS": 0,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+    },
+    {
+      "CASO": "positivo_truncado",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_nombre_comercial_vs_razon_social",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sin_nit_en_una_fuente",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 8,
+      "GRUPOS_UNIDOS": 8,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "8/8 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sin_nit_en_ninguna",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 8,
+      "GRUPOS_UNIDOS": 8,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "8/8 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_sucursal",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "3/3 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_persona_natural",
+      "ESPERADO": "unir",
+      "ACERTO": true,
+      "GRUPOS": 4,
+      "GRUPOS_UNIDOS": 4,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "4/4 grupos unidos completos"
+    },
+    {
+      "CASO": "positivo_mojibake",
+      "ESPERADO": "unir",
+      "ACERTO": false,
+      "GRUPOS": 3,
+      "GRUPOS_UNIDOS": 2,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "2/3 grupos unidos completos"
+    },
+    {
+      "CASO": "negativo_homonimo_persona",
+      "ESPERADO": "no unir",
+      "ACERTO": true,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "negativo_nombre_identico_nit_distinto",
+      "ESPERADO": "no unir",
+      "ACERTO": true,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "negativo_nombre_generico",
+      "ESPERADO": "no unir",
+      "ACERTO": true,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "negativo_filial_matriz",
+      "ESPERADO": "no unir",
+      "ACERTO": true,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "negativo_nit_corrupto_un_digito",
+      "ESPERADO": "no unir",
+      "ACERTO": true,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+      "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "negativo_raiz_confundible",
+      "ESPERADO": "no unir",
+      "ACERTO": false,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 3,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+      "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+    },
+    {
+      "CASO": "singleton",
+      "ESPERADO": "no unir",
+      "ACERTO": false,
+      "GRUPOS": 60,
+      "GRUPOS_UNIDOS": 0,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+      "DETALLE": "1 de 60 singletons mezclados con otro registro"
+    },
+    {
+      "CASO": "ambiguo_revisar",
+      "ESPERADO": "revisar",
+      "ACERTO": false,
+      "GRUPOS": 6,
+      "GRUPOS_UNIDOS": 0,
+      "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+      "DETALLE": "0/0 grupos unidos y 1 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+    }
+  ]
+}

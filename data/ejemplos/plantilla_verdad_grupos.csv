@@ -1,0 +1,537 @@
+ID_REGISTRO_FUENTE,FUENTE,ID_GRUPO,TIPO_ENTIDAD,REGIMEN,CASO,NIVEL_RUIDO,VARIACION
+CRM-000017,CRM,G0001,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000032,CRM,G0002,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Medellín»
+RUES-000166,RUES,G0002,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000102,ADUANAS,G0002,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000149,CRM,G0003,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000087,RUES,G0003,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000007,ADUANAS,G0003,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000183,CRM,G0004,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000071,ADUANAS,G0004,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000149,RUES,G0005,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000134,CRM,G0006,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000015,ADUANAS,G0006,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000035,CRM,G0007,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+ADUANAS-000078,ADUANAS,G0007,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+CRM-000085,CRM,G0008,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000045,ADUANAS,G0008,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «BARRANQUILLA ATL»
+RUES-000091,RUES,G0009,empresa,CON_ID,positivo_errata_2_letras,CLEAN,canónico (sin cambios)
+ADUANAS-000091,ADUANAS,G0009,empresa,CON_ID,positivo_errata_2_letras,SEVERE,"errata de 2 letra(s): YARUMBA → YRAUMBA, PLASTICOS → PLASTICIS"
+CRM-000080,CRM,G0010,empresa,CON_ID,positivo_sufijo_legal,CLEAN,canónico (sin cambios)
+RUES-000032,RUES,G0010,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: SAS → S.A.S.
+ADUANAS-000153,ADUANAS,G0010,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: SAS → S A S
+CRM-000006,CRM,G0011,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000090,RUES,G0012,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000106,CRM,G0013,empresa,CON_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+RUES-000122,RUES,G0014,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000020,ADUANAS,G0014,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SOLEDAD ATL»
+RUES-000025,RUES,G0015,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000029,ADUANAS,G0016,empresa,SIN_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+RUES-000116,RUES,G0017,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000091,CRM,G0018,empresa,CON_ID,positivo_nit_con_y_sin_dv,CLEAN,canónico (sin cambios)
+RUES-000104,RUES,G0018,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,NIT con el dígito de verificación pegado
+ADUANAS-000001,ADUANAS,G0018,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,"NIT con puntos, guion y DV"
+CRM-000167,CRM,G0019,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+RUES-000167,RUES,G0019,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Cali»
+ADUANAS-000075,ADUANAS,G0019,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000005,CRM,G0020,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000162,ADUANAS,G0020,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «MEDELLÍN»
+CRM-000138,CRM,G0021,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000128,ADUANAS,G0021,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000139,CRM,G0022,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000055,CRM,G0023,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000008,RUES,G0023,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Ibagué»
+CRM-000135,CRM,G0024,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000001,RUES,G0024,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «CALI VALLE»
+ADUANAS-000033,ADUANAS,G0025,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000148,CRM,G0026,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000185,CRM,G0027,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000007,RUES,G0027,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Chía»
+ADUANAS-000094,ADUANAS,G0027,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000187,CRM,G0028,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+RUES-000029,RUES,G0028,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+CRM-000069,CRM,G0029,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000117,RUES,G0029,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000014,RUES,G0030,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000059,CRM,G0031,empresa,SIN_ID,positivo_errata_2_letras,CLEAN,canónico (sin cambios)
+ADUANAS-000003,ADUANAS,G0031,empresa,SIN_ID,positivo_errata_2_letras,SEVERE,"errata de 2 letra(s): INVERSIONES → INVERSIOONES, LOPEZ → LPOEZ"
+CRM-000112,CRM,G0032,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000152,CRM,G0032,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000100,RUES,G0032,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000163,CRM,G0033,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000098,RUES,G0033,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000127,ADUANAS,G0033,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000046,CRM,G0034,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000116,CRM,G0035,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+ADUANAS-000016,ADUANAS,G0035,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+CRM-000098,CRM,G0036,empresa,CON_ID,positivo_errata_2_letras,CLEAN,canónico (sin cambios)
+ADUANAS-000036,ADUANAS,G0036,empresa,CON_ID,positivo_errata_2_letras,SEVERE,"errata de 2 letra(s): CALDUMA → CAALDUMA, FLORES → FOORES"
+CRM-000160,CRM,G0037,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Bogotá D.C.»
+RUES-000124,RUES,G0037,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000082,ADUANAS,G0037,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000028,CRM,G0038,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «ITAGÜÍ»
+RUES-000161,RUES,G0038,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Itagüí»
+ADUANAS-000092,ADUANAS,G0038,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000133,CRM,G0039,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Pereira»
+RUES-000074,RUES,G0039,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «PEREIRA RDA»
+ADUANAS-000023,ADUANAS,G0039,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000077,CRM,G0040,empresa,CON_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+RUES-000057,RUES,G0040,empresa,CON_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+ADUANAS-000117,ADUANAS,G0041,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000083,ADUANAS,G0042,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000038,RUES,G0043,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000182,CRM,G0044,empresa,SIN_ID,positivo_sigla_sin_nit,CLEAN,canónico (sin cambios)
+ADUANAS-000172,ADUANAS,G0044,empresa,SIN_ID,positivo_sigla_sin_nit,SEVERE,sigla en lugar del nombre (KAF)
+RUES-000096,RUES,G0045,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000053,ADUANAS,G0045,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000063,CRM,G0046,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Barranquilla»
+ADUANAS-000160,ADUANAS,G0046,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000158,CRM,G0047,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000015,CRM,G0048,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000178,CRM,G0048,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000068,RUES,G0048,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Cartagena»
+ADUANAS-000037,ADUANAS,G0048,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000111,CRM,G0049,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000047,ADUANAS,G0049,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000171,CRM,G0050,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «NEIVA HUILA»
+RUES-000009,RUES,G0050,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «NEIVA HUILA»
+ADUANAS-000156,ADUANAS,G0050,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000147,CRM,G0051,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000095,RUES,G0051,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «CHÍA»
+ADUANAS-000119,ADUANAS,G0051,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000164,CRM,G0052,persona,CON_ID,negativo_homonimo_persona,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero)
+RUES-000126,RUES,G0052,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+CRM-000120,CRM,G0053,empresa,CON_ID,positivo_errata_1_letra,CLEAN,canónico (sin cambios)
+ADUANAS-000005,ADUANAS,G0053,empresa,CON_ID,positivo_errata_1_letra,MODERATE,errata de 1 letra(s): SOLUCIONES → SOLUCIOONES
+CRM-000141,CRM,G0054,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000106,RUES,G0054,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000021,RUES,G0055,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000030,RUES,G0056,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000109,ADUANAS,G0056,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Barranquilla»
+CRM-000041,CRM,G0057,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000035,RUES,G0057,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000165,ADUANAS,G0057,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000040,CRM,G0058,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000141,RUES,G0058,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «CARTAGENA DE INDIAS»
+CRM-000127,CRM,G0059,persona,CON_ID,positivo_persona_natural,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero)
+RUES-000139,RUES,G0059,persona,CON_ID,positivo_persona_natural,CLEAN,canónico (sin cambios)
+RUES-000041,RUES,G0060,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000025,ADUANAS,G0060,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000003,CRM,G0061,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000020,RUES,G0061,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+RUES-000119,RUES,G0062,empresa,CON_ID,ambiguo_revisar,CLEAN,canónico (sin cambios)
+CRM-000094,CRM,G0063,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con ceros a la izquierda
+RUES-000078,RUES,G0063,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,CLEAN,canónico (sin cambios)
+ADUANAS-000022,ADUANAS,G0063,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con puntos
+RUES-000040,RUES,G0064,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000074,ADUANAS,G0064,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000154,CRM,G0065,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Medellín»
+RUES-000115,RUES,G0065,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «MEDELLIN ANT»
+ADUANAS-000042,ADUANAS,G0065,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000002,RUES,G0066,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000080,ADUANAS,G0066,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «B/MANGA»
+CRM-000159,CRM,G0067,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000157,RUES,G0067,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000004,ADUANAS,G0067,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «CÚCUTA»
+CRM-000168,CRM,G0068,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+ADUANAS-000118,ADUANAS,G0068,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+CRM-000027,CRM,G0069,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000149,ADUANAS,G0069,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000165,CRM,G0070,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+RUES-000010,RUES,G0070,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+RUES-000148,RUES,G0071,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000043,CRM,G0072,empresa,CON_ID,positivo_sufijo_legal,CLEAN,canónico (sin cambios)
+RUES-000163,RUES,G0072,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: LTDA → LIMITADA
+ADUANAS-000084,ADUANAS,G0072,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: LTDA → LTDA.
+CRM-000042,CRM,G0073,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000114,ADUANAS,G0073,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «BOGOTA»
+CRM-000146,CRM,G0074,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+RUES-000142,RUES,G0074,empresa,SIN_ID,positivo_sin_nit_en_ninguna,LIGHT,sufijo legal: SAS → S.A.S.
+CRM-000038,CRM,G0075,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000156,RUES,G0075,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000014,ADUANAS,G0075,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000126,ADUANAS,G0076,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000063,RUES,G0077,empresa,CON_ID,positivo_mojibake,CLEAN,canónico (sin cambios)
+ADUANAS-000089,ADUANAS,G0077,empresa,CON_ID,positivo_mojibake,MODERATE,mojibake: eñe y tildes rotas (UTF-8 leído como cp1252)
+RUES-000017,RUES,G0078,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000031,RUES,G0079,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+CRM-000102,CRM,G0080,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente; sufijo legal: SAS → S.A.S.
+RUES-000145,RUES,G0080,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+RUES-000019,RUES,G0081,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente
+ADUANAS-000111,ADUANAS,G0081,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000115,CRM,G0082,empresa,SIN_ID,ambiguo_revisar,CLEAN,canónico (sin cambios)
+CRM-000066,CRM,G0083,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000031,CRM,G0084,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+ADUANAS-000064,ADUANAS,G0085,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000087,CRM,G0086,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000137,RUES,G0086,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000173,ADUANAS,G0086,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000052,CRM,G0087,persona,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000099,RUES,G0088,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000011,ADUANAS,G0088,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000078,CRM,G0089,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Cartagena»
+ADUANAS-000048,ADUANAS,G0089,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000155,CRM,G0090,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000045,RUES,G0090,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000034,ADUANAS,G0090,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000033,RUES,G0091,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000109,CRM,G0092,persona,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000082,RUES,G0093,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000056,ADUANAS,G0093,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Envigado»
+CRM-000086,CRM,G0094,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+RUES-000108,RUES,G0094,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+ADUANAS-000150,ADUANAS,G0095,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+CRM-000079,CRM,G0096,persona,CON_ID,positivo_persona_natural,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero)
+RUES-000050,RUES,G0096,persona,CON_ID,positivo_persona_natural,CLEAN,canónico (sin cambios)
+CRM-000130,CRM,G0097,empresa,SIN_ID,ambiguo_revisar,CLEAN,canónico (sin cambios)
+CRM-000184,CRM,G0098,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000089,RUES,G0098,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000008,ADUANAS,G0098,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Cali»
+CRM-000039,CRM,G0099,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000085,RUES,G0099,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000160,RUES,G0100,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000114,RUES,G0101,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000061,ADUANAS,G0101,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000076,CRM,G0102,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000108,ADUANAS,G0103,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+RUES-000120,RUES,G0104,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000059,RUES,G0105,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+CRM-000060,CRM,G0106,empresa,SIN_ID,positivo_orden_de_palabras,CLEAN,canónico (sin cambios)
+RUES-000072,RUES,G0106,empresa,SIN_ID,positivo_orden_de_palabras,MODERATE,orden de palabras alterado
+CRM-000001,CRM,G0107,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000172,RUES,G0107,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000168,ADUANAS,G0107,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000049,ADUANAS,G0108,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000010,CRM,G0109,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000002,CRM,G0110,empresa,CON_ID,positivo_errata_2_letras,CLEAN,canónico (sin cambios)
+ADUANAS-000010,ADUANAS,G0110,empresa,CON_ID,positivo_errata_2_letras,SEVERE,"errata de 2 letra(s): EXPORTACIONES → EXPROTACIONES, HELIXTRA → HELLIXTRA"
+CRM-000061,CRM,G0111,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000121,RUES,G0111,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000006,ADUANAS,G0111,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000074,CRM,G0112,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+RUES-000066,RUES,G0112,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+ADUANAS-000024,ADUANAS,G0112,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+CRM-000125,CRM,G0113,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000127,RUES,G0113,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000105,ADUANAS,G0113,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000088,RUES,G0114,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000079,ADUANAS,G0114,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000068,CRM,G0115,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+ADUANAS-000158,ADUANAS,G0115,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+RUES-000170,RUES,G0116,empresa,SIN_ID,positivo_sigla_sin_nit,CLEAN,canónico (sin cambios)
+ADUANAS-000147,ADUANAS,G0116,empresa,SIN_ID,positivo_sigla_sin_nit,SEVERE,sigla en lugar del nombre (DCT)
+RUES-000097,RUES,G0117,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000129,RUES,G0118,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000019,ADUANAS,G0118,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000130,RUES,G0119,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000155,ADUANAS,G0119,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000012,RUES,G0120,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000013,CRM,G0121,persona,SIN_ID,positivo_persona_natural,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero); sin identificador en esta fuente
+RUES-000165,RUES,G0121,persona,CON_ID,positivo_persona_natural,CLEAN,canónico (sin cambios)
+CRM-000049,CRM,G0122,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000004,RUES,G0122,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000139,ADUANAS,G0122,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000013,ADUANAS,G0123,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000030,CRM,G0124,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SOACHA CUND»
+ADUANAS-000031,ADUANAS,G0124,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Soacha»
+CRM-000064,CRM,G0125,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000132,RUES,G0125,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000088,CRM,G0126,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+RUES-000018,RUES,G0126,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+ADUANAS-000009,ADUANAS,G0126,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+CRM-000093,CRM,G0127,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+RUES-000027,RUES,G0127,empresa,SIN_ID,positivo_sin_nit_en_ninguna,LIGHT,municipio escrito como «Bogotá D.C.»
+ADUANAS-000140,ADUANAS,G0128,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000142,CRM,G0129,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000114,CRM,G0130,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000107,ADUANAS,G0130,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Medellín»
+CRM-000089,CRM,G0131,empresa,SIN_ID,positivo_errata_1_letra,CLEAN,canónico (sin cambios)
+ADUANAS-000130,ADUANAS,G0131,empresa,SIN_ID,positivo_errata_1_letra,MODERATE,errata de 1 letra(s): PILTREX → PITREX
+RUES-000144,RUES,G0132,empresa,SIN_ID,positivo_truncado,CLEAN,canónico (sin cambios)
+ADUANAS-000170,ADUANAS,G0132,empresa,SIN_ID,positivo_truncado,MODERATE,nombre truncado a 30 caracteres
+RUES-000028,RUES,G0133,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000050,ADUANAS,G0133,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000007,CRM,G0134,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+CRM-000103,CRM,G0135,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000053,RUES,G0135,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000106,ADUANAS,G0135,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000137,CRM,G0136,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000011,CRM,G0137,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000072,CRM,G0137,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000046,RUES,G0137,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000112,ADUANAS,G0137,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Neiva»
+CRM-000104,CRM,G0138,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000112,RUES,G0138,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000167,ADUANAS,G0138,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000100,CRM,G0139,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000039,RUES,G0139,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000055,RUES,G0140,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000145,CRM,G0141,empresa,SIN_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+ADUANAS-000131,ADUANAS,G0141,empresa,SIN_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+CRM-000012,CRM,G0142,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000005,RUES,G0142,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Soledad»
+ADUANAS-000143,ADUANAS,G0142,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000022,CRM,G0143,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000003,RUES,G0143,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000103,ADUANAS,G0143,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000004,CRM,G0144,empresa,CON_ID,positivo_sucursal,MODERATE,sucursal: nombre con la ciudad (SOLEDAD) y municipio distinto
+RUES-000069,RUES,G0144,empresa,CON_ID,positivo_sucursal,CLEAN,canónico (sin cambios)
+CRM-000172,CRM,G0145,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+RUES-000093,RUES,G0145,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+CRM-000034,CRM,G0146,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000092,RUES,G0147,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000040,ADUANAS,G0147,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000174,RUES,G0148,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+ADUANAS-000146,ADUANAS,G0148,empresa,SIN_ID,positivo_sin_nit_en_ninguna,LIGHT,municipio escrito como «ARMENIA QUINDIO»
+CRM-000117,CRM,G0149,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000048,RUES,G0149,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000088,ADUANAS,G0149,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+RUES-000024,RUES,G0150,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000069,ADUANAS,G0150,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «BOGOTA»
+CRM-000058,CRM,G0151,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000075,CRM,G0152,empresa,CON_ID,positivo_truncado,CLEAN,canónico (sin cambios)
+ADUANAS-000121,ADUANAS,G0152,empresa,CON_ID,positivo_truncado,MODERATE,nombre truncado a 25 caracteres
+RUES-000026,RUES,G0153,empresa,CON_ID,positivo_orden_de_palabras,CLEAN,canónico (sin cambios)
+ADUANAS-000054,ADUANAS,G0153,empresa,CON_ID,positivo_orden_de_palabras,MODERATE,orden de palabras alterado
+RUES-000056,RUES,G0154,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000148,ADUANAS,G0154,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Manizales»
+RUES-000158,RUES,G0155,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+CRM-000110,CRM,G0156,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000136,RUES,G0156,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000177,CRM,G0157,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente
+ADUANAS-000062,ADUANAS,G0157,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000131,CRM,G0158,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000044,RUES,G0158,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «BOGOTÁ»
+ADUANAS-000002,ADUANAS,G0158,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000054,CRM,G0159,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Bogotá D.C.»
+ADUANAS-000067,ADUANAS,G0159,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000012,ADUANAS,G0160,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000126,CRM,G0161,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+RUES-000047,RUES,G0162,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Pasto»
+ADUANAS-000059,ADUANAS,G0162,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SAN JUAN DE PASTO»
+CRM-000073,CRM,G0163,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «PEREIRA RDA»
+ADUANAS-000132,ADUANAS,G0163,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000123,CRM,G0164,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000111,RUES,G0164,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000122,ADUANAS,G0164,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «MEDELLÍN»
+CRM-000092,CRM,G0165,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000144,ADUANAS,G0165,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000026,CRM,G0166,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000108,CRM,G0166,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000143,RUES,G0166,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000030,ADUANAS,G0166,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000011,RUES,G0167,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente; sufijo legal: SAS → S.A.S.
+ADUANAS-000090,ADUANAS,G0167,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000009,CRM,G0168,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000135,ADUANAS,G0168,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000175,CRM,G0169,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000067,RUES,G0169,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000027,ADUANAS,G0170,empresa,CON_ID,ambiguo_revisar,CLEAN,canónico (sin cambios)
+CRM-000161,CRM,G0171,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000118,RUES,G0172,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000154,RUES,G0173,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000057,ADUANAS,G0173,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000084,RUES,G0174,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000128,RUES,G0175,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000073,ADUANAS,G0175,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000064,RUES,G0176,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000077,ADUANAS,G0176,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000144,CRM,G0177,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000035,ADUANAS,G0177,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SOLEDAD ATL»
+CRM-000151,CRM,G0178,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000052,ADUANAS,G0178,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000123,RUES,G0179,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000153,RUES,G0180,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000180,CRM,G0181,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000073,RUES,G0181,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000104,ADUANAS,G0181,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000105,RUES,G0182,empresa,SIN_ID,positivo_mojibake,CLEAN,canónico (sin cambios)
+ADUANAS-000044,ADUANAS,G0182,empresa,SIN_ID,positivo_mojibake,MODERATE,mojibake: eñe y tildes rotas (UTF-8 leído como cp1252)
+RUES-000075,RUES,G0183,empresa,CON_ID,positivo_mojibake,CLEAN,canónico (sin cambios)
+ADUANAS-000120,ADUANAS,G0183,empresa,CON_ID,positivo_mojibake,MODERATE,mojibake: eñe y tildes rotas (UTF-8 leído como cp1252)
+CRM-000099,CRM,G0184,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000083,RUES,G0184,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «B/QUILLA»
+ADUANAS-000129,ADUANAS,G0184,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000044,CRM,G0185,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente; sufijo legal: SAS → S.A.S.
+ADUANAS-000076,ADUANAS,G0185,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+RUES-000146,RUES,G0186,empresa,CON_ID,positivo_orden_de_palabras,CLEAN,canónico (sin cambios)
+ADUANAS-000072,ADUANAS,G0186,empresa,CON_ID,positivo_orden_de_palabras,MODERATE,orden de palabras alterado
+CRM-000105,CRM,G0187,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Pereira»
+RUES-000113,RUES,G0187,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000067,CRM,G0188,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000081,ADUANAS,G0188,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000090,CRM,G0189,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000034,RUES,G0189,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000095,CRM,G0190,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+RUES-000036,RUES,G0190,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000060,ADUANAS,G0190,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000140,RUES,G0191,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «IBAGUÉ»
+ADUANAS-000171,ADUANAS,G0191,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «IBAGUÉ»
+RUES-000062,RUES,G0192,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000101,ADUANAS,G0192,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000071,CRM,G0193,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+RUES-000152,RUES,G0193,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+CRM-000136,CRM,G0194,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000087,ADUANAS,G0194,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000084,CRM,G0195,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SANTIAGO DE CALI»
+RUES-000076,RUES,G0195,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000136,ADUANAS,G0195,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «CALI VALLE»
+CRM-000024,CRM,G0196,empresa,CON_ID,positivo_sucursal,MODERATE,sucursal: nombre con la ciudad (IBAGUE) y municipio distinto
+RUES-000023,RUES,G0196,empresa,CON_ID,positivo_sucursal,CLEAN,canónico (sin cambios)
+CRM-000081,CRM,G0197,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000145,ADUANAS,G0197,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000119,CRM,G0198,empresa,CON_ID,positivo_errata_1_letra,CLEAN,canónico (sin cambios)
+ADUANAS-000113,ADUANAS,G0198,empresa,CON_ID,positivo_errata_1_letra,MODERATE,errata de 1 letra(s): ORIENTE → ORIENE
+RUES-000022,RUES,G0199,empresa,CON_ID,positivo_sufijo_legal,CLEAN,canónico (sin cambios)
+ADUANAS-000028,ADUANAS,G0199,empresa,CON_ID,positivo_sufijo_legal,LIGHT,cambio de forma legal: LTDA → SAS (mismo NIT)
+CRM-000173,CRM,G0200,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000141,ADUANAS,G0201,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000051,RUES,G0202,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000021,ADUANAS,G0202,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000113,CRM,G0203,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+RUES-000058,RUES,G0203,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+CRM-000150,CRM,G0204,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000102,RUES,G0204,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000134,ADUANAS,G0204,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000124,CRM,G0205,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «MEDELLIN ANT»
+CRM-000132,CRM,G0205,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000173,RUES,G0205,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000107,CRM,G0206,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con espacios de borde
+RUES-000110,RUES,G0206,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,CLEAN,canónico (sin cambios)
+ADUANAS-000046,ADUANAS,G0206,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con guiones
+CRM-000179,CRM,G0207,empresa,CON_ID,positivo_sigla,CLEAN,canónico (sin cambios)
+RUES-000013,RUES,G0207,empresa,CON_ID,positivo_sigla,SEVERE,sigla en lugar del nombre (BEE)
+CRM-000162,CRM,G0208,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «VILLAVICENCIO META»
+ADUANAS-000115,ADUANAS,G0208,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Villavicencio»
+CRM-000097,CRM,G0209,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000175,RUES,G0210,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+ADUANAS-000137,ADUANAS,G0210,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+CRM-000174,CRM,G0211,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente; sufijo legal: SAS → S.A.S.
+RUES-000134,RUES,G0211,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000118,CRM,G0212,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+ADUANAS-000116,ADUANAS,G0212,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000123,ADUANAS,G0213,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000122,CRM,G0214,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000071,RUES,G0214,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000142,ADUANAS,G0214,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000176,CRM,G0215,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000169,RUES,G0215,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000157,ADUANAS,G0216,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000166,ADUANAS,G0217,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000051,ADUANAS,G0218,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000068,ADUANAS,G0219,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+CRM-000036,CRM,G0220,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente
+ADUANAS-000164,ADUANAS,G0220,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000047,CRM,G0221,empresa,CON_ID,positivo_truncado,CLEAN,canónico (sin cambios)
+ADUANAS-000159,ADUANAS,G0221,empresa,CON_ID,positivo_truncado,MODERATE,nombre truncado a 20 caracteres
+CRM-000157,CRM,G0222,empresa,CON_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+ADUANAS-000038,ADUANAS,G0222,empresa,CON_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+CRM-000140,CRM,G0223,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «NEIVA HUILA»
+RUES-000037,RUES,G0223,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000125,ADUANAS,G0223,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000170,CRM,G0224,empresa,CON_ID,positivo_sufijo_legal,CLEAN,canónico (sin cambios)
+RUES-000052,RUES,G0224,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: S.A. → SA
+ADUANAS-000058,ADUANAS,G0224,empresa,CON_ID,positivo_sufijo_legal,LIGHT,sufijo legal: S.A. → S A
+CRM-000037,CRM,G0225,persona,SIN_ID,ambiguo_revisar,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero)
+ADUANAS-000039,ADUANAS,G0226,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000051,CRM,G0227,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000101,RUES,G0228,persona,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000062,CRM,G0229,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+RUES-000049,RUES,G0229,empresa,CON_ID,negativo_nombre_generico,CLEAN,canónico (sin cambios)
+CRM-000166,CRM,G0230,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000065,ADUANAS,G0230,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000121,CRM,G0231,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+CRM-000016,CRM,G0232,empresa,SIN_ID,negativo_raiz_confundible,CLEAN,canónico (sin cambios)
+RUES-000162,RUES,G0233,empresa,CON_ID,positivo_sigla,CLEAN,canónico (sin cambios)
+ADUANAS-000017,ADUANAS,G0233,empresa,CON_ID,positivo_sigla,SEVERE,sigla en lugar del nombre (NEE)
+CRM-000153,CRM,G0234,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000168,RUES,G0234,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000151,RUES,G0235,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000133,ADUANAS,G0235,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000169,CRM,G0236,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SANTIAGO DE CALI»
+RUES-000150,RUES,G0236,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000066,ADUANAS,G0236,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000083,CRM,G0237,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000061,RUES,G0238,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000023,CRM,G0239,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000176,RUES,G0239,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000097,ADUANAS,G0239,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000016,RUES,G0240,persona,CON_ID,ambiguo_revisar,CLEAN,canónico (sin cambios)
+CRM-000065,CRM,G0241,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000006,RUES,G0241,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000163,ADUANAS,G0241,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000020,CRM,G0242,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000060,RUES,G0242,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000138,ADUANAS,G0242,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000070,RUES,G0243,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000169,ADUANAS,G0243,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Bogotá D.C.»
+CRM-000019,CRM,G0244,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+RUES-000107,RUES,G0244,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000098,ADUANAS,G0244,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000048,CRM,G0245,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000086,ADUANAS,G0245,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000101,CRM,G0246,empresa,CON_ID,positivo_sucursal,MODERATE,sucursal: nombre con la ciudad (MANIZALES) y municipio distinto
+RUES-000081,RUES,G0246,empresa,CON_ID,positivo_sucursal,CLEAN,canónico (sin cambios)
+CRM-000056,CRM,G0247,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «Santa Marta»
+RUES-000054,RUES,G0247,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000077,RUES,G0248,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+ADUANAS-000124,ADUANAS,G0249,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000018,CRM,G0250,empresa,CON_ID,positivo_nit_con_y_sin_dv,CLEAN,canónico (sin cambios)
+RUES-000135,RUES,G0250,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,NIT con el dígito de verificación pegado
+ADUANAS-000110,ADUANAS,G0250,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,"NIT con puntos, guion y DV"
+CRM-000181,CRM,G0251,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,SEVERE,nombre comercial capturado como razón social
+RUES-000147,RUES,G0251,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,CLEAN,canónico (sin cambios)
+CRM-000053,CRM,G0252,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000138,RUES,G0252,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000055,ADUANAS,G0252,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000186,CRM,G0253,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)
+RUES-000164,RUES,G0254,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+ADUANAS-000018,ADUANAS,G0254,persona,CON_ID,negativo_homonimo_persona,CLEAN,canónico (sin cambios)
+RUES-000079,RUES,G0255,empresa,CON_ID,positivo_sigla,CLEAN,canónico (sin cambios)
+ADUANAS-000093,ADUANAS,G0255,empresa,CON_ID,positivo_sigla,SEVERE,sigla en lugar del nombre (EFE)
+CRM-000025,CRM,G0256,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000109,RUES,G0256,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000026,ADUANAS,G0257,empresa,CON_ID,negativo_nit_corrupto_un_digito,CLEAN,canónico (sin cambios)
+CRM-000156,CRM,G0258,empresa,SIN_ID,positivo_sin_nit_en_ninguna,CLEAN,canónico (sin cambios)
+RUES-000042,RUES,G0258,empresa,SIN_ID,positivo_sin_nit_en_ninguna,LIGHT,sufijo legal: LTDA → LIMITADA
+ADUANAS-000043,ADUANAS,G0259,empresa,SIN_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000096,CRM,G0260,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con ceros a la izquierda
+RUES-000133,RUES,G0260,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,CLEAN,canónico (sin cambios)
+ADUANAS-000099,ADUANAS,G0260,empresa,CON_ID,positivo_nit_con_ceros_o_puntuacion,LIGHT,NIT con guion y DV
+CRM-000014,CRM,G0261,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000155,RUES,G0261,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000032,ADUANAS,G0261,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000070,CRM,G0262,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,SEVERE,nombre comercial capturado como razón social
+RUES-000131,RUES,G0262,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,CLEAN,canónico (sin cambios)
+RUES-000125,RUES,G0263,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000152,ADUANAS,G0263,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000128,CRM,G0264,empresa,CON_ID,positivo_nit_igual,LIGHT,municipio escrito como «SAN JUAN DE PASTO»
+RUES-000103,RUES,G0264,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000100,ADUANAS,G0264,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000021,CRM,G0265,empresa,CON_ID,negativo_nombre_identico_nit_distinto,CLEAN,canónico (sin cambios)
+ADUANAS-000041,ADUANAS,G0266,empresa,CON_ID,negativo_filial_matriz,CLEAN,canónico (sin cambios)
+RUES-000159,RUES,G0267,empresa,CON_ID,positivo_errata_1_letra,CLEAN,canónico (sin cambios)
+ADUANAS-000161,ADUANAS,G0267,empresa,CON_ID,positivo_errata_1_letra,MODERATE,errata de 1 letra(s): MANUFACTURAS → MANUFACTUAS
+CRM-000082,CRM,G0268,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,SEVERE,nombre comercial capturado como razón social
+RUES-000094,RUES,G0268,empresa,CON_ID,positivo_nombre_comercial_vs_razon_social,CLEAN,canónico (sin cambios)
+RUES-000080,RUES,G0269,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000151,ADUANAS,G0269,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000143,CRM,G0270,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde; duplicado dentro de la misma fuente (segunda fila del CRM)
+RUES-000171,RUES,G0270,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000154,ADUANAS,G0270,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000008,CRM,G0271,persona,CON_ID,positivo_persona_natural,MODERATE,orden nombres-apellidos (el RUES escribe apellidos primero)
+RUES-000043,RUES,G0271,persona,CON_ID,positivo_persona_natural,CLEAN,canónico (sin cambios)
+CRM-000057,CRM,G0272,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000015,RUES,G0272,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000050,CRM,G0273,empresa,CON_ID,positivo_nit_con_y_sin_dv,CLEAN,canónico (sin cambios)
+RUES-000086,RUES,G0273,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,NIT con el dígito de verificación pegado
+ADUANAS-000085,ADUANAS,G0273,empresa,CON_ID,positivo_nit_con_y_sin_dv,LIGHT,"NIT con puntos, guion y DV"
+ADUANAS-000095,ADUANAS,G0274,persona,CON_ID,singleton,CLEAN,canónico (sin cambios)
+CRM-000029,CRM,G0275,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+RUES-000065,RUES,G0275,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000063,ADUANAS,G0275,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+CRM-000033,CRM,G0276,empresa,CON_ID,positivo_nit_igual,CLEAN,canónico (sin cambios)
+ADUANAS-000096,ADUANAS,G0276,empresa,CON_ID,positivo_nit_igual,LIGHT,espacios dobles y de borde
+CRM-000045,CRM,G0277,empresa,SIN_ID,positivo_sin_nit_en_una_fuente,MODERATE,sin identificador en esta fuente
+ADUANAS-000070,ADUANAS,G0277,empresa,CON_ID,positivo_sin_nit_en_una_fuente,CLEAN,canónico (sin cambios)
+CRM-000129,CRM,G0278,empresa,CON_ID,singleton,CLEAN,canónico (sin cambios)

@@ -1971,3 +1971,43 @@ no depende de Enrique.*
 ### Estado al cierre
 
 Todo en `main` tras el PR #8. Siguen las tareas 3.1 a 3.6 y 4.1 a 4.5 del plan; de Enrique, E1 a E6.
+
+---
+
+## Plantilla de base real y verdad real (2026-10-14)
+
+**Rama:** `claude/plantilla-base-real` · **Sin cambio de motor** (no mueve ninguna huella del banco).
+
+* **Qué se hizo:** `scripts/generar_plantilla_base_real.py` (semilla 42, determinista entre procesos) produce
+  `data/ejemplos/plantilla_base_real.xlsx` y sus CSV: tres fuentes (CRM 187, RUES 176, ADUANAS 173 registros), `VERDAD_GRUPOS`
+  (536 registros, 278 grupos, REGIMEN/CASO/NIVEL_RUIDO/VARIACION por columna), `ETIQUETAS_PARES` (109 pares: 76 positivos,
+  30 negativos, 3 UNCLEAR; anotadores A/B/resuelto), `DICCIONARIO` (40 filas: las 34 columnas de las hojas, las 5 de `plantilla_banco.csv` y `BANDA_PUNTAJE`) y `CASOS` (24). Todo inventado; los NIT llevan
+  DV módulo 11 correcto y nunca cambian de dígitos dentro de un grupo positivo.
+* **Evidencia:** `docs/evidencia/plantilla_base_real_casos.json` (motor 0.22.4, `produccion_estandar`: 281 grupos vs 278,
+  P 0,9875 / R 0,9754 / F1 0,9814; 18 de 24 casos acertados), `plantilla_base_real_verdad_real.json` (106 pares: GLOBAL
+  P 0,9859 / R 0,9211; CON_ID 1,0 / 0,9615; SIN_ID 1,0 / 0,7333; MIXTO 0,90 / 1,0) y `_AB.json` (kappa 0,703).
+* **Lo que el motor no sabe hacer hoy, medido con la plantilla:** NIT con ceros a la izquierda (`000901156189`) queda sin pareja;
+  dos erratas o mojibake sin NIT no se unen; un par mixto (NIT en un solo lado) con raíces casi iguales (`TRUVEL`/`TRUVELA`) o con
+  la misma palabra de sector (`COMERCIALIZADORA …`) se une por nombre; un nombre de persona común sin cédula se une con su homónimo.
+  Tabla completa en `docs/PLANTILLA_BASE_REAL.md` §5.
+* **Pruebas:** `tests/test_plantilla_base_real.py` (determinismo en subprocesos, hojas y columnas exactas, casos ≥ 2 registros,
+  pares consistentes con los grupos, DV válidos, sin marcas reales, `linkage()` une los casos básicos); `data/ejemplos/*.csv` y
+  los scripts entran en `ARCHIVOS_VIGILADOS` de `tests/test_sin_nombres_reales.py`.
+* **Correcciones tras la verificación (mismo día; `docs/PLANTILLA_BASE_REAL.md` §7).** Tres verificadores revisaron la rama. Lo
+  cierto se corrigió sin mover ninguna cifra de evidencia (ids, NIT, nombres y municipios no cambian; el generador consume el azar
+  en el mismo orden): dominios de correo y sitio web reales (`.com`, `.co`, `gmail.com`, `café.co`) → `.example` sin tildes; el
+  módulo 11 duplicado → solo `digito_verificacion_dian`; «la librería tolera ceros a la izquierda» (DICCIONARIO, LEEME, doc) → una
+  sola regla: sin ceros a la izquierda, hallazgo abierto; `BANDA_PUNTAJE` presentada como banda del motor y atribuida a
+  `active_labeling.py` (contradecía al motor en 6 de 109 pares) → `BANDA_ESPERADA` en la plantilla y `BANDA_PUNTAJE` real con
+  umbrales escritos, producida por el muestreador nuevo `verificar_plantilla_base_real.py --pares-a-etiquetar` (dos archivos: el de
+  los anotadores sin columnas del motor y `_bandas.csv`); `active_labeling.py` probado y descartado para este flujo (ids internos,
+  `SIN_NIT`, `CIUDAD`); hojas fijas y `VERDAD_GRUPOS`/`CASOS` obligatorias en el verificador → descubrimiento por prefijo `FUENTE_`
+  y modo base real; `plantilla_banco.csv` sin diccionario ni forma de construirlo → `construir_banco(fuentes, verdad)` (una sola
+  implementación; `VERDAD_GRUPOS` ganó `TIPO_ENTIDAD`) y `--banco`; `medir_verdad_real.py` sin `--hoja` → añadido; lectura del
+  Excel sin `dtype=str` (NIT a float: 279 grupos en vez de 281) → documentada; `TELEFONO`/`EMAIL`/`CIIU` con jerga interna →
+  lenguaje llano y aviso de que son informativas salvo con `extra_features`; LEEME paso 16 con ruta relativa → `data/ejemplos/`;
+  frases ambiguas (`ANOTADOR`, `CASO`, `REGIMEN`, `FECHA_ACTUALIZACION`, kappa con tres anotadores) → corregidas;
+  `docs/README.md` y `docs/evidencia/README.md` → vigilados. KRONOS se conserva (vocabulario de prueba de 22 archivos de `main`)
+  pero ya no se describe como marca inventada. Pruebas: 20 en `tests/test_plantilla_base_real.py` (eran 15, no 16 como decía el
+  reporte), incluida la cadena completa muestreo → etiquetas → `medir_verdad_real` por `ID_REGISTRO_FUENTE` y `--hoja ETIQUETAS_PARES`
+  sobre el Excel.
