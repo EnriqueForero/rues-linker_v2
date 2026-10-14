@@ -228,8 +228,8 @@ evidencia; no cambian la decisión):
    `medir_con_ground_truth.py:109,127,307`; `replicar_v2_5_0.py:53,68,72`;
    `replicar_v2_6_0.py:70,89,91,123,125,171`; `replicar_v2_7_0.py:64-65`;
    `replicar_v2_8_0.py:119-120,203-204`; `verificar_determinismo.py:4,73-74`) y
-   **14 pruebas** (3.4); lo crean `processing/utilities.py:198` y
-   `golden/generator.py:256-258`. En v2 lo leen además `scripts/
+   **14 pruebas** (3.4); lo crea `golden/generator.py:256-258` (`processing/utilities.py`, que también lo creaba y nada
+   importaba, se retiró en la Fase 0 del 2026-10-13). En v2 lo leen además `scripts/
    verify_real_archives.py:118-126,249-253`, `scripts/benchmark_duckdb_flow.py:154`,
    `scripts/escala.py` y, desde F1, `salida/tecnicas.py` (alineación).
 2. **`ID_GRUPO`, `SRC`, `CONFIDENCE_SCORE`, `PRIMARY_SOURCE`** en

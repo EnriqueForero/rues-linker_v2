@@ -1,0 +1,107 @@
+{
+  "etiqueta": "f3_default",
+  "perfil": "produccion_estandar",
+  "semilla": 42,
+  "marca_tiempo": "2026-10-14T01:23:45",
+  "version": "0.22.4",
+  "entorno": {
+    "vcpu": 4,
+    "memoria_total_mib": 16093
+  },
+  "nota": "perfil produccion_estandar final (ADR-0015 y ADR-0016: híbrido + Soft TF-IDF 0,90 + compactada 0,95 + exención por identificador idéntico); cobertura en streaming; TF-IDF por lotes de 500 filas",
+  "ajustes_perfil": null,
+  "tamanos": {
+    "139k": {
+      "parametros": {
+        "empresas_extra": 48000,
+        "importadores_extra": 9600,
+        "semilla": 42,
+        "filas_esperadas": 139028
+      },
+      "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+      "filas": 139028,
+      "grupos": 54136,
+      "version": "0.22.4",
+      "perfil": "produccion_estandar",
+      "marca_tiempo": "2026-10-14T01:28:59",
+      "entorno": {
+        "python": "3.11.17",
+        "pandas": "3.0.6",
+        "numpy": "2.3.5",
+        "plataforma": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+        "version": "0.22.4",
+        "vcpu": 4,
+        "memoria_total_mib": 16093
+      },
+      "recursos": {
+        "segundos_total": 309.09,
+        "segundos_por_fase": {
+          "L1_prep": 2.91,
+          "L2_lsh_candidates": 158.37,
+          "L3_scoring": 107.85,
+          "L4_clustering": 2.4,
+          "L5_golden": 29.73
+        },
+        "rss_por_fase": {
+          "L1_prep": 469.9,
+          "L2_lsh_candidates": 1135.4,
+          "L3_scoring": 908.8,
+          "L4_clustering": 818.7,
+          "L5_golden": 1173.7
+        },
+        "rss_pico_mib": 1173.7,
+        "rss_inicial_mib": 340.7,
+        "muestras_rss": 1124,
+        "bytes_disco": 127454468,
+        "candidatos": 6774079,
+        "pares_scoreados": 207205,
+        "candidatos_por_valido": 32.7
+      },
+      "calidad": {
+        "registros": 139028,
+        "grupos_verdad": 54136,
+        "grupos_predichos": 55683,
+        "pares_verdaderos": 199415,
+        "tp": 192471,
+        "fp": 4053,
+        "fn": 6944,
+        "precision": 0.9794,
+        "recall": 0.9652,
+        "f1": 0.9722,
+        "b3_precision": 0.9916,
+        "b3_recall": 0.9791,
+        "b3_f1": 0.9853,
+        "recall_por_regimen": {
+          "CON_NIT": 1.0,
+          "SIN_NIT": 0.7589
+        },
+        "recall_por_caso": {
+          "positivo_con_nit": 1.0,
+          "positivo_sin_nit": 0.7588,
+          "negativo_intermediario": 1.0,
+          "negativo_generico": null
+        },
+        "fp_que_tocan_negativo": 5,
+        "calidad_por_estrato": {},
+        "macro_f1": null,
+        "grupo_mayor_sin_identificador": {
+          "filas": 16,
+          "entidades": 3,
+          "grupos": 7601,
+          "grupos_grandes": 0
+        }
+      },
+      "huella": "24b997b81fbaa7774154c0b2b871b883ced4a3d96cf3c4e1c53e1d8395312a5f",
+      "especificacion": {
+        "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+        "perfil": "produccion_estandar",
+        "confiables": [],
+        "variables_extra": null,
+        "ajustes_perfil": null,
+        "perfil_multicampo": null,
+        "semilla": 42
+      },
+      "dir_trabajo": "/tmp/escala_f3/escala_139k_hz218z61"
+    }
+  }
+}

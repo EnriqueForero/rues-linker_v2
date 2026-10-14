@@ -97,6 +97,7 @@ optimization = [
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    "pytest-xdist>=3.5",   # Fase 0: suite rápida en paralelo (-n auto)
     # hypothesis: property-based testing usado por tests/test_comparadores_tipos.py
     # (propiedades universales de los comparadores por tipo, F2.2). Es dependencia
     # de test, no de runtime; sin ella pytest falla al colectar ese módulo.

@@ -32,7 +32,10 @@ Historia:
 * `BANCO_F0` (2026-10-06, commit 33827cc): el motor de 0.22.4 sin tocar.
   Vigente hasta F2.1 (ADR-0011).
 * `BANCO_F2` (2026-10-10, commit ef13f83): cobertura por estrellas activa por
-  defecto en `produccion_estandar` (umbral 0,80, ADR-0011). Vigente.
+  defecto en `produccion_estandar` (umbral 0,80, ADR-0011). Vigente hasta F3.
+* `BANCO_F3` (2026-10-14, commit a7cc6a8): generador de candidatos híbrido,
+  comparador Soft TF-IDF y exención del piso de nombre por identificador
+  idéntico (ADR-0015, ADR-0016). Vigente.
 
 Este módulo no es una prueba (no empieza por `test_`): pytest lo importa
 desde `tests/` porque el directorio no es un paquete y queda en `sys.path`.
@@ -46,6 +49,7 @@ from pathlib import Path
 __all__ = [
     "BANCO_F0",
     "BANCO_F2",
+    "BANCO_F3",
     "BANCO_VIGENTE",
     "LineaBaseBanco",
     "discrepancias_con_linea_base",
@@ -137,10 +141,33 @@ BANCO_F2 = LineaBaseBanco(
     fecha="2026-10-10",
 )
 
+#: Línea base F3 del banco institucional (ADR-0015 y ADR-0016). Medida el
+#: 2026-10-14 y congelada en a7cc6a8, con Python 3.11.17, pandas 3.0.6 y numpy
+#: 2.3.5. Evidencia: ``docs/evidencia/corrida_base_f3.json`` (misma huella que
+#: ``fase3_comparador/corrida_h_s090c095_id.json``, medida con --ajuste)
+#: (30.486 registros, 11.478 grupos verdad, 12,904 predichos; precision
+#: 0.9844 · recall 0.8255). Respecto a F2: macro-F1 0,8803 → 0.9107, FP
+#: sobre negativos 246 → 73, recall SIN_ID 0,5836 → 0.6347: el perfil
+#: ``produccion_estandar`` pasa al generador de candidatos híbrido, al
+#: comparador Soft TF-IDF (0,90, respaldo compactado 0,95) y a la exención del
+#: piso de nombre para identificadores válidos idénticos.
+BANCO_F3 = LineaBaseBanco(
+    huella="0b4ea2ec294e6982dc6a8bcb424b9a4461271ce35378e6cb6f6374148c29b0a5",
+    f1=0.8980,
+    macro_f1=0.9107,
+    b3_f1=0.9611,
+    fp_que_tocan_negativo=73,
+    datos=Path("data/benchmark/benchmark_institucional.csv.gz"),
+    perfil="produccion_estandar",
+    evidencia=Path("docs/evidencia/corrida_base_f3.json"),
+    commit="a7cc6a8",
+    fecha="2026-10-14",
+)
+
 #: La línea base que describe el tronco HOY. Las pruebas que miden el banco
 #: actual leen esta; al mover la línea base (docstring del módulo) solo cambia
 #: a qué constante apunta.
-BANCO_VIGENTE = BANCO_F2
+BANCO_VIGENTE = BANCO_F3
 
 
 def discrepancias_con_linea_base(

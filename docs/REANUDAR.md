@@ -1,7 +1,7 @@
 # Dónde estamos y cómo retomar
 
-*Actualizado: 2026-10-13. Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
-El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-31); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
+*Actualizado: 2026-10-14 (Fases 0 a 3 de la ruta: vigilancia, verdad real, candidatos híbridos, comparador Soft TF-IDF). Puerta de entrada para quien retome el plan «v2 → producción» (otra sesión, otra persona u otro modelo): léala antes de tocar nada.
+El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, en [`BITACORA.md`](BITACORA.md) (IT-27 a IT-33); las reglas de trabajo, en [`../CLAUDE.md`](../CLAUDE.md).*
 
 ## 1. Estado en una mirada
 
@@ -10,11 +10,11 @@ El plan completo está en [`PLAN_EJECUCION.md`](PLAN_EJECUCION.md); el diario, e
 | F0 | Fundaciones (CI, líneas base, trinquetes) | ✅ en `main` (PR #1) | 7 % |
 | F1 | Contrato de salida | ✅ en `main` (PR #2) | 18 % |
 | F2 | Calidad y unificación del motor | ✅ en `main` (PR #3 el motor, PR #4 el cierre documental) | 18 % |
-| **F3** | **Vinculación de empresas dentro de la librería** | **F3.1 (motor extraído con paridad) está en `main` (PR #5). F3.1b (arreglos declarados) está hecho en la rama `claude/f3-arreglos`: falta abrir su PR y que Enrique lo mezcle.** F3.2 a F3.7 pendientes | 18 % (≈ 48 % hecho) |
+| **F3** | **Vinculación de empresas dentro de la librería** | F3.1 (motor extraído con paridad, PR #5) y F3.1b (arreglos declarados, PR #6) están en `main`. F3.2 a F3.7 pendientes | 18 % (≈ 48 % hecho) |
 | F4 | Escala (4 M de registros en Colab) | pendiente | 18 % |
 | F5/F6 | Ingeniería y release 1.0 | pendiente | 18 % |
 
-**Avance del plan ≈ 53 %.** F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
+**La ruta vigente es `DIAGNOSTICO_Y_RUTA_2026-10-13.md` (seis fases).** Su estado: Fase 0 ✅ (vigilancia, IT-32) · Fase 1 ✅ instrumentos (la verdad real la produce Enrique) · Fase 2 ✅ (híbrido por defecto, ADR-0016) · Fase 3 ≈ 50 % (comparador y exención por identificador, ADR-0015; falta el puntaje probabilístico y las otras variables) · Fase 4 empezada (escala 139k medida con el perfil nuevo: F1 0,9722, RSS 1.174 MiB; falta 463k, 1 M/4 M, presupuesto de memoria, reanudación y notebook Colab) · Fases 5 y 6 pendientes. **Todo lo de IT-32 e IT-33 vive en la rama `claude/fase0-vigilancia` hasta que su PR se mezcle.** El porcentaje de abajo es del plan anterior. Avance del plan anterior ≈ 53 %. F0 + F1 + F2 = 44 %; F3 aporta ≈ 9 puntos (48 % de su 18 %). Los pesos son las semanas del plan (F0 una; F1 a F5/F6, dos y media cada una; total 13,5). Es una estimación, no una medición.
 
 Subfases de F3: **F3.0 oráculo ✅ · F3.1 extracción con paridad ✅ · F3.1b arreglos declarados ✅ (rama `claude/f3-arreglos`)** · F3.2 reutilizar la librería · F3.3 contrato estándar (`vincular_empresas`) · F3.4 decisiones unificadas · F3.5 notebook 10 delgado · F3.6 notebook 09 · F3.7 ADR, documentación, skill (sin versión ni tag).
 
@@ -52,7 +52,9 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 | # | Qué | Cómo se sabe que terminó | Costo relativo |
 |---|---|---|---|
 | 0 | ✅ PR #4 y PR #5 mezclados. **Enrique borra las ramas viejas** (sección 4) | — | mínimo |
-| 1 | **PR de F3.1b** (`claude/f3-arreglos` → `main`) | CI verde (el job «mypy visible» es rojo por diseño); Enrique mezcla | bajo |
+| 1 | ✅ PR #6 mezclado (14-oct). **PR de `claude/fase0-vigilancia`** (Fases 0 a 3: IT-32 e IT-33) abierto; se mezcla con el CI verde (autorizado) | CI verde | bajo |
+| 1b | **Fase 3 restante:** puntaje probabilístico (Fellegi–Sunter/EM) sobre el comparador nuevo, otras variables en producción (`extra_features` medidas), umbrales por costo cuando exista verdad real | banco ≥ compuertas; verdad real medida | alto |
+| 1c | **Fase 4:** `scripts/escala.py` con el nuevo perfil (139k y 463k), presupuesto de memoria fail-fast, reanudación probada, 1 M/4 M sintéticos, notebook Colab delgado | `compuertas.json` colab_4M con evidencia | alto |
 | 2 | ✅ **F3.1b**: arreglos declarados del motor (nivel 1 completo + B2, B3, B8, g3-O1, g3-O2). Pendientes con decisión de Enrique: C9, B7, M-c, A13 (`PLAN_ARREGLOS_F3.1b.md`) | `pytest` de `test_vinculacion_*` verde en py311 y py310; el arnés solo difiere en lo declarado | hecho |
 | 3 | F3.2: catálogos a `matching/genericos.py`; locale por configuración (un `Normalizador` no pisa al otro) | prueba «vinculacion no define catálogos» | bajo |
 | 4 | F3.3: `vincular_empresas` → `ResultadoLinkage` (+ Excel técnico como vista). **La vista VPI queda vacía hasta resolver el Excel de Caro** | contrato de salida verde | alto |
@@ -64,9 +66,9 @@ El motor del notebook 10 (`vinculador_empresas` 1.0.0, 2.984 líneas en una celd
 ## 4. Cómo llevar lo hecho a `main`
 
 Nadie empuja a `main`: se hace por PR y **Enrique mezcla** (regla del proyecto).
-1. ✅ PR #4 (cierre de F2) y PR #5 (hito F3.1) ya están mezclados. Desde la interfaz de GitHub (Branches → papelera; el proxy de las sesiones no puede borrar ramas) borrar `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12`, `claude/f2-cierre` y `claude/f3-vinculacion`. **Conservar** `feature/vinculacion-0.23.0` hasta que F3.7 decida.
-2. PR de F3.1b: base `main`, cabeza `claude/f3-arreglos`. Título sugerido: «F3.1b · Arreglos declarados del motor de vinculación». Cuerpo: `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`, sección «Estado». **Cambia resultados del motor respecto del original** (declarados; en los 4 escenarios solo cambian `ENLACES.MOTIVO`, `CONTROL_QA`, `PARAMETROS`, `resumen`, `COMPARACION_REVISIONES` y, con errata doble, `REVISION`/`EXPORTADORES`), pero nada de esto está en una versión publicada.
-3. Después de mezclarlo, la siguiente rama sale de `main` (F3.2 en adelante).
+1. ✅ PR #4, PR #5 y PR #6 ya están mezclados. Desde la interfaz de GitHub (Branches → papelera; el proxy de las sesiones no puede borrar ramas) borrar `claude/f2-motor`, `claude/f2/t8`, `claude/f2/t10`, `claude/f2/t11`, `claude/f2/t12`, `claude/f2-cierre`, `claude/f3-vinculacion` y, una vez mezclado su PR, `claude/f3-arreglos` y `claude/fase0-vigilancia`. **Conservar** `feature/vinculacion-0.23.0` hasta que F3.7 decida.
+2. ✅ PR #6 (F3.1b) mezclado el 14-oct.
+3. PR de `claude/fase0-vigilancia` → `main`: **cambia el perfil `produccion_estandar`** (ADR-0015 y ADR-0016, huella del banco `5bfed0d1` → `0b4ea2ec`) y las cotas de `compuertas.json`. Nada de esto está en una versión publicada. Después de mezclarlo, la siguiente rama sale de `main`.
 
 ## 5. Decisiones y preguntas abiertas (de Enrique)
 

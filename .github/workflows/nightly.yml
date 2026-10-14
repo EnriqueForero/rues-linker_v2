@@ -1,7 +1,10 @@
-# Nightly (F0.5): instala dependencias FRESCAS (rangos de pyproject, sin
-# constraints) y corre la suite COMPLETA (incluye slow: baseline + canario).
-# Propósito: detectar deriva de dependencias el día que ocurre, no el día
-# que bloquea una publicación (lección datasketch 2.0, CHANGELOG [0.7.6]).
+# Nightly (F0.5, reescrito en la Fase 0 del 2026-10-13).
+# Dos jobs con la suite COMPLETA (incluye slow: baseline + canario):
+#   · suite-pinada: dependencias del runtime validado. Es la compuerta: si está en rojo, el código
+#     regresó. Antes de la Fase 0 el único job instalaba rangos frescos y llevaba 20 corridas en
+#     rojo sin que nadie distinguiera «deriva de dependencias» de «regresión del código».
+#   · suite-rangos-frescos: rangos de pyproject sin constraints. Detecta la deriva el día que
+#     ocurre (lección datasketch 2.0, CHANGELOG [0.7.6]) y AVISA: no bloquea (continue-on-error).
 name: Nightly
 
 on:
@@ -10,10 +13,31 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  suite-completa:
-    name: Suite completa con dependencias frescas
+  suite-pinada:
+    name: Suite completa con el runtime validado (compuerta)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar (pines del runtime validado)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" -c constraints/runtime-validado.txt
+          pip list --format=freeze | sort
+      - name: Coherencia de versión
+        run: python scripts/verificar_coherencia_version.py
+      - name: Suite completa (incluye slow)
+        run: pytest tests/ -q --tb=short -n auto --dist loadfile
+
+  suite-rangos-frescos:
+    name: Suite completa con dependencias frescas (avisa, no bloquea)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -25,7 +49,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip list --format=freeze | sort
-      - name: Coherencia de versión
-        run: python scripts/verificar_coherencia_version.py
       - name: Suite completa (incluye slow)
-        run: pytest tests/ -q --tb=short
+        run: pytest tests/ -q --tb=short -n auto --dist loadfile

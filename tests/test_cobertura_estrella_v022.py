@@ -183,3 +183,35 @@ def test_errores_accionables():
             similitud_minima=0.0,
             regla_lider="medoide",
         )
+
+
+def test_una_componente_gigante_se_resuelve_en_streaming_sin_matriz(monkeypatch):
+    """A 139k registros una componente de decenas de miles de nombres pedía 13,5 GB (matriz k×k) y moría por OOM.
+
+    Por encima de ``FILAS_MATRIZ_MAX`` el líder se elige por masa y solo se compara contra él. Con el umbral
+    bajado a 3, una componente de 6 nombres toma ese camino y debe dar exactamente la partición del camino
+    exacto con ``regla_lider="masa"``.
+    """
+    from record_linkage.engine import cobertura
+
+    valores = np.array(
+        ["ABC uno", "ABC dos", "XYZ uno", "XYZ dos", "ABC tres", "QQQ"], dtype=object
+    )
+    etiquetas = np.zeros(6, dtype=np.int64)  # una sola componente
+    masa = np.array([1.0, 5.0, 2.0, 9.0, 1.0, 1.0])
+    exacto = cobertura_estrella(
+        valores, etiquetas, masa, ComparadorPrefijo(), similitud_minima=0.0, regla_lider="masa"
+    )
+    assert exacto.componentes_en_streaming == 0
+
+    monkeypatch.setattr(cobertura, "FILAS_MATRIZ_MAX", 3)
+    streaming = cobertura.cobertura_estrella(
+        valores, etiquetas, masa, ComparadorPrefijo(), similitud_minima=0.0, regla_lider="cobertura"
+    )
+    assert streaming.componentes_en_streaming == 1
+    assert streaming.etiquetas.tolist() == exacto.etiquetas.tolist()
+    assert streaming.es_lider.tolist() == exacto.es_lider.tolist()
+    assert streaming.similitud_al_lider.tolist() == exacto.similitud_al_lider.tolist()
+    # Tres estrellas: ABC (líder «ABC dos», masa 5), XYZ (líder «XYZ dos», masa 9) y QQQ sola.
+    assert streaming.n_grupos_despues == 3
+    assert streaming.es_lider[[1, 3, 5]].all()

@@ -43,6 +43,35 @@ Cada arreglo tiene su prueba y su declaración (`tests/lineas_base_vinculacion_c
   solo un sitio web de verdad se vuelve enlace (E6); hojas con los mismos 31 primeros caracteres reciben `_2`, `_3` (E8); `unir_valores` descarta `pd.NA`/`NaT`.
 - **No se hizo** (decisión de Enrique o necesita datos reales): C9 (propagar por web solo desde vínculos de confianza ALTA), B7 (`raiz_id` con guion), M-c (umbral de «parecido»), A13, rendimiento a escala (F4) y los cosméticos.
 
+## [Sin publicar] — Ruta 2026-10-13, Fases 0 a 3 · vigilancia en verde, candidatos híbridos y comparador Soft TF-IDF
+
+**Cambia el perfil `produccion_estandar`** (ADR-0015, ADR-0016; evidencia en `docs/evidencia/fase2_candidatos_hibridos.md` y
+`docs/evidencia/fase3_comparador_nombre.md`). Huella del banco institucional `5bfed0d1` → `0b4ea2ec`: macro-F1 0,8803 → 0,9107,
+precisión 0,9557 → 0,9844, recall 0,7927 → 0,8255, recall SIN_ID 0,5836 → 0,6347, FP que tocan un negativo 246 → 73, 59 s → 44 s.
+Nada de esto está en una versión publicada.
+
+- **Comparador de nombre** `comparador_nombre = "soft_tfidf"` (`matching/soft_tfidf.py`): coseno de tokens ponderados por IDF con
+  tolerancia Jaro-Winkler 0,90 entre tokens y respaldo de cadena compactada 0,95. La contención («RODRIGUEZ» en «LAURA RODRIGUEZ») ya
+  no vale 1,0. El legado (`token_set_ratio`) sigue disponible y es el valor de los demás perfiles base.
+- **Identificador válido idéntico** ya no lo veta el piso de nombre (`nit_identical_overrides_name_filter = True`): la perilla existía en
+  el scorer y los perfiles heredados; ahora todo perfil base la declara. El veto por NIT base distinto no cambia.
+- **Generador de candidatos híbrido** `motor_candidatos = "hibrido"` (`engine/candidatos/`): NIT + tokens distintivos + TF-IDF de
+  trigramas + llaves exactas (`candidatos_hibrido.*`). Recall de pares SIN_ID 0,718 → 0,925; L2 39 s → 13 s. El LSH sigue disponible.
+- **L3:** paginación de `candidate_pairs` por la clave primaria en las dos rutas (la no streaming usaba `OFFSET`) y escritura
+  vectorizada; sin cambio de resultados.
+- **Escala 139k** (`docs/evidencia/escala_f3_default.json`): F1 0,9662 → 0,9722, recall 0,9475 → 0,9652, FP que tocan un negativo
+  34 → 5, candidatos 12,7 M → 6,8 M, 333 s → 309 s, RSS pico 1.154 → 1.174 MiB. La compuerta de escala sube su piso (F1 ≥ 0,97).
+- **L5:** la cobertura por estrellas resuelve en streaming (líder por masa, O(k) de memoria) las componentes de más de 2.000 nombres;
+  la matriz k×k pedía 13,5 GB a 139k registros.
+- **Instrumentos:** `scripts/recall_bloqueo.py` (recall de pares del bloqueo por régimen), `scripts/anatomia_fp.py`,
+  `scripts/barrido_comparador_nombre.py`, `evaluation/verdad_real.py` + `scripts/medir_verdad_real.py` (precisión y recall sobre pares
+  etiquetados con intervalo de Wilson y kappa), `docs/PROTOCOLO_GROUND_TRUTH.md`, `docs/evidencia/compuertas.json` +
+  `tests/test_compuertas.py`.
+- **Arreglos:** `--ajuste a=1 --ajuste b=2` dejaba solo `b=2` en `banco.py` y `escala.py`; `nargs="*"` sin `action="extend"`.
+- **Vigilancia:** pines del runtime en todos los jobs del CI y del Nightly (dos jobs: pinado = compuerta; rangos frescos = aviso);
+  suite rápida con `pytest-xdist`; cotas del perfil SIN_NIT declaradas (ADR-0014, `docs/DEUDA_SIN_NIT.md`); cuatro módulos muertos
+  retirados.
+
 ## [Sin publicar] — F2 · Calidad y unificación del motor: estrellas en `linkage()`, identidad estable, un estándar en los cinco caminos
 
 **Cambio de comportamiento declarado (ADR-0011)**: `produccion_estandar` aplica

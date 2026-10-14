@@ -197,12 +197,10 @@
       "nombre": "Datos faltantes (NIT o nombre nulo)",
       "tipo_esperado": "EDGE",
       "pares": 1,
-      "aciertos": 0,
-      "pasa": false,
+      "aciertos": 1,
+      "pasa": true,
       "frontera": false,
-      "detalle": [
-        "56: unido a ['57']"
-      ],
+      "detalle": [],
       "origen": "verdad_por_registro"
     },
     {
@@ -234,12 +232,10 @@
       "nombre": "Score en frontera del threshold",
       "tipo_esperado": "BOUNDARY",
       "pares": 1,
-      "aciertos": 0,
-      "pasa": false,
+      "aciertos": 1,
+      "pasa": true,
       "frontera": false,
-      "detalle": [
-        "(58,59)"
-      ],
+      "detalle": [],
       "origen": "pares_declarados"
     },
     {
@@ -247,12 +243,10 @@
       "nombre": "Stopwords críticas",
       "tipo_esperado": "EDGE",
       "pares": 1,
-      "aciertos": 0,
-      "pasa": false,
+      "aciertos": 1,
+      "pasa": true,
       "frontera": false,
-      "detalle": [
-        "57: unido a ['56']"
-      ],
+      "detalle": [],
       "origen": "verdad_por_registro"
     },
     {
@@ -336,8 +330,8 @@
     }
   ],
   "precision": 1.0,
-  "recall": 0.9695,
-  "f1": 0.9845,
+  "recall": 0.9771,
+  "f1": 0.9884,
   "nota": "camino de producción api.linkage(); sin corroboración (F3 no existe en este camino)",
   "corroborar": false,
   "camino": "linkage",

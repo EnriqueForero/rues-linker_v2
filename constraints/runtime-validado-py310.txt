@@ -1,0 +1,24 @@
+# constraints/runtime-validado-py310.txt — pines del runtime validado para Python 3.10 (Fase 0, 2026-10-13)
+#
+# pandas 3 y numpy 2.3 no publican ruedas para Python 3.10: en esa versión el runtime validado es
+# pandas 2.3 + numpy 2.2. Mismas reglas que runtime-validado.txt: define REPRODUCIBILIDAD, no
+# compatibilidad (los rangos viven en pyproject). Verificado: tests/test_vinculacion_* (1.345 casos)
+# y la guarda de nombres reales en Python 3.10.20.
+#
+# Uso:  pip install -e ".[dev]" -c constraints/runtime-validado-py310.txt
+#
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==25.0.1
+scipy==1.15.3
+scikit-learn==1.7.2
+networkx==3.4.2
+datasketch==1.10.0
+rapidfuzz==3.14.5
+psutil==7.2.2
+pytz==2026.5
+tqdm==4.70.1
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+h5py==3.16.0
+duckdb==1.5.6

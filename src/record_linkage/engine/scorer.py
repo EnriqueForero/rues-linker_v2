@@ -32,6 +32,7 @@ import pandas as pd
 from rapidfuzz import fuzz
 from tqdm import tqdm
 
+from ..matching.idf import PesosIDF
 from ..utils.logger import CustomLogger
 from ..utils.memory import (
     MemoryManager,
@@ -193,6 +194,18 @@ def _a_booleano(valores: np.ndarray) -> np.ndarray:
         return serie.fillna(0).astype(float).to_numpy() == 1.0
     texto = serie.astype("string").fillna("").str.strip().str.lower()
     return texto.isin(["1", "true", "t", "si", "sí", "yes", "y"]).to_numpy(dtype=bool)
+
+
+#: F4.1: una página de ``candidate_pairs`` a partir del último par leído, por la clave primaria
+#: ``(idx_0, idx_1)``: O(lote) por página en las dos rutas de puntuación. ``OFFSET`` obligaba a SQLite a
+#: recorrer de nuevo todas las filas anteriores (O(n²) sobre millones de candidatos).
+#: Comparadores de nombre que acepta el perfil (``comparador_nombre``).
+COMPARADORES_NOMBRE = frozenset({"legado", "soft_tfidf"})
+
+CONSULTA_PAGINA_CANDIDATOS = (
+    "SELECT idx_0, idx_1 FROM candidate_pairs WHERE (idx_0, idx_1) > (?, ?) "
+    "ORDER BY idx_0, idx_1 LIMIT ?"
+)
 
 
 @runtime_checkable
@@ -416,8 +429,24 @@ class VectorizedScorer:
         )
         self.token_idf: dict[str, float] = dict(self.profile.get("_token_idf", {}))
         self.idf_default: float = float(self.profile.get("idf_default", 1.0))
-        self._pesos_idf: object | None = None
+        self._pesos_idf: PesosIDF | None = None
         self._corpus_idf: int = -1
+
+        # ── Fase 3: COMPARADOR DE NOMBRE ─────────────────────────────────
+        # "legado": token_set_ratio + refinamientos (contención = 1,0: el 100 %
+        # de los falsos positivos del banco eran «RODRIGUEZ» dentro de «LAURA
+        # RODRIGUEZ»). "soft_tfidf": coseno de tokens ponderados por IDF con
+        # tolerancia Jaro-Winkler entre tokens (matching/soft_tfidf.py).
+        self.comparador_nombre: str = str(self.profile.get("comparador_nombre", "legado"))
+        if self.comparador_nombre not in COMPARADORES_NOMBRE:
+            raise ValueError(
+                f"comparador_nombre={self.comparador_nombre!r} no existe. "
+                f"Los comparadores de nombre son {sorted(COMPARADORES_NOMBRE)}; "
+                "corrija el perfil o el --ajuste."
+            )
+        self.soft_tfidf_umbral_token: float = float(
+            self.profile.get("soft_tfidf_umbral_token", 0.90)
+        )
 
         # ── v2.7.0 (P2 Camino #1): VARIABLES ADICIONALES ─────────────────
         # Soporta features extra opcionales (CIUDAD, TELEFONO, etc.) sin
@@ -748,7 +777,7 @@ class VectorizedScorer:
         # Camino rápido: idénticos → 1.0
         name_similarities[identical_mask] = 1.0
 
-        if tsr_mask.any():
+        if tsr_mask.any() and self.comparador_nombre == "legado":
             tsr_idx = np.where(tsr_mask)[0]
             # cpdist: pairwise(queries[k], choices[k]) en C++.
             tsr_scores = (
@@ -794,6 +823,23 @@ class VectorizedScorer:
                 tsr_scores[refine_local_mask] = refined
 
             name_similarities[tsr_idx] = tsr_scores
+
+        # ── Fase 3: COMPARADOR SOFT TF-IDF ───────────────────────────────
+        # Sustituye al bloque anterior cuando el perfil lo pide. Idénticos ya
+        # valen 1,0 y los no viables 0,0; aquí solo se puntúan los demás. El
+        # IDF del corpus se construye una vez por corrida (_obtener_pesos_idf).
+        if tsr_mask.any() and self.comparador_nombre == "soft_tfidf":
+            pesos_idf = self._obtener_pesos_idf(df)
+            if pesos_idf is not None and not pesos_idf.vacio:
+                from ..matching.soft_tfidf import similitud_soft_tfidf
+
+                _pos = np.where(tsr_mask)[0]
+                name_similarities[_pos] = similitud_soft_tfidf(
+                    pesos_idf,
+                    names_0_s[_pos],
+                    names_1_s[_pos],
+                    umbral_token=self.soft_tfidf_umbral_token,
+                )
 
         # ── SIMILITUD DE CADENA COMPACTADA (v0.18.0) ─────────────────────
         # El comparador por tokens se rompe cuando el error mueve un espacio:
@@ -1158,7 +1204,7 @@ class VectorizedScorer:
         centinela = texto.str.lower().isin({"nan", "none", "null", "<na>", ""})
         return ((texto.str.len() >= 6) & ~centinela).to_numpy()
 
-    def _obtener_pesos_idf(self, df: pd.DataFrame) -> object | None:
+    def _obtener_pesos_idf(self, df: pd.DataFrame) -> PesosIDF | None:
         """Construye una sola vez el mapa token → IDF del corpus.
 
         La informatividad de un token es una propiedad del CORPUS, no del
@@ -1691,14 +1737,15 @@ class VectorizedScorer:
 
         all_results = []
         offset = 0
-        query = "SELECT idx_0, idx_1 FROM candidate_pairs ORDER BY idx_0, idx_1 LIMIT ? OFFSET ?"
+        ultimo = (-1, -1)
 
         with tqdm(total=total_candidates, desc="Calculando scores desde disco") as pbar:
             while offset < total_candidates:
-                cursor.execute(query, (self.batch_size, offset))
+                cursor.execute(CONSULTA_PAGINA_CANDIDATOS, (*ultimo, self.batch_size))
                 batch_rows = cursor.fetchall()
                 if not batch_rows:
                     break
+                ultimo = (int(batch_rows[-1][0]), int(batch_rows[-1][1]))
 
                 batch_candidates = np.array(batch_rows)
 
@@ -1893,17 +1940,11 @@ class VectorizedScorer:
         last_idx_1 = -1
         total_scored = 0
         total_passed = 0
-        write_buffer = []
+        write_buffer: list[tuple[int, int, float, float, float, int, float]] = []
         write_buffer_size = 10000
 
-        # Query para leer batches
-        query = """
-            SELECT idx_0, idx_1
-            FROM candidate_pairs
-            WHERE idx_0 > ? OR (idx_0 = ? AND idx_1 > ?)
-            ORDER BY idx_0, idx_1
-            LIMIT ?
-        """
+        # Query para leer batches (F4.1: una sola consulta de página para las dos rutas)
+        query = CONSULTA_PAGINA_CANDIDATOS
 
         completed = False
         try:
@@ -1914,10 +1955,7 @@ class VectorizedScorer:
                 while total_scored < total_candidates:
                     # Paginación por clave sobre la PK, O(batch). OFFSET obliga
                     # a SQLite a volver a recorrer todas las filas anteriores.
-                    cursor.execute(
-                        query,
-                        (last_idx_0, last_idx_0, last_idx_1, self.batch_size),
-                    )
+                    cursor.execute(query, (last_idx_0, last_idx_1, self.batch_size))
                     batch_rows = cursor.fetchall()
 
                     if not batch_rows:
@@ -1952,28 +1990,30 @@ class VectorizedScorer:
                         else:
                             phon_arr = np.zeros(len(valid_scores), dtype=np.float64)
 
-                        for k in range(len(valid_scores)):
-                            write_buffer.append(
-                                (
-                                    int(idx_0_arr[k]),
-                                    int(idx_1_arr[k]),
-                                    float(score_arr[k]),
-                                    float(name_sim_arr[k]),
-                                    float(nit_sim_arr[k]),
-                                    int(nit_dist_arr[k]),
-                                    float(phon_arr[k]),
-                                )
+                        # F4.3: ``tolist`` convierte cada columna a escalares nativos de una vez;
+                        # ``zip`` arma las tuplas sin un bucle Python por par.
+                        write_buffer.extend(
+                            zip(
+                                idx_0_arr.tolist(),
+                                idx_1_arr.tolist(),
+                                score_arr.tolist(),
+                                name_sim_arr.tolist(),
+                                nit_sim_arr.tolist(),
+                                nit_dist_arr.tolist(),
+                                phon_arr.tolist(),
+                                strict=True,
                             )
+                        )
 
-                            # Escribir buffer cuando esté lleno
-                            if len(write_buffer) >= write_buffer_size:
-                                scored_cursor.executemany(
-                                    """INSERT INTO scored_pairs
-                                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                    write_buffer,
-                                )
-                                total_passed += len(write_buffer)
-                                write_buffer = []
+                        # Escribir buffer cuando esté lleno
+                        if len(write_buffer) >= write_buffer_size:
+                            scored_cursor.executemany(
+                                """INSERT INTO scored_pairs
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                write_buffer,
+                            )
+                            total_passed += len(write_buffer)
+                            write_buffer = []
 
                     # Actualizar estadísticas
                     total_scored += len(batch_rows)

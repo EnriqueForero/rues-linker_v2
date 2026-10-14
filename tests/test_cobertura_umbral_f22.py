@@ -222,6 +222,32 @@ def test_escala_cli_acepta_ajuste_con_clave_anidada() -> None:
     assert parsear_ajustes(args.ajuste) == {"cobertura_sin_identificador": {"umbral": 0.84}}
 
 
+@pytest.mark.parametrize("nombre", ["banco", "escala"])
+def test_los_cli_acumulan_ajuste_repetido_en_vez_de_quedarse_con_el_ultimo(nombre: str) -> None:
+    """Hallazgo IT-33: ``--ajuste a=1 --ajuste b=2`` dejaba solo ``b=2`` (``nargs="*"`` sin ``extend``).
+
+    Las corridas de Fase 2 con dos ajustes perdieron ``motor_candidatos=hibrido`` en silencio y midieron
+    el LSH creyendo medir el híbrido. Las dos formas (repetida y en una sola bandera) deben dar lo mismo.
+    """
+    script = cargar_script(nombre)
+    repetida = script.construir_parser().parse_args(
+        [
+            "--etiqueta",
+            "x",
+            "--ajuste",
+            "motor_candidatos=hibrido",
+            "--ajuste",
+            "score_threshold=0.55",
+        ]
+    )
+    junta = script.construir_parser().parse_args(
+        ["--etiqueta", "x", "--ajuste", "motor_candidatos=hibrido", "score_threshold=0.55"]
+    )
+    esperado = {"motor_candidatos": "hibrido", "score_threshold": 0.55}
+    assert parsear_ajustes(repetida.ajuste) == esperado
+    assert parsear_ajustes(junta.ajuste) == esperado
+
+
 def test_el_banco_cli_deja_la_corrida_en_la_carpeta_de_evidencia_pedida(
     tmp_path: Path, monkeypatch
 ) -> None:

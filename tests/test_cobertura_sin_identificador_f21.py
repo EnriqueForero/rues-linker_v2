@@ -325,6 +325,18 @@ def _manifiesto(work_dir: Path) -> dict:
     return json.loads((work_dir / "manifest.json").read_text(encoding="utf-8"))
 
 
+#: La cadena del fixture la arma la contención («ANDARIEGA BRUMOSA» ⊂ «ANDARIEGA BRUMOSA CALICANTO»), que
+#: el comparador legado valora 1,0. Desde ADR-0015 el perfil de producción compara con Soft TF-IDF y la cadena
+#: ya no se forma; esta prueba mide la perilla de cobertura, así que fija el motor y el comparador con los que
+#: se diseñó. El perfil nuevo se mide en el banco (`tests/test_banco_linea_base.py`).
+_MOTOR_DEL_FIXTURE = {
+    "motor_candidatos": "lsh",
+    "comparador_nombre": "legado",
+    "similitud_compacta_min": 0.0,
+    "nit_identical_overrides_name_filter": False,
+}
+
+
 @pytest.mark.slow
 def test_linkage_parte_la_cadena_solo_con_la_perilla_activa(tmp_path) -> None:
     fuente = _fuente_encadenada()
@@ -335,7 +347,7 @@ def test_linkage_parte_la_cadena_solo_con_la_perilla_activa(tmp_path) -> None:
         sources={"CRM": fuente},
         work_dir=str(tmp_path / "apagada"),
         skip_reporting=True,
-        ajustes_perfil={"cobertura_sin_identificador": {"activa": False}},
+        ajustes_perfil={**_MOTOR_DEL_FIXTURE, "cobertura_sin_identificador": {"activa": False}},
     )
     assert _grupos_de(apagada, andariega) == _grupos_de(apagada, brumosa), (
         "sin cobertura el puente encadena las dos entidades (precondición de la prueba)"
@@ -344,7 +356,10 @@ def test_linkage_parte_la_cadena_solo_con_la_perilla_activa(tmp_path) -> None:
     assert "cobertura_sin_identificador" not in meta_apagada
 
     encendida = linkage(
-        sources={"CRM": fuente}, work_dir=str(tmp_path / "encendida"), skip_reporting=True
+        sources={"CRM": fuente},
+        work_dir=str(tmp_path / "encendida"),
+        skip_reporting=True,
+        ajustes_perfil=dict(_MOTOR_DEL_FIXTURE),
     )
     ga, gb = _grupos_de(encendida, andariega), _grupos_de(encendida, brumosa)
     assert len(ga) == 1 and len(gb) == 1, "cada entidad conserva sus variantes"
@@ -363,18 +378,24 @@ def test_linkage_parte_la_cadena_solo_con_la_perilla_activa(tmp_path) -> None:
 
 # ── Paridad: con la perilla apagada el banco reproduce la huella de F0 ─────
 
-#: Huella de la partición del banco institucional en 0.22.4 / F0 (ADR-0011,
-#: `docs/evidencia/corrida_base_f0.json`). Se lee de `BANCO_F0`, que desde
-#: F2.17 es historia (el tronco sigue a `BANCO_VIGENTE`), y ESTA prueba mide lo
-#: contrario del tronco: que apagar la cobertura devuelve 0.22.4 exacto.
-HUELLA_SIN_COBERTURA = BANCO_F0.huella
+#: Huella de la partición del banco institucional con la cobertura apagada. Hasta F3 era la de 0.22.4 / F0
+#: (`BANCO_F0`, ADR-0011): apagar la perilla devolvía el motor sin tocar. ESTA prueba sigue midiendo lo
+#: contrario del tronco (`BANCO_VIGENTE`): que apagar la cobertura, y solo eso, dé exactamente la partición
+#: medida sin ella.
+#: Desde ADR-0015/0016 el perfil de producción ya no es el de F0: con la cobertura apagada la partición es
+#: otra (``docs/evidencia/fase3_comparador/corrida_f3_sin_cobertura.json``: macro-F1 0.9352, 84 FP que tocan un
+#: negativo, frente a 0.9107 y 73 con la cobertura activa). La prueba sigue midiendo lo mismo: que apagar la
+#: perilla, y solo eso, devuelva exactamente esa partición.
+HUELLA_SIN_COBERTURA = "dfdf663cf2af8b244bcee428005d9bc85a3cacb449747830fc8ef523459a739b"
+FP_SIN_COBERTURA = 84
+MACRO_F1_SIN_COBERTURA = 0.9352
 RAIZ = Path(__file__).resolve().parents[1]
 DATOS_BANCO = RAIZ / "data" / "benchmark" / "benchmark_institucional.csv.gz"
 
 
 @pytest.mark.slow
 def test_con_la_perilla_apagada_el_banco_reproduce_la_huella_de_f0(tmp_path: Path) -> None:
-    """`activa: False` conserva la partición de 0.22.4 exactamente (≈ 50 s).
+    """`activa: False` conserva exactamente la partición medida sin cobertura (≈ 50 s).
 
     Es la mitad «paridad» del cambio declarado: la otra mitad (el valor por
     defecto activo) la mide `tests/test_banco_linea_base.py` contra la línea
@@ -397,8 +418,8 @@ def test_con_la_perilla_apagada_el_banco_reproduce_la_huella_de_f0(tmp_path: Pat
         f"con la cobertura apagada la huella debía ser {HUELLA_SIN_COBERTURA[:16]}… y fue "
         f"{corrida.huella[:16]}…: algo distinto de la perilla cambió la partición"
     )
-    assert corrida.calidad.fp_que_tocan_negativo == BANCO_F0.fp_que_tocan_negativo
-    assert corrida.calidad.macro_f1 == pytest.approx(BANCO_F0.macro_f1, abs=5e-4)
+    assert corrida.calidad.fp_que_tocan_negativo == FP_SIN_COBERTURA
+    assert corrida.calidad.macro_f1 == pytest.approx(MACRO_F1_SIN_COBERTURA, abs=5e-4)
 
 
 # ── scripts/banco.py: --ajuste con clave anidada (para medir el barrido) ───

@@ -1826,3 +1826,104 @@ Eso dice que los arreglos no rompen los escenarios, no que mejoren la precisión
 
 Plan ≈ 53 % (F0 + F1 + F2 = 44 %; F3 ≈ 48 % de su 18 %: F3.0, F3.1 y F3.1b hechos; F3.2 a F3.7 pendientes). Siguen F3.2 (catálogos y locale), F3.3 (`vincular_empresas` → `ResultadoLinkage`), F3.4 (decisiones unificadas),
 F3.5/F3.6 (notebooks 10 y 09; **no** se crea el 11), F3.7 (ADR-0014, `docs/VINCULACION.md`, skill), luego F4 y F5/F6. Pendiente de Enrique: borrar las ramas viejas desde GitHub (el proxy de las sesiones no puede).
+
+
+## IT-32 · Fase 0 y Fase 1 de la ruta: vigilancia en verde e instrumentos de verdad real (sin publicar)
+
+Primera iteración después del diagnóstico integral (`docs/DIAGNOSTICO_Y_RUTA_2026-10-13.md`). Enrique autorizó avanzar en todo lo que
+no dependa de él, abrir los PR y dejar `main` al día; se comprometió a correr bases reales para medir precisión y recall.
+
+### Fase 0 · vigilancia
+
+* **Pines en el CI y en el Nightly.** `constraints/runtime-validado.txt` existía y ningún job lo usaba. Ahora todos los jobs instalan con
+  `-c`; Python 3.10 tiene su archivo (`runtime-validado-py310.txt`: pandas 3 no existe para esa versión). El Nightly tiene dos jobs: el
+  pinado es la compuerta; el de rangos frescos avisa (`continue-on-error`). Antes un solo job con rangos frescos llevaba 20 corridas en rojo
+  y nadie podía distinguir «deriva de dependencias» de «regresión del código».
+* **La regresión SIN_NIT, declarada (ADR-0014, `docs/DEUDA_SIN_NIT.md`).** P 0,864 · R 0,547 · F1 0,670 frente a las cotas de v0.7.4
+  (0,87 / 0,47 / 0,61): el balance se desplazó entre v0.7.4 y v0.22.4 (F1 +0,025, P −0,043), idéntico con cuatro combinaciones de
+  dependencias. No se bisecó: el camino `deduplicate_unified` es heredado y la Fase 3 lo sustituye. Las cotas quedan donde el motor está
+  (P ≥ 0,85 · R ≥ 0,50 · F1 ≥ 0,64). El documento que la prueba citaba desde v0.7.4 no existía: ahora existe.
+* **Suite rápida en paralelo.** `pytest-xdist`, `-n auto --dist loadfile`: 3.840 pruebas en 10 min 44 s con 4 procesos (antes 29–35 min por
+  versión de Python en el CI). 0 fallos en paralelo. Las 25 pruebas más lentas (20–68 s) corren el pipeline entero: material para la Fase 6.
+* **Código muerto, primera tanda.** Cuatro módulos sin ninguna referencia en `src`, `tests`, `scripts` ni notebooks
+  (`pipeline/config_manager.py`, `deduplication/nit_assignment.py`, `utils/validation.py`, `processing/utilities.py`: 694 líneas). La deuda bajó
+  (`print` 152 → 147, `os.path` 117 → 115, `except` 101 → 100, mypy 80 → 79) y el techo se fijó. Los demás no alcanzables tienen usuarios en
+  pruebas o scripts: se deciden en la Fase 6 con el camino único.
+* **Lo que no se pudo:** borrar las ramas viejas (el proxy de la sesión rechaza la escritura por git y por la API de GitHub). Las borra Enrique.
+
+### Fase 1 · instrumentos de verdad real
+
+* **Las tablas de verdad del Drive son sintéticas.** `Ground_Truth_Robusto_V3.xlsx`, `Ground_Truth_Exhaustivo_RecordLinkage.xlsx` y
+  `Ground_Truth_Multicampo_v1.xlsx` traen la columna «EXPLICACIÓN DEL RETO» con la perturbación que generó cada fila (y marcas reales como
+  semillas, así que tampoco pueden entrar al repositorio). No hay verdad real etiquetada. Enrique creía haber pasado una; no.
+* **Un solo formato de etiquetas y un instrumento** (`evaluation/verdad_real.py`): `ID_1, ID_2, IS_MATCH[, ANOTADOR]`; `leer_etiquetas` acepta los
+  textos de los anotadores (SAME/DIFFERENT, MISMA/DISTINTA, SI/NO) y descarta las dudas contándolas; `medir_verdad_real` da precisión y
+  recall por régimen (CON_ID / SIN_ID / MIXTO) con intervalo de Wilson al 95 % —la verdad real es una muestra de pares, no una partición—;
+  `acuerdo_entre_anotadores` da el kappa de Cohen y los desacuerdos. Reutiliza `evaluar_pares_etiquetados`, que ya existía. 12 pruebas.
+* **`scripts/medir_verdad_real.py`** para las corridas reales de Enrique: etiquetas + correlativa → tabla por régimen y JSON de cifras (sin datos).
+* **`docs/PROTOCOLO_GROUND_TRUTH.md`**: lo citaba `scripts/medir_kappa.py` desde v0.9 y no existía. Una página: muestra estratificada por régimen y
+  banda de puntaje, dos anotadores a ciegas, regla de decisión escrita, kappa ≥ 0,8, dónde viven los archivos (fuera del repositorio).
+* **`docs/evidencia/compuertas.json` + `tests/test_compuertas.py`**: pisos (lo que la evidencia comprometida cumple hoy; la prueba falla si una
+  medición nueva los rompe) y objetivos (la meta de la ruta) por banco, escala, bloqueo, verdad real, Colab e ingeniería.
+
+### Lo que la iteración enseñó
+
+* Dos documentos citados por pruebas y scripts durante meses no existían (`DEUDA_SIN_NIT.md`, `PROTOCOLO_GROUND_TRUTH.md`). Una prueba
+  que cita un documento debe fallar si el documento no está: queda para la Fase 6 como regla de la casa.
+* Un archivo de pines que ningún job usa es una promesa, no una protección.
+
+### Estado al cierre
+
+Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fase 2: el generador de candidatos híbrido.
+
+## IT-33 · Fase 2 y Fase 3 de la ruta: candidatos híbridos, comparador Soft TF-IDF y el nuevo perfil de producción (sin publicar)
+
+*2026-10-14. Rama `claude/fase0-vigilancia` (sobre `main` con PR #6 mezclado). Evidencia: `docs/evidencia/fase2_candidatos_hibridos.md`,
+`docs/evidencia/fase3_comparador_nombre.md`, ADR-0015 y ADR-0016.*
+
+### Qué se hizo y cómo se decidió
+
+* **PR #6 mezclado en `main`** (F3.1b + diagnóstico), con el CI verde en 3.10, 3.11 y 3.12; el job de deuda mypy sigue en rojo visible.
+* **F4.1/F4.3 adelantadas:** paginación de `candidate_pairs` por la clave primaria en las dos rutas de L3 (la no streaming usaba
+  `OFFSET`, cuadrático) y escritura vectorizada; 44 pruebas de L3 verdes y la huella del banco intacta (`5bfed0d1`).
+* **Fase 2, el generador híbrido** (`engine/candidatos/`): NIT + tokens distintivos + TF-IDF de trigramas + llaves exactas, misma
+  tabla `candidate_pairs`, misma política de fuentes. Recall de pares SIN_ID 0,718 → 0,947 y L2 39 s → 22 s. Pero la calidad final
+  empeoraba (macro-F1 0,880 → 0,793; 246 → 2.859 FP que tocan un negativo). La anatomía (`scripts/anatomia_fp.py`) lo explicó: el
+  100 % de los falsos positivos eran pares de contención con `name_sim = 1,0` y sin NIT. El LSH tapaba el defecto del comparador.
+* **Un hallazgo de instrumento:** `--ajuste a=1 --ajuste b=2` solo guardaba `b=2`. Las primeras siete corridas de la fase midieron
+  el LSH creyendo medir el híbrido; se vio porque el JSON de cada corrida guarda la especificación. Arreglado con prueba.
+* **Fase 3, el comparador** (`matching/soft_tfidf.py`): coseno de tokens ponderados por IDF con emparejamiento uno a uno y tolerancia
+  Jaro-Winkler entre tokens. Barrido a nivel de par (`scripts/barrido_comparador_nombre.py`): soft solo cambia recall por precisión;
+  con tolerancia 0,85 y respaldo de cadena compactada 0,93 domina al legado (misma recall SIN_ID, precisión 0,971 vs 0,919, un tercio
+  de los falsos). En el banco completo, el recall CON_ID caía (0,977 → 0,946): 795 pares con el mismo NIT y nombres sin tokens en común
+  (siglas) que el piso de nombre vetaba y el legado pasaba por azar. La perilla `nit_identical_overrides_name_filter` existía desde
+  v2.8.0 pero los perfiles base no la declaraban; declarada y activada, los recupera.
+* **Nuevo perfil de producción** (ADR-0015, ADR-0016): híbrido + soft 0,90 + compacta 0,95 + exención por identificador idéntico.
+  Banco: macro-F1 **0,9107** (0,8803), P 0,9844 (0,9557), R 0,8255 (0,7927), recall SIN_ID 0,6347 (0,5836), FP que tocan un negativo
+  73 (246), 44 s (59 s). Huella `0b4ea2ec`. Primero elegí 0,85 + 0,93 por 0,001 de macro-F1 (207 FP): la escala a 139k lo
+  desmintió (raíces cortas distintas encadenadas en un componente de 13.844 filas, OOM de 13,5 GB en la cobertura por estrellas,
+  arreglada en streaming) y la regla «unir mal duele más» decidió el punto estricto. Las compuertas suben su piso (`compuertas.json`). Los demás perfiles base siguen en el
+  legado hasta medirse. Las variantes por borrado del índice de tokens quedan apagadas (no cambiaban nada; +138.000 candidatos).
+
+* **Escala 139k con el perfil final:** F1 0,9722 (referencia 0,9662), recall 0,9652 (0,9475), 5 FP que tocan un negativo (34),
+  6,8 M de candidatos (12,7 M), 309 s (333 s), RSS pico 1.174 MiB. Dos arreglos salieron de ahí: la cobertura por estrellas en
+  streaming para componentes gigantes (la matriz k×k pedía 13,5 GB) y el producto TF-IDF en lotes de 500 filas (RSS de L2 1.599 →
+  1.135 MiB, mismos pares).
+
+* **Los pines de agosto no se instalaban en Python 3.11.** `constraints/runtime-validado.txt` (generado en 3.12 el 27-ago) pedía
+  `scipy==1.18.1`, que no existe para 3.11; la Fase 0 lo conectó al CI y el primer PR que lo usó cayó en la instalación. Remedido
+  desde el entorno de esta iteración (3.11.17: pandas 3.0.6, scipy 1.17.1, scikit-learn 1.9.1, rapidfuzz 3.14.6, pyarrow 26.0.0) y
+  comprobada la disponibilidad de cada pin para 3.12.
+
+### Lo que la iteración enseñó
+
+* Un bloqueo con más recall no mejora nada si el comparador no es honesto: primero el comparador, después el recall.
+* Un instrumento que guarda su especificación delata al que no la aplicó. Sin el JSON de la corrida, el error de `--ajuste` habría
+  pasado como «el híbrido no sirve».
+* Lo que ningún comparador de nombre resuelve: negativos con el mismo nombre normalizado. El grueso de los 207 FP que quedan. Siguen
+  las otras variables y el puntaje probabilístico.
+
+### Lo que NO está
+
+Puntaje probabilístico (Fellegi–Sunter/EM) y umbrales por costo; otras variables en el puntaje de producción; verdad real (depende de
+Enrique); medición de escala y Colab con el nuevo perfil (Fase 4). Sin versión ni tag.

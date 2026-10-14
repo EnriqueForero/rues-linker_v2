@@ -1,0 +1,34 @@
+{
+  "fecha": "2026-10-14",
+  "fuente": "docs/DIAGNOSTICO_Y_RUTA_2026-10-13.md, sección 4",
+  "regla": "«piso» es lo que la evidencia comprometida en docs/evidencia debe cumplir HOY (tests/test_compuertas.py falla si una medición nueva lo rompe); «objetivo» es la meta de la ruta: se sube el piso a medida que se alcanza. Los tiempos no se comparan aquí (dependen de la máquina): los compara scripts/escala.py --comparar.",
+  "banco_institucional": {
+    "evidencia": "docs/evidencia/corrida_base_f3.json",
+    "piso": {"macro_f1": 0.91, "precision": 0.98, "recall_SIN_ID": 0.63, "fp_que_tocan_negativo_max": 73, "grupo_mayor_sin_identificador_filas_max": 50},
+    "objetivo": {"macro_f1": 0.92, "precision": 0.95, "recall_SIN_ID": 0.80, "fp_que_tocan_negativo_max": 246}
+  },
+  "escala_139k": {
+    "evidencia": "docs/evidencia/escala_f3_default.json",
+    "piso": {"f1": 0.97, "candidatos_max": 6774079, "rss_pico_mib_max": 1250},
+    "objetivo": {"f1": 0.96, "candidatos_por_registro_max": 20, "rss_pico_mib_max": 1024, "segundos_total_max": 60}
+  },
+  "bloqueo": {
+    "evidencia": "docs/evidencia/fase3_comparador/recall_h_s085c093_id.json",
+    "piso": {"recall_pares_SIN_ID": 0.92, "recall_pares_CON_ID": 0.99},
+    "objetivo": {"recall_pares_SIN_ID": 0.95, "recall_pares_CON_ID": 0.99, "candidatos_por_registro_max": 20}
+  },
+  "verdad_real": {
+    "evidencia": null,
+    "piso": null,
+    "objetivo": {"pares_etiquetados_min": 3000, "kappa_min": 0.8, "precision_CON_ID": 0.97, "precision_SIN_ID": 0.90},
+    "nota": "No existe aún: docs/PROTOCOLO_GROUND_TRUTH.md. Hasta la primera medición ninguna cifra de calidad vale para empresas reales."
+  },
+  "colab_4M": {
+    "evidencia": null,
+    "objetivo": {"segundos_total_max": 7200, "rss_pico_mib_max": 8192, "reanudable": true}
+  },
+  "ingenieria": {
+    "evidencia": "docs/evidencia/deuda_f0.json",
+    "objetivo": {"suite_rapida_minutos_max": 10, "nightly_verde": true, "cobertura_min": 75, "except_sin_relanzar": 0, "print": 0, "mypy": 0, "archivo_lineas_max": 600, "cc_max": 15}
+  }
+}

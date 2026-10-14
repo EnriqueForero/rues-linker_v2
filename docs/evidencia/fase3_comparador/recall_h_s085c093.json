@@ -1,0 +1,17 @@
+{
+  "registros": 30486,
+  "candidatos": 1254470,
+  "candidatos_por_registro": 41.15,
+  "pares_verdaderos": 46374,
+  "recall_pares": 0.9735,
+  "por_regimen": {
+    "CON_ID": {
+      "pares_verdaderos": 24658,
+      "recall_pares": 0.9969
+    },
+    "SIN_ID": {
+      "pares_verdaderos": 21716,
+      "recall_pares": 0.9469
+    }
+  }
+}

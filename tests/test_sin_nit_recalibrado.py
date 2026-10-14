@@ -27,11 +27,12 @@ from record_linkage.evaluation.pairwise import evaluar_pares
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GT_PATH = REPO_ROOT / "tests" / "data" / "ground_truth_grande.csv"
 
-# Cotas con holgura sobre lo medido (P=0.907, R=0.501, F1=0.645).
-# Margen: -0.03 para absorber jitter sin enmascarar una degradación real.
-F1_MIN = 0.61
-PRECISION_MIN = 0.87
-RECALL_MIN = 0.47
+# Cotas declaradas el 2026-10-13 (ADR-0014, docs/DEUDA_SIN_NIT.md) sobre lo medido hoy
+# (P=0.864, R=0.547, F1=0.670; en v0.7.4 era P=0.907, R=0.501, F1=0.645: el balance se desplazó
+# entre v0.7.4 y v0.22.4). Margen de 0.015 a 0.03 para absorber jitter sin tapar una degradación real.
+F1_MIN = 0.64
+PRECISION_MIN = 0.85
+RECALL_MIN = 0.50
 
 
 @pytest.fixture(scope="module")

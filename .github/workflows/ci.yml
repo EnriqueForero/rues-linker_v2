@@ -80,7 +80,7 @@ jobs:
           cache: pip
 
       - name: Install package and typing tools
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c constraints/runtime-validado.txt
 
       - name: Run mypy
         run: mypy --config-file=pyproject.toml src/record_linkage/
@@ -97,7 +97,7 @@ jobs:
           cache: pip
 
       - name: Install package and typing tools
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c constraints/runtime-validado.txt
 
       - name: Mypy on hardened production ring
         run: |
@@ -132,17 +132,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install package and test deps
+      - name: Install package and test deps (pines del runtime validado)
+        # Fase 0 (2026-10-13): el CI instala las versiones VALIDADAS, no «lo último compatible».
+        # Python 3.10 tiene su propio archivo porque pandas 3 no existe para esa versión. El Nightly
+        # sigue probando rangos frescos para ver la deriva el día que ocurre, sin bloquear.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          CONSTRAINTS="constraints/runtime-validado.txt"
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then CONSTRAINTS="constraints/runtime-validado-py310.txt"; fi
+          pip install -e ".[dev]" -c "$CONSTRAINTS"
 
       - name: Coherencia de versión (pyproject == CHANGELOG == instalada)
         run: python scripts/verificar_coherencia_version.py
 
       - name: Run pytest with coverage
+        # Fase 0 (2026-10-13): en paralelo con pytest-xdist (3.840 pruebas en 10 min 44 s con 4 procesos,
+        # antes 29–35 min). --dist loadfile mantiene cada archivo en un proceso: los fixtures de módulo
+        # que corren el pipeline entero (20–25 s cada uno) no se repiten en varios procesos.
         run: |
-          pytest tests/ -v --tb=short \
+          pytest tests/ -q --tb=short -n auto --dist loadfile --durations=25 \
             -m "not canario and not slow" \
             --cov=record_linkage \
             --cov-report=term \
@@ -198,7 +206,7 @@ jobs:
       - name: Install package and security scanners
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev]" -c constraints/runtime-validado.txt
 
       - name: Reject high-severity static findings
         run: bandit -q -r src -lll
@@ -218,7 +226,7 @@ jobs:
           cache: pip
 
       - name: Install package and tools (ruff, mypy)
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c constraints/runtime-validado.txt
 
       # Mide cc_ge_20 / except_sin_relanzar / print / os_path / mypy sobre
       # src/record_linkage y falla si CUALQUIER conteo supera la referencia.

@@ -13,6 +13,14 @@ del repositorio y el build del 08 aplica la misma regla— y se regenera con el
 comando de abajo cuando haga falta analizar un error fila a fila. (Hasta 0.22.4
 este párrafo decía que ambos se versionaban; el `.gitignore` nunca lo hizo.)
 
+## Carpetas por fase de la ruta 2026-10-13
+
+| Carpeta | Contenido |
+|---|---|
+| `revision_2026-10-13/` | la revisión integral: banco, escala 139k y el experimento de bloqueo TF-IDF que motivó la Fase 2 |
+| `fase2_candidatos/` | las corridas del generador híbrido (`corrida_*.json`) y el recall de pares del bloqueo (`recall_*.json`); lectura en `fase2_candidatos_hibridos.md` |
+| `fase3_comparador/` | las corridas del comparador Soft TF-IDF y del perfil nuevo; lectura en `fase3_comparador_nombre.md`; `corrida_h_s085c093_id.json` reproduce, con `--ajuste`, la huella de `corrida_base_f3.json` (la línea base F3 y la evidencia de `compuertas.json`) |
+
 ## Corridas de referencia de 0.18.0
 
 | etiqueta | qué es |
