@@ -1,6 +1,9 @@
 # constraints/runtime-validado.txt — Entorno de runtime VALIDADO (F0.2)
 #
 # Generado: 2026-08-27 · Python 3.12 · suite y datos adjuntos verificados.
+# Remedido: 2026-10-14 · Python 3.11.17 (el entorno de IT-32 e IT-33: banco, escala y
+# suites) · scipy 1.18 no existe para 3.11 y los pines de agosto nunca se habían
+# instalado en el CI hasta que la Fase 0 los conectó.
 # Congela las versiones directas bajo las que se validó v0.16.0. No sustituye
 # los rangos de pyproject (esos definen compatibilidad); esto define
 # REPRODUCIBILIDAD del runtime auditado. El workflow deps-bump genera además
@@ -9,18 +12,18 @@
 # Uso:  pip install -e . -c constraints/runtime-validado.txt
 # Actualización: SOLO vía el workflow deps-bump (mensual, gateado) o con acta.
 #
-pandas==3.0.5
+pandas==3.0.6
 numpy==2.3.5
-pyarrow==25.0.1
-scipy==1.18.1
-scikit-learn==1.9.0
+pyarrow==26.0.0
+scipy==1.17.1
+scikit-learn==1.9.1
 networkx==3.6.1
 datasketch==1.10.0
-rapidfuzz==3.14.5
+rapidfuzz==3.14.6
 psutil==7.2.2
-pytz==2026.3.post1
-tqdm==4.70.0
+pytz==2026.5
+tqdm==4.70.1
 openpyxl==3.1.5
 xlsxwriter==3.2.9
 h5py==3.16.0
-duckdb==1.5.5
+duckdb==1.5.6

@@ -1910,6 +1910,11 @@ Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fas
   streaming para componentes gigantes (la matriz k×k pedía 13,5 GB) y el producto TF-IDF en lotes de 500 filas (RSS de L2 1.599 →
   1.135 MiB, mismos pares).
 
+* **Los pines de agosto no se instalaban en Python 3.11.** `constraints/runtime-validado.txt` (generado en 3.12 el 27-ago) pedía
+  `scipy==1.18.1`, que no existe para 3.11; la Fase 0 lo conectó al CI y el primer PR que lo usó cayó en la instalación. Remedido
+  desde el entorno de esta iteración (3.11.17: pandas 3.0.6, scipy 1.17.1, scikit-learn 1.9.1, rapidfuzz 3.14.6, pyarrow 26.0.0) y
+  comprobada la disponibilidad de cada pin para 3.12.
+
 ### Lo que la iteración enseñó
 
 * Un bloqueo con más recall no mejora nada si el comparador no es honesto: primero el comparador, después el recall.
