@@ -62,6 +62,8 @@ ARCHIVOS_VIGILADOS = (
     "tests/apoyo_*_vinculacion.py",
     "docs/REANUDAR.md",
     "docs/PLAN_EJECUCION.md",
+    "docs/DIAGNOSTICO_Y_RUTA_2026-10-13.md",
+    "docs/evidencia/revision_2026-10-13/*",
     "docs/vinculacion/*.md",
     "scripts/oraculo_vinculacion/*.py",
     "scripts/oraculo_vinculacion/*.md",

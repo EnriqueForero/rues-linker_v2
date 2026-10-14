@@ -330,19 +330,39 @@ def _hay_variable(col: str, graf_prep: pd.DataFrame, prep_b: pd.DataFrame) -> bo
     )
 
 
+def _es_de_otro_pais(out: pd.DataFrame, k: int) -> bool:
+    """¿El par ``k`` ya se sabe de países distintos? (sin la columna ``MISMO_PAIS`` o sin dato: no)."""
+    return "MISMO_PAIS" in out.columns and out["MISMO_PAIS"].iat[k] == "NO"
+
+
+def _subir_por_identificador(out: pd.DataFrame, k: int) -> None:
+    """Sube el par ``k`` a EMPRESA/A porque comparte identificador comparable y explica por qué en el MOTIVO.
+
+    F3.1b (C1): el original subía también los pares de países distintos y dejaba el MOTIVO del nivel anterior («en otro
+    país»), con lo que un EMPRESA/A podía tener palabras sin alinear y cruzar países. Ahora el identificador decide solo
+    cuando el país coincide o falta en algún lado; entre países se informa y el nivel no cambia (``_es_de_otro_pais``).
+    """
+    nivel, banda = posicion_columna(out, "NIVEL_AUTO"), posicion_columna(out, "BANDA_AUTO")
+    cambia = (out.iat[k, nivel], out.iat[k, banda]) != ("EMPRESA", "A")
+    out.iat[k, nivel] = "EMPRESA"
+    out.iat[k, banda] = "A"
+    if cambia and "MOTIVO" in out.columns:
+        mismo = "MISMO_PAIS" in out.columns and out["MISMO_PAIS"].iat[k] == "SÍ"
+        previo = out["MOTIVO"].iat[k]
+        out.iat[k, posicion_columna(out, "MOTIVO")] = (
+            f"Mismo identificador comparable{' y mismo país' if mismo else ''}: lo decide el identificador. "
+            f"Antes: {previo}"
+        )
+
+
 def _subir_par(out: pd.DataFrame, k: int, col: str) -> None:
     """Sube el par ``k`` de ``out`` (por posición) según la variable cuyo valor coincide.
 
-    Solo el identificador comparable lleva a EMPRESA/A. Web, correo y teléfono suben un candidato C que
-    comparte palabra a GRUPO/B. La ciudad solo se informa.
+    Solo el identificador comparable lleva a EMPRESA/A (y no entre países). Web, correo y teléfono suben un candidato C
+    que comparte palabra a GRUPO/B. La ciudad solo se informa.
     """
     if col == "ID_COMPARABLE":
-        # Hallazgo F3: la subida a EMPRESA/A no mira las palabras, el país ni el MOTIVO del par. Queda un EMPRESA/A
-        # con palabras sin alinear (la invariante «todo vínculo A tiene todas las palabras alineadas» de
-        # ``controles`` marca FALLA); con identificadores iguales en países distintos, un EMPRESA/A entre países
-        # (otra invariante en FALLA); y un MOTIVO que sigue explicando el nivel anterior (p. ej. «en otro país»).
-        out.iat[k, posicion_columna(out, "NIVEL_AUTO")] = "EMPRESA"
-        out.iat[k, posicion_columna(out, "BANDA_AUTO")] = "A"
+        _subir_por_identificador(out, k)
     elif (
         col in _VARIABLES_QUE_SUBEN_A_GRUPO
         and out["BANDA_AUTO"].iat[k] == "C"
@@ -377,6 +397,9 @@ def evidencia_extra(
         vb = prep_b[col].to_numpy()[out["pos_b"].to_numpy()]
         igual = (va != "") & (va == vb)
         for k in np.flatnonzero(igual):
+            if col == "ID_COMPARABLE" and _es_de_otro_pais(out, k):
+                notas[k].append(f"mismo {nombre} (en otro país: no cambia el nivel)")
+                continue
             notas[k].append(f"mismo {nombre}")
             _subir_par(out, k, col)
     out["EVIDENCIA_EXTRA"] = ["; ".join(n) for n in notas]

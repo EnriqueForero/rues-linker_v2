@@ -7,7 +7,7 @@ descartan los pares que no cumplen ninguna de tres vías:
 1. comparten una palabra distintiva, con tolerancia de una letra (índice invertido de variantes con una
    letra borrada, al estilo SymSpell);
 2. se parecen como cadena (Jaro-Winkler ≥ 0,85, todas contra todas, en C);
-3. el nombre de la ancla es la sigla o la abreviatura del nombre del destino.
+3. el nombre de un lado es la sigla o la abreviatura del nombre del otro (en los dos sentidos).
 
 ``generar_candidatos`` junta las tres vías, puntúa cada par con el ``Comparador`` y lo expande a las grafías
 y a los registros que comparten esa superficie. Aquí no se decide nada sobre el vínculo: eso es de
@@ -144,33 +144,37 @@ def _pares_por_cadena(ua: _Unicas, ub: _Unicas) -> _Pares:
     return set(zip(ii.tolist(), jj.tolist(), strict=True))
 
 
-def _fichas_destino(ub: _Unicas, nz: Normalizador) -> tuple[dict[str, list[int]], list[list[str]]]:
-    """Fichas de cada superficie del destino (sin formas legales ni conectores) e índice por inicial.
+def _fichas_por_inicial(
+    unicas: _Unicas, nz: Normalizador
+) -> tuple[dict[str, list[int]], list[list[str]]]:
+    """Fichas de cada superficie (sin formas legales ni conectores) e índice por inicial.
 
-    Devuelve ``(primeras_b, fichas_b)``: ``fichas_b[j]`` son las fichas de la superficie ``j`` y
-    ``primeras_b[letra]`` las posiciones de las superficies cuya primera ficha empieza por esa letra.
+    Devuelve ``(primeras, fichas)``: ``fichas[k]`` son las fichas de la superficie ``k`` y
+    ``primeras[letra]`` las posiciones de las superficies cuya primera ficha empieza por esa letra.
     """
-    primeras_b: dict[str, list[int]] = defaultdict(list)
-    fichas_b: list[list[str]] = []
-    for j, s in enumerate(ub):
-        fb = [t for t in s.split() if t not in nz.legales and t not in CONECTORES]
-        fichas_b.append(fb)
-        if fb:
-            primeras_b[fb[0][0]].append(j)
-    return primeras_b, fichas_b
+    primeras: dict[str, list[int]] = defaultdict(list)
+    fichas: list[list[str]] = []
+    for k, s in enumerate(unicas):
+        f = [t for t in s.split() if t not in nz.legales and t not in CONECTORES]
+        fichas.append(f)
+        if f:
+            primeras[f[0][0]].append(k)
+    return primeras, fichas
 
 
-def _agregar_pares_por_sigla(pares: _Pares, ua: _Unicas, ub: _Unicas, nz: Normalizador) -> None:
-    """Vía 3: agrega a ``pares`` los que son sigla o abreviatura (primera letra igual y nombre corto).
+def _siglas_contra(
+    siglas: _Unicas,
+    primeras: dict[str, list[int]],
+    fichas: list[list[str]],
+    nz: Normalizador,
+) -> list[tuple[int, int]]:
+    """Pares ``(k, m)``: la superficie ``k`` de ``siglas`` abrevia a la superficie ``m`` del otro lado.
 
-    Solo se busca para variantes de hasta 5 fichas, con alguna de 4 letras o menos; el destino se
-    toma por su primera inicial y ``es_abreviatura`` decide. Un par que ya está en ``pares`` no se evalúa.
+    Solo se busca para variantes de hasta 5 fichas, con alguna de 4 letras o menos; el otro lado se toma por
+    su primera inicial y ``es_abreviatura`` decide.
     """
-    primeras_b, fichas_b = _fichas_destino(ub, nz)
-    # Hallazgo F3: solo se busca la sigla en el lado de la ancla (``fa`` abrevia a la ficha del destino). Si la
-    # sigla está en el destino y la ancla trae el nombre largo, el par no entra por esta vía, aunque
-    # ``Comparador.rasgos`` sí reconoce la abreviatura en los dos sentidos: se pierde recall.
-    for i, s in enumerate(ua):
+    out: list[tuple[int, int]] = []
+    for k, s in enumerate(siglas):
         for fa in fichas_abreviatura(s, nz):
             if (
                 not fa
@@ -178,9 +182,26 @@ def _agregar_pares_por_sigla(pares: _Pares, ua: _Unicas, ub: _Unicas, nz: Normal
                 or not any(len(t) <= _LARGO_FICHA_CORTA for t in fa)
             ):
                 continue
-            for j in primeras_b.get(fa[0][0], []):
-                if (i, j) not in pares and es_abreviatura(fa, fichas_b[j], nz.genericos):
-                    pares.add((i, j))
+            out.extend(
+                (k, m)
+                for m in primeras.get(fa[0][0], [])
+                if es_abreviatura(fa, fichas[m], nz.genericos)
+            )
+    return out
+
+
+def _agregar_pares_por_sigla(pares: _Pares, ua: _Unicas, ub: _Unicas, nz: Normalizador) -> None:
+    """Vía 3: agrega a ``pares`` los que son sigla o abreviatura, en los dos sentidos.
+
+    Se busca tanto la sigla del lado de la ancla (``KEV`` contra ``KRONOS EMPRESARIAL VALDORIA`` del destino)
+    como la del lado del destino (la ancla trae el nombre largo y el destino la sigla): el motor original solo
+    miraba el primer sentido y perdía el par, aunque ``Comparador.rasgos`` reconoce la abreviatura en los dos
+    (arreglo C3 de F3.1b).
+    """
+    primeras_a, fichas_a = _fichas_por_inicial(ua, nz)
+    primeras_b, fichas_b = _fichas_por_inicial(ub, nz)
+    pares.update(_siglas_contra(ua, primeras_b, fichas_b, nz))
+    pares.update((i, j) for j, i in _siglas_contra(ub, primeras_a, fichas_a, nz))
 
 
 def _expandir(

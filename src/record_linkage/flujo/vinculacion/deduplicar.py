@@ -42,6 +42,8 @@ __all__ = [
 _Union = tuple[int, int, str]
 
 # Forma legal (familias): dos formas de familias distintas = personas jurídicas distintas.
+# F3.1b (g3-O6): se agregan las formas latinoamericanas (Ltda, Lda, S. en C., E.U., EIRL) y `\b` inicial a LIMITED/LIMITADA
+# (antes «Unlimited» caía en LTD e «Ilimitada» en SL, y las formas sin familia eran compatibles con cualquiera).
 # El orden de la tabla es la prioridad: la primera familia cuyo patrón aparece en el nombre.
 FAMILIAS_LEGALES = [
     ("STIFTUNG_KG", r"STIFTUNG (?:&|\+|UND)? ?CO KG"),
@@ -57,15 +59,18 @@ FAMILIAS_LEGALES = [
     ("SAS", r"\bSASU?\b"),
     (
         "SL",
-        r"\bSLU?\b|\bSRLS?\b|\bSARL\b|\bEURL\b|\bKFT\b|\bSP ZOO\b|LIMITADA|RESPONSABILITA LIMITATA",
+        r"\bSLU?\b|\bSRLS?\b|\bSARL\b|\bEURL\b|\bKFT\b|\bSP ZOO\b|\bLIMITADA\b|RESPONSABILITA LIMITATA"
+        r"|\bLTDA\b|\bLDA\b",
     ),
     ("SCA", r"\bSCA\b"),
+    ("SCS", r"\bS EN C\b|\bSCS\b|COMANDITA SIMPLE"),
     ("SA", r"\bSAU?\b|\bSPA\b|ANONIMA|PER AZIONI"),
     ("BV", r"\bBV\b"),
     ("NV", r"\bNV\b"),
-    ("LTD", r"\bLTD\b|LIMITED\b"),
+    ("LTD", r"\bLTD\b|\bLIMITED\b"),
     ("INC", r"\bINC\b|\bCORP\b"),
     ("LLC", r"\bLLC\b"),
+    ("EU", r"\bEU$|\bEIRL\b|UNIPERSONAL"),
 ]
 FAMILIAS_RE = [(k, re.compile(p)) for k, p in FAMILIAS_LEGALES]
 
@@ -87,6 +92,70 @@ def componentes(n: int, a: Iterable[int], b: Iterable[int]) -> np.ndarray:
         if rx != ry:
             padre[max(rx, ry)] = min(rx, ry)
     return pd.factorize(np.array([raiz(i) for i in range(n)]))[0]
+
+
+def componentes_restringidas(
+    n: int,
+    uniones: list[_Union],
+    humanas: list[bool],
+    vetos: set[tuple[int, int]],
+    formas: np.ndarray,
+) -> tuple[np.ndarray, list[bool], dict[int, str]]:
+    """Componentes conexas que respetan los vetos de una persona y no mezclan formas legales distintas.
+
+    Procesa primero las uniones decididas por una persona (``humanas``) y luego las automáticas, cada grupo en su
+    orden. Una unión que juntaría dos empresas con un veto entre miembros (una decisión ``DISTINTA``) se rechaza,
+    sea humana o automática; una unión AUTOMÁTICA que dejaría en la empresa más de una forma legal (``formas``,
+    ``''`` = sin dato) también. Devuelve ``(etiquetas, aceptada, razon)``: las etiquetas como ``componentes``, qué
+    uniones se aplicaron (en el orden de ``uniones``) y por qué se rechazó cada una de las demás.
+
+    F3.1b (g3-O1, g3-O2): el original unía por transitividad sin mirar nada más, así que una grafía sin forma legal
+    servía de puente entre «SL» y «S. Coop.», y una decisión DISTINTA entre dos grafías no impedía que otras las
+    juntaran (la invariante de vetos quedaba en FALLA).
+    """
+    padre = list(range(n))
+    miembros: dict[int, list[int]] = {}
+    familias: dict[int, set[str]] = {}
+    vecinos: dict[int, set[int]] = {}
+    for a, b in vetos:
+        vecinos.setdefault(a, set()).add(b)
+        vecinos.setdefault(b, set()).add(a)
+
+    def raiz(x: int) -> int:
+        while padre[x] != x:
+            padre[x] = padre[padre[x]]
+            x = padre[x]
+        return x
+
+    def de(r: int) -> list[int]:
+        return miembros.get(r, [r])
+
+    def formas_de(r: int) -> set[str]:
+        return familias[r] if r in familias else ({str(formas[r])} - {""})
+
+    aceptada = [False] * len(uniones)
+    razon: dict[int, str] = {}
+    orden = [i for i, h in enumerate(humanas) if h] + [i for i, h in enumerate(humanas) if not h]
+    for i in orden:
+        rp, rq = raiz(uniones[i][0]), raiz(uniones[i][1])
+        if rp != rq:
+            chico, grande = (rp, rq) if len(de(rp)) <= len(de(rq)) else (rq, rp)
+            if any(raiz(v) == grande for m in de(chico) for v in vecinos.get(m, ())):
+                razon[i] = "una decisión DISTINTA separa a miembros de ambas empresas"
+                continue
+            juntas = formas_de(rp) | formas_de(rq)
+            if not humanas[i] and len(juntas) > 1:
+                razon[i] = (
+                    f"la empresa mezclaría formas legales distintas ({' ≠ '.join(sorted(juntas))})"
+                )
+                continue
+            padre[chico] = grande
+            miembros[grande] = [*de(grande), *de(chico)]
+            miembros.pop(chico, None)
+            familias[grande] = juntas
+            familias.pop(chico, None)
+        aceptada[i] = True
+    return pd.factorize(np.array([raiz(i) for i in range(n)]))[0], aceptada, razon
 
 
 # ── Forma legal ──────────────────────────────────────────────────────────────
@@ -208,13 +277,17 @@ def _motivo_de_union(
     elif por_alias and (r["SIN_SOBRAS"] or r["COMPACTO_IGUAL"]):
         motivo = "coincide con el nombre entre paréntesis (¿marca?)"
     elif r["COMPACTO_IGUAL"]:
-        # Hallazgo F3: no mira MARCAS_OK: 'J MARTINEZ' y 'A MARTINEZ' (o 'KRAMENTO 2' y '… 3') se unen solas.
-        auto, motivo = (
-            compatibles,
-            "mismas letras, otros espacios"
-            if compatibles
-            else "mismas letras, forma legal distinta",
-        )
+        if r["MARCAS_OK"]:
+            auto, motivo = (
+                compatibles,
+                "mismas letras, otros espacios"
+                if compatibles
+                else "mismas letras, forma legal distinta",
+            )
+        else:
+            # F3.1b (B1): el original no miraba MARCAS_OK y 'J MARTINEZ' = 'A MARTINEZ' (o 'KRAMENTO 2' = '… 3') se unían
+            # solas. Ahora las iniciales o los números distintos mandan el par a pendientes: lo decide una persona.
+            motivo = "mismas letras, pero difieren las iniciales o los números (¿otra persona o sucursal?)"
     elif (
         r["SIN_SOBRAS"]
         and r["N_COMPARTIDAS"]
@@ -346,23 +419,28 @@ def _filas_duplicado(dec: pd.DataFrame, clave_fuente: str) -> pd.DataFrame:
 
 def _decisiones_ancla(
     graf: pd.DataFrame, dec: pd.DataFrame, clave_fuente: str
-) -> tuple[list[_Union], set[tuple[int, int]], list[tuple[str, str]]]:
+) -> tuple[list[_Union], set[tuple[int, int]], list[tuple[str, str]], list[tuple[str, str]]]:
     """Aplica las decisiones DUPLICADO de la ancla sobre las grafías de ``graf``.
 
-    Devuelve ``(uniones, vetos, desconocidas)``: ``MISMA_ENTIDAD`` agrega una unión y levanta un veto
+    Devuelve ``(uniones, vetos, desconocidas, autopares)``: ``MISMA_ENTIDAD`` agrega una unión y levanta un veto
     anterior del mismo par; cualquier otra decisión (``DISTINTA``) pone el veto. Las claves que no son
-    una grafía de ``graf`` no se aplican y se devuelven en ``desconocidas``.
+    una grafía de ``graf`` no se aplican y se devuelven en ``desconocidas``; una decisión de una grafía contra sí
+    misma, en ``autopares``.
     """
-    # Hallazgo F3: aquí MISMA_ENTIDAD levanta un veto previo (el último manda) y las claves desconocidas se
-    # reportan; ``_decisiones_destino`` no hace ninguna de las dos cosas (DISTINTA y luego MISMA deja el veto).
     pos = {k: i for i, k in enumerate(graf["CLAVE"])}
     vetos: set[tuple[int, int]] = set()
     uniones: list[_Union] = []
     desconocidas: list[tuple[str, str]] = []
+    autopares: list[tuple[str, str]] = []
     r: Any  # fila de itertuples(): sus campos son las columnas de ``dec``
     for r in _filas_duplicado(dec, clave_fuente).itertuples():
         if r.CLAVE_A not in pos or r.CLAVE_B not in pos:
             desconocidas.append((r.CLAVE_A, r.CLAVE_B))
+            continue
+        if pos[r.CLAVE_A] == pos[r.CLAVE_B]:
+            # F3.1b (g3-O3): una grafía contra sí misma no es una decisión: el original ponía un veto (p, p) que dejaba
+            # la invariante de vetos siempre en FALLA, o una unión sin efecto ni aviso.
+            autopares.append((r.CLAVE_A, r.CLAVE_B))
             continue
         p, q = sorted((pos[r.CLAVE_A], pos[r.CLAVE_B]))
         if r.DECISION == "MISMA_ENTIDAD":
@@ -370,7 +448,7 @@ def _decisiones_ancla(
             vetos.discard((p, q))
         else:
             vetos.add((p, q))
-    return uniones, vetos, desconocidas
+    return uniones, vetos, desconocidas, autopares
 
 
 def _filtrar_pendientes(
@@ -380,9 +458,11 @@ def _filtrar_pendientes(
     pe = pd.DataFrame(pend, columns=["pos_a", "pos_b", "MOTIVO"])
     if len(pe):
         pe = pe[etiquetas[pe.pos_a.to_numpy()] != etiquetas[pe.pos_b.to_numpy()]]
-        pe = pe[
-            [(min(a, b), max(a, b)) not in vetos for a, b in zip(pe.pos_a, pe.pos_b, strict=True)]
-        ].reset_index(drop=True)
+        sin_veto = np.array(
+            [(min(a, b), max(a, b)) not in vetos for a, b in zip(pe.pos_a, pe.pos_b, strict=True)],
+            dtype=bool,
+        )
+        pe = pe[sin_veto].reset_index(drop=True)
     return pe
 
 
@@ -411,18 +491,32 @@ def deduplicar_ancla(
     """
     graf = _agrupar_grafias(prep)
     n = len(graf)
-    uniones, pend = _comparar_grafias(graf, nz, comp, cfg)
+    por_regla, pend = _comparar_grafias(graf, nz, comp, cfg)
     # Decisiones humanas TIPO=DUPLICADO sobre la ancla
-    por_decision, vetos, desconocidas = _decisiones_ancla(graf, dec, cfg.ancla.clave)
-    uniones = [
-        (p, q, m) for p, q, m in [*uniones, *por_decision] if (min(p, q), max(p, q)) not in vetos
+    por_decision, vetos, desconocidas, autopares = _decisiones_ancla(graf, dec, cfg.ancla.clave)
+    todas = [
+        (u, humana)
+        for lista, humana in ((por_regla, False), (por_decision, True))
+        for u in lista
+        if (min(u[0], u[1]), max(u[0], u[1])) not in vetos
     ]
-    etiquetas = componentes(n, [u[0] for u in uniones], [u[1] for u in uniones])
+    etiquetas, aceptada, razon = componentes_restringidas(
+        n, [u for u, _ in todas], [h for _, h in todas], vetos, graf["FORMA_LEGAL"].to_numpy()
+    )
+    uniones = [u for (u, _), ok in zip(todas, aceptada, strict=True) if ok]
+    pend = [
+        *pend,
+        *[
+            (*todas[i][0][:2], f"{todas[i][0][2]}; no se une sola: {r}")
+            for i, r in sorted(razon.items())
+        ],
+    ]
     graf["_COMP"] = etiquetas
     un = pd.DataFrame(uniones, columns=["pos_a", "pos_b", "REGLA"])
     pe = _filtrar_pendientes(pend, etiquetas, vetos)
     graf.attrs["vetos"] = vetos
     graf.attrs["desconocidas"] = desconocidas
+    graf.attrs["autopares"] = autopares
     return graf, un, pe
 
 
@@ -457,23 +551,33 @@ def _uniones_por_nombre(prep: pd.DataFrame, nz: Normalizador) -> list[_Union]:
 
 def _decisiones_destino(
     prep: pd.DataFrame, dec: pd.DataFrame, clave_fuente: str
-) -> tuple[list[_Union], set[tuple[int, int]]]:
-    """Aplica las decisiones DUPLICADO de un destino (claves = ``ID_REGISTRO``); devuelve ``(uniones, vetos)``.
+) -> tuple[list[_Union], set[tuple[int, int]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """Aplica las decisiones DUPLICADO de un destino (claves = ``ID_REGISTRO``), en el orden en que llegan.
 
-    Las claves que no son un ``ID_REGISTRO`` del destino se ignoran en silencio.
+    Devuelve ``(uniones, vetos, desconocidas, autopares)``. Como en la ancla, manda la ÚLTIMA decisión sobre un par
+    (una MISMA_ENTIDAD levanta un DISTINTA anterior y al revés); las claves que no son un ``ID_REGISTRO`` del
+    destino van a ``desconocidas`` y un registro contra sí mismo a ``autopares``: no se aplican, pero se avisan.
     """
     pos = {k: i for i, k in enumerate(prep["ID_REGISTRO"])}
     vetos: set[tuple[int, int]] = set()
     uniones: list[_Union] = []
+    desconocidas: list[tuple[str, str]] = []
+    autopares: list[tuple[str, str]] = []
     r: Any  # fila de itertuples(): sus campos son las columnas de ``dec``
     for r in _filas_duplicado(dec, clave_fuente).itertuples():
-        if r.CLAVE_A in pos and r.CLAVE_B in pos:
-            p, q = sorted((pos[r.CLAVE_A], pos[r.CLAVE_B]))
-            if r.DECISION == "MISMA_ENTIDAD":
-                uniones.append((p, q, f"decisión: {r.AUTOR or r.ARCHIVO}"))
-            else:
-                vetos.add((p, q))
-    return uniones, vetos
+        if r.CLAVE_A not in pos or r.CLAVE_B not in pos:
+            desconocidas.append((r.CLAVE_A, r.CLAVE_B))
+            continue
+        if pos[r.CLAVE_A] == pos[r.CLAVE_B]:
+            autopares.append((r.CLAVE_A, r.CLAVE_B))
+            continue
+        p, q = sorted((pos[r.CLAVE_A], pos[r.CLAVE_B]))
+        if r.DECISION == "MISMA_ENTIDAD":
+            uniones.append((p, q, f"decisión: {r.AUTOR or r.ARCHIVO}"))
+            vetos.discard((p, q))
+        else:
+            vetos.add((p, q))
+    return uniones, vetos, desconocidas, autopares
 
 
 def deduplicar_destino(
@@ -481,18 +585,19 @@ def deduplicar_destino(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Entidades dentro de una base destino. Con identificador: SOLO por raíz del ID.
 
-    Sin identificador: la MISMA cadena (salvo mayúsculas y espacios) y los mismos países de
-    evidencia; en registros de grupos como fDi Markets, 'Zelvora' y 'Zelvora Inc' son matriz y filial.
+    Sin identificador: la MISMA cadena original (salvo mayúsculas y espacios) y los mismos países de
+    evidencia; en registros de grupos como fDi Markets, 'Zelvora' y 'Zelvora Inc' son matriz y filial. No se
+    compara el nombre normalizado ni la forma legal: 'Triventa SA' y 'Triventa S.A.' NO se unen (B6: así lo hacía
+    el motor original, cuyo docstring decía otra cosa; ``FORMA_LEGAL`` solo se informa).
 
     Devuelve ``(entidades, uniones)``: ``entidades`` es ``prep`` con las columnas ``ID_ENTIDAD``,
-    ``N_EN_ENTIDAD`` y ``FORMA_LEGAL``; ``uniones`` tiene las columnas ``pos_a, pos_b, REGLA``.
+    ``N_EN_ENTIDAD`` y ``FORMA_LEGAL`` (y en ``attrs`` las decisiones que no se pudieron aplicar:
+    ``desconocidas`` y ``autopares``); ``uniones`` tiene las columnas ``pos_a, pos_b, REGLA``.
     """
-    # Hallazgo F3: el docstring original prometía «mismo nombre normalizado … y misma forma legal»; el código compara
-    # la cadena original: 'Triventa SA' y 'Triventa S.A.' no se unen, y ``FORMA_LEGAL`` solo se informa.
     n = len(prep)
     forma = familias_legales(prep["NOMBRE_ORIGINAL"])
     uniones = _uniones_por_identificador(prep) if f.col_id else _uniones_por_nombre(prep, nz)
-    por_decision, vetos = _decisiones_destino(prep, dec, f.clave)
+    por_decision, vetos, desconocidas, autopares = _decisiones_destino(prep, dec, f.clave)
     uniones = [
         (p, q, m) for p, q, m in [*uniones, *por_decision] if (min(p, q), max(p, q)) not in vetos
     ]
@@ -501,5 +606,7 @@ def deduplicar_destino(
     out["ID_ENTIDAD"] = [f"{f.prefijo_id}-E{e + 1:04d}" for e in et]
     out["N_EN_ENTIDAD"] = out.groupby("ID_ENTIDAD")["ID_ENTIDAD"].transform("size").to_numpy()
     out["FORMA_LEGAL"] = forma
+    out.attrs["desconocidas"] = desconocidas
+    out.attrs["autopares"] = autopares
     un = pd.DataFrame(uniones, columns=["pos_a", "pos_b", "REGLA"])
     return out, un

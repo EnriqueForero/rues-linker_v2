@@ -8,6 +8,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.cell.cell import Cell
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, PatternFill
 from openpyxl.utils import get_column_letter
@@ -20,7 +21,13 @@ from record_linkage.flujo.vinculacion_excel.estilos import (
     Pestana,
 )
 
-__all__ = ["colorear_columna", "escribir_tabla", "formatear_tabla", "hoja_desde_tabla"]
+__all__ = [
+    "colorear_columna",
+    "escribir_celda",
+    "escribir_tabla",
+    "formatear_tabla",
+    "hoja_desde_tabla",
+]
 
 #: Caracteres de control que Excel no admite (se conservan el tabulador, el salto de línea y el retorno).
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -41,36 +48,44 @@ def _valor_de_celda(valor: object) -> object:
     return valor
 
 
+def escribir_celda(hoja: Worksheet, fila: int, columna: int, valor: object) -> Cell:
+    """Escribe ``valor`` en una celda con las mismas garantías que ``escribir_tabla``.
+
+    Nativos de Python, ausente = celda vacía, booleano = ``SÍ``/``NO``, caracteres de control cambiados por un
+    espacio y un texto que empieza con ``=`` marcado como texto (no es una fórmula).
+    """
+    valor = _valor_de_celda(valor)
+    celda = hoja.cell(row=fila, column=columna, value=valor)
+    if isinstance(valor, str) and valor.startswith("="):
+        celda.data_type = "s"  # texto que empieza con '=' no es una fórmula
+    return celda
+
+
 def escribir_tabla(hoja: Worksheet, tabla: pd.DataFrame, fila0: int = 1, col0: int = 1) -> None:
     """Escribe ``tabla`` desde la celda (``fila0``, ``col0``): el encabezado y luego una fila por registro.
 
-    Los tipos de numpy pasan a nativos, un ausente queda como celda vacía, un booleano se escribe
-    ``SÍ``/``NO``, los caracteres de control se cambian por un espacio y un texto que empieza con ``=``
-    se marca como texto (no es una fórmula).
+    Encabezado y datos pasan por ``escribir_celda``: los tipos de numpy pasan a nativos, un ausente queda como
+    celda vacía, un booleano se escribe ``SÍ``/``NO``, los caracteres de control se cambian por un espacio y un
+    texto que empieza con ``=`` se marca como texto (no es una fórmula).
     """
-    # Hallazgo F3: el encabezado no se limpia: un nombre con «=» inicial sería fórmula y uno con control, un error.
     for j, c in enumerate(tabla.columns):
-        hoja.cell(row=fila0, column=col0 + j, value=str(c))
+        escribir_celda(hoja, fila0, col0 + j, str(c))
     valores = tabla.astype(object).where(tabla.notna(), None).to_numpy()
     for i in range(len(tabla)):
         for j in range(len(tabla.columns)):
-            valor = _valor_de_celda(valores[i, j])
-            celda = hoja.cell(row=fila0 + 1 + i, column=col0 + j, value=valor)
-            if isinstance(valor, str) and valor.startswith("="):
-                celda.data_type = "s"  # texto que empieza con '=' no es una fórmula
+            escribir_celda(hoja, fila0 + 1 + i, col0 + j, valores[i, j])
 
 
 def _largos_de_columnas(tabla: pd.DataFrame) -> list[int]:
     """Largo de cada columna: el mayor entre su nombre y el percentil 90 de sus primeros 300 valores."""
     largos = [len(str(c)) for c in tabla.columns]
-    muestra = tabla.head(300).astype(str)
+    muestra = tabla.head(300)
     for j, c in enumerate(tabla.columns):
-        if len(muestra):
-            # Hallazgo F3: el `else 0` es inalcanzable. Con pandas 3 `astype(str)` deja los ausentes en NaN: una
-            # columna sin ningún valor en esas 300 filas da `int(NaN)` (ValueError) y el ancho cambia con la versión.
-            largos[j] = max(
-                largos[j], int(muestra[c].str.len().quantile(0.9)) if len(muestra) else 0
-            )
+        # Los ausentes no cuentan: con pandas 3 ``astype(str)`` los deja en NaN (y una columna sin ningún valor
+        # lanzaba ValueError) y con pandas 2 los vuelve 'None'/'nan'; así el ancho no depende de la versión.
+        presentes = muestra[c].dropna().astype(str)
+        if len(presentes):
+            largos[j] = max(largos[j], int(presentes.str.len().quantile(0.9)))
     return largos
 
 
@@ -158,6 +173,22 @@ def colorear_columna(
         hoja.conditional_formatting.add(rango, regla)
 
 
+def _nombre_de_hoja_unico(libro: Workbook, nombre: str) -> str:
+    """``nombre`` recortado a 31 caracteres y distinto (sin distinguir mayúsculas, como Excel) de los ya usados.
+
+    Si el recortado ya existe, se le pone ``_2``, ``_3``… al final, dentro de los 31 caracteres. Antes openpyxl
+    renombraba la segunda hoja a 32 caracteres (con un aviso) y Excel podía no abrir el libro.
+    """
+    base = nombre[:_LARGO_MAXIMO_NOMBRE_HOJA]
+    usados = {n.lower() for n in libro.sheetnames}
+    candidato, k = base, 1
+    while candidato.lower() in usados:
+        k += 1
+        sufijo = f"_{k}"
+        candidato = base[: _LARGO_MAXIMO_NOMBRE_HOJA - len(sufijo)] + sufijo
+    return candidato
+
+
 def hoja_desde_tabla(
     libro: Workbook,
     estilos: Estilos,
@@ -169,12 +200,11 @@ def hoja_desde_tabla(
     anchos_max: int = 55,
     envolver: bool = True,
 ) -> Worksheet:
-    """Crea la hoja ``nombre`` (recortada a 31 caracteres) con ``tabla`` escrita y formateada.
+    """Crea la hoja ``nombre`` (recortada a 31 caracteres y sin repetir el de otra hoja) con ``tabla`` escrita y formateada.
 
     Una tabla ausente o sin columnas deja la hoja con la sola celda ``(sin datos)``.
     """
-    # Hallazgo F3: dos nombres iguales en sus 31 primeros caracteres: openpyxl renombra el segundo a 32 (con aviso).
-    hoja = libro.create_sheet(nombre[:_LARGO_MAXIMO_NOMBRE_HOJA])
+    hoja = libro.create_sheet(_nombre_de_hoja_unico(libro, nombre))
     hoja.sheet_properties.tabColor = COLORES_PESTANA[pestana]
     if tabla is None or not len(tabla.columns):
         hoja["A1"] = "(sin datos)"

@@ -9,6 +9,7 @@ importa: el último manda.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -59,15 +60,21 @@ _COLUMNAS_OBLIGATORIAS = ("TIPO", "FUENTE", "CLAVE_A", "CLAVE_B", "DECISION")
 _HOJAS_DECISIONES = ("DECISIONES", "REVISION")
 
 
+_ESPACIOS = re.compile(r"\s+")
+
+
+def _sin_espacios_de_mas(texto: str) -> str:
+    return _ESPACIOS.sub(" ", texto.strip())
+
+
 def clave_texto(x: Iterable[object]) -> pd.Series:
-    """Clave natural sin espacios de más: sobrevive a un CSV abierto y guardado en Excel."""
-    return (
-        pd.Series(x, dtype="object")
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.replace(r"\s+", " ", regex=True)
-    )
+    """Clave natural sin espacios de más: sobrevive a un CSV abierto y guardado en Excel.
+
+    F3.1b (g3-O5): se normaliza con ``re`` de Python, igual en pandas 2 y 3. Con pandas 3 el ``\\s`` de ``Series.str``
+    lo evalúa Arrow/RE2, que no reconoce el espacio duro (NBSP), U+2007, U+202F, U+3000, ``\\x0b`` ni ``\\x85``: la
+    misma empresa daba otra grafía y un archivo de decisiones hecho en pandas 2 no casaba en pandas 3.
+    """
+    return pd.Series(x, dtype="object").fillna("").astype(str).map(_sin_espacios_de_mas).astype(str)
 
 
 def clave_ancla(pais: Iterable[object], nombre: Iterable[object]) -> pd.Series:

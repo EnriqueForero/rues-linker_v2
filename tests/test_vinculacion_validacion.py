@@ -226,21 +226,24 @@ def test_falsos_positivos_y_negativos_con_su_etiqueta():
 def test_sin_referencia_la_precision_es_cero_y_el_recall_es_nan():
     """Sin vínculos de referencia todo vínculo automático es falso positivo y el recall no está definido."""
     metricas, d = validar_contra_referencia(AUTO, REF.iloc[0:0], PREP, ["ORBIS"])
-    assert _sin_nan(metricas.iloc[0]) == {
-        "FUENTE_DESTINO": "ORBIS",
-        "VINCULOS_AUTOMATICOS_A_B": 5,
-        "VINCULOS_REFERENCIA": 0,
-        "ACIERTOS": 0,
-        "PRECISION": 0.0,
-        "PRECISION_IC95": f"0.00{GUION}0.43",
-        "RECALL": None,
-        "RECALL_IC95": f"nan{GUION}nan",
-        "F1": None,
-        "RECALL_CONTANDO_CANDIDATOS_C": None,
-        "NIVEL_CORRECTO_EN_ACIERTOS": "0/0",
-        "AUTOMATICOS_ENTRE_PAISES": 2,
-        "DESCARTES_EN_REFERENCIA": 0,
-    }
+    assert (
+        _sin_nan(metricas.iloc[0])
+        == {
+            "FUENTE_DESTINO": "ORBIS",
+            "VINCULOS_AUTOMATICOS_A_B": 5,
+            "VINCULOS_REFERENCIA": 0,
+            "ACIERTOS": 0,
+            "PRECISION": 0.0,
+            "PRECISION_IC95": f"0.00{GUION}0.43",
+            "RECALL": None,
+            "RECALL_IC95": f"nan{GUION}nan",
+            "F1": 0.0,  # F3.1b (C11): sin aciertos y con vínculos automáticos que medir, el F1 es 0,0 (antes NaN)
+            "RECALL_CONTANDO_CANDIDATOS_C": None,
+            "NIVEL_CORRECTO_EN_ACIERTOS": "0/0",
+            "AUTOMATICOS_ENTRE_PAISES": 2,
+            "DESCARTES_EN_REFERENCIA": 0,
+        }
+    )
     assert [t[0] for t in _discrepancias(d)] == [FP] * 5
     assert {t[5] for t in _discrepancias(d)} == {"no incluido"}
 
@@ -253,19 +256,19 @@ def test_sin_vinculos_automaticos_la_precision_es_nan():
     assert fila["PRECISION_IC95"] == f"nan{GUION}nan"
     assert fila["RECALL"] == 0.0
     assert fila["RECALL_IC95"] == f"0.00{GUION}0.49"
-    assert fila["F1"] is None
+    assert fila["F1"] == 0.0  # F3.1b (C11): recall 0 con algo de referencia que medir; antes NaN
     assert fila["RECALL_CONTANDO_CANDIDATOS_C"] == 0.0
     assert [t[0] for t in _discrepancias(d)] == [FN_NADA] * 4  # sin candidatos, ni siquiera C
 
 
-def test_f1_es_nan_si_la_precision_o_el_recall_valen_cero():
-    """Hallazgo F3 (fijado tal cual está): con precisión y recall en 0 el F1 sale NaN y no 0,0."""
+def test_f1_es_cero_si_la_precision_y_el_recall_valen_cero():
+    """F3.1b (C11): con precisión y recall en 0 el F1 es 0,0 (el original devolvía NaN)."""
     auto = _auto([("ORBIS", 0, 1, "EMPRESA", "A", "SÍ")])
     ref = _ref([("ORBIS", 0, 0, "EMPRESA")])
     metricas, _ = validar_contra_referencia(auto, ref, PREP, ["ORBIS"])
     fila = _sin_nan(metricas.iloc[0])
     assert (fila["PRECISION"], fila["RECALL"], fila["ACIERTOS"]) == (0.0, 0.0, 0)
-    assert fila["F1"] is None
+    assert fila["F1"] == 0.0
 
 
 def test_una_fila_de_metricas_por_destino_en_el_orden_pedido():
@@ -316,15 +319,19 @@ def test_un_destino_sin_pares_ni_referencia_da_una_fila_de_nan_y_ceros():
     assert d.empty
 
 
-def test_hallazgo_sin_la_columna_mismo_pais_la_validacion_falla_con_keyerror():
-    """Hallazgo F3 (fijado tal cual está): sin ningún par candidato ``L_auto`` no trae ``MISMO_PAIS``.
-
-    Con una referencia, la validación falla con ``KeyError`` en vez de dar métricas en cero; el motor original
-    hace lo mismo (``ejecutar`` con una referencia y sin ningún candidato termina así).
-    """
+def test_sin_ningun_par_candidato_la_validacion_da_metricas_en_cero_en_vez_de_caer():
+    """F3.1b (C10): sin ningún par ``L_auto`` no trae ``MISMO_PAIS``; con referencia antes caía con KeyError."""
     sin_pares = AUTO.drop(columns="MISMO_PAIS").iloc[0:0]
-    with pytest.raises(KeyError, match="MISMO_PAIS"):
-        validar_contra_referencia(sin_pares, REF, PREP, ["ORBIS"])
+    metricas, d = validar_contra_referencia(sin_pares, REF, PREP, ["ORBIS"])
+    fila = _sin_nan(metricas.iloc[0])
+    assert (fila["VINCULOS_AUTOMATICOS_A_B"], fila["ACIERTOS"], fila["RECALL"], fila["F1"]) == (
+        0,
+        0,
+        0.0,
+        0.0,
+    )
+    assert fila["PRECISION"] is None
+    assert [t[0] for t in _discrepancias(d)] == [FN_NADA] * 4
 
 
 def test_un_vinculo_automatico_de_banda_c_o_de_otro_nivel_no_cuenta_como_vinculo():

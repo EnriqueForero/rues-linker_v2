@@ -44,8 +44,30 @@ __all__ = [
     "serie_numerica",
 ]
 
-#: Segundos niveles que, junto a un dominio de país de 2 letras, forman el sufijo público (``co.uk``).
-_SEGUNDOS_NIVELES = frozenset({"co", "com", "org", "net", "gov", "ac", "edu"})
+#: Segundos niveles que, junto a un dominio de país de 2 letras, forman el sufijo público (``co.uk``, ``gob.es``).
+_SEGUNDOS_NIVELES = frozenset(
+    {
+        "co",
+        "com",
+        "org",
+        "net",
+        "gov",
+        "gob",
+        "gub",
+        "mil",
+        "edu",
+        "ac",
+        "ed",
+        "or",
+        "ne",
+        "go",
+        "nom",
+        "sch",
+    }
+)
+
+#: Una dirección IPv4: no es un dominio y no identifica a una empresa.
+_IPV4 = re.compile(r"\d{1,3}(\.\d{1,3}){3}")
 
 #: Lo que una celda de sitio web trae cuando no hay dirección.
 _WEB_AUSENTE = frozenset({"nan", "none", "n.a.", "-"})
@@ -56,21 +78,38 @@ _LEGALES_NO_SUFIJO = frozenset({"CO", "SE", "AS", "AB", "SC", "SP", "RL"})
 
 
 def _es_ausente(x: object) -> bool:
-    """True si ``x`` es ``None`` o un ``NaN`` de coma flotante (la celda vacía que deja pandas)."""
-    return x is None or (isinstance(x, float) and math.isnan(x))
+    """True si ``x`` es la celda vacía que deja pandas: ``None``, ``pd.NA``, ``pd.NaT`` o un ``NaN`` (cualquier ancho).
+
+    F3.1b (g1-O1): el original solo reconocía ``None`` y el ``float`` NaN, así que ``pd.NA`` (texto anulable, p. ej. de
+    un Parquet) terminaba como el texto «NA» y dos empresas sin NIF «compartían identificador».
+    """
+    if x is None or x is pd.NA or x is pd.NaT:
+        return True
+    return isinstance(x, (float, np.floating)) and math.isnan(x)
+
+
+def _texto_de_celda(x: object) -> str:
+    """``str(x)``, pero un número entero guardado como ``float`` (``900123456.0``) se escribe sin el «.0».
+
+    F3.1b (g1-O2): un NIT o un teléfono que viene de una columna numérica con ausentes (Parquet ``float64``, ``Int64``)
+    es ``float``; ``str`` le agregaba un dígito al unirse con el texto de la otra base.
+    """
+    if isinstance(x, (float, np.floating)) and math.isfinite(x) and float(x).is_integer():
+        return str(int(x))
+    return str(x)
 
 
 def dominio_registrable(dominio: str) -> str:
     """El dominio por el que se identifica a un sitio: ``tienda.zelvora.co.uk`` → ``zelvora.co.uk``.
 
     Conserva los dos últimos rótulos (``www.kramento.es`` → ``kramento.es``) o tres si el segundo nivel es
-    genérico (``co``, ``com``, ``org``, ``net``, ``gov``, ``ac``, ``edu``) y el dominio de país tiene 2 letras.
+    público (``co``, ``com``, ``org``, ``net``, ``gov``, ``gob``, ``gub``, ``mil``, ``edu``, ``ac``, ``ed``, ``or``,
+    ``ne``, ``go``, ``nom``, ``sch``) y el dominio de país tiene 2 letras: ``tienda.zelvora.gob.es`` →
+    ``zelvora.gob.es``, no ``gob.es``.
     """
     partes = [p for p in dominio.split(".") if p]
     if len(partes) <= 2:
         return ".".join(partes)
-    # Hallazgo F3: la lista de segundos niveles es corta: 'tienda.zelvora.gob.es' → 'gob.es'
-    # (también gob.mx, mil.co, or.jp…), y dos sitios distintos bajo el mismo gob.xx darían el mismo dominio.
     if partes[-2] in _SEGUNDOS_NIVELES and len(partes[-1]) == 2:
         return ".".join(partes[-3:])
     return ".".join(partes[-2:])
@@ -88,20 +127,23 @@ def serie_numerica(s: pd.Series) -> pd.Series:
 def dominio_web(x: object) -> str:
     """Dominio registrable de una dirección web (sin esquema, ``www``, puerto, ruta ni consulta).
 
-    Con varias direcciones en la celda toma la primera. Vacío si no hay un dominio con punto.
+    Con varias direcciones en la celda toma la primera (se ignoran los separadores del comienzo). Vacío si no hay
+    un dominio con punto o si es una dirección IP.
     """
     if _es_ausente(x):
         return ""
     s = str(x).strip().lower()
     if not s or s in _WEB_AUSENTE:
         return ""
-    # Hallazgo F3: si la celda empieza con un separador, el primer fragmento es '' y se pierde el
-    # dominio (';zelvora.es' → '').
-    s = re.split(r"[\s;,|]+", s)[0]
+    s = re.split(r"[\s;,|]+", s.strip(" \t;,|"))[0]
     s = re.sub(r"^[a-z]+://", "", s)
-    s = s.split("/")[0].split("?")[0].split(":")[0]
+    s = (
+        s.split("/")[0].split("?")[0].rsplit("@", 1)[-1].split(":")[0]
+    )  # sin ruta, consulta, usuario ni puerto
     s = re.sub(r"^www\d?\.", "", s)
-    return dominio_registrable(s) if "." in s else ""
+    if "." not in s or _IPV4.fullmatch(s):
+        return ""
+    return dominio_registrable(s)
 
 
 def dominio_email(x: object) -> str:
@@ -116,7 +158,7 @@ def digitos_telefono(x: object) -> str:
     """Los últimos 8 dígitos del teléfono (sin prefijo de país ni signos); vacío si tiene menos de 8."""
     if _es_ausente(x):
         return ""
-    d = re.sub(r"\D", "", str(x))
+    d = re.sub(r"\D", "", _texto_de_celda(x))
     return d[-8:] if len(d) >= 8 else ""
 
 
@@ -124,7 +166,7 @@ def id_comparable(x: object) -> str:
     """Identificador sin signos y en mayúsculas (``'B-1234 5678'`` → ``'B12345678'``) para compararlo entre bases."""
     if _es_ausente(x):
         return ""
-    return re.sub(r"[^A-Z0-9]", "", str(x).upper())
+    return re.sub(r"[^A-Z0-9]", "", _texto_de_celda(x).upper())
 
 
 class Normalizador:
@@ -296,22 +338,27 @@ class Normalizador:
         """
         s = pd.Series(serie, dtype="object").fillna("").astype(str).str.strip()
         vacio = s == ""
-        # Hallazgo F3: el marcador "SIN PAIS" tampoco se clasifica y, si hay una grafía desconocida,
-        # sale en la tabla de sugerencias y en los ejemplos del mensaje como si la hubiera escrito el usuario.
-        res = canonizar_pais(s.where(~vacio, "SIN PAIS").astype("string"), catalogo=self.catalogo)
-        tabla = res.tabla[["PAIS_ISO3", "PAIS_FINAL"]].copy()
-        sin = res.tabla["PAIS_METODO"].eq("sin_clasificar") & ~vacio.to_numpy()
-        if sin.any():
+        # Solo se clasifican las celdas con algo escrito: así ningún marcador de «celda vacía» llega a las
+        # sugerencias ni a los ejemplos del mensaje como si lo hubiera escrito el usuario.
+        res = canonizar_pais(s[~vacio].astype("string"), catalogo=self.catalogo)
+        if (res.tabla["PAIS_METODO"] == "sin_clasificar").any():
             sug = sugerir_alias_pais(res.sin_clasificar, catalogo=self.catalogo, maximo=50)
             ejemplos = ", ".join(f"'ISO3': ({str(v).upper()!r},)" for v in sug["valor"].head(5))
+            # 'NA' es Namibia, pero en muchas bases quiere decir «no disponible»: el catálogo no puede saberlo (A2 de F3.1b).
+            nota_na = (
+                " Si 'NA' significa «sin dato» y no Namibia, déjela vacía en la base."
+                if sug["valor"].astype(str).str.upper().eq("NA").any()
+                else ""
+            )
             raise ValueError(
                 f"Qué pasó: {fuente}.{columna} trae grafías de país que el catálogo no reconoce:\n"
                 f"{sug.to_string(index=False)}\n"
                 f"Por qué importa: el país es evidencia del cruce; sin catalogar, 'France' y 'Francia' no coinciden.\n"
-                f"Qué hacer: agréguelas en ALIAS_PAISES con su ISO3, p. ej. {ejemplos}. La sugerencia es una ayuda, no una regla."
+                f"Qué hacer: agréguelas en ALIAS_PAISES con su ISO3, p. ej. {ejemplos}. La sugerencia es una ayuda, no una regla.{nota_na}"
             )
-        tabla.loc[vacio.to_numpy(), ["PAIS_ISO3", "PAIS_FINAL"]] = ["", ""]
-        return tabla.reset_index(drop=True)
+        tabla = res.tabla[["PAIS_ISO3", "PAIS_FINAL"]].copy()
+        tabla.index = s.index[~vacio]
+        return tabla.reindex(s.index, fill_value="").reset_index(drop=True)
 
 
 # ── preparar_fuente: un bloque por familia de columnas ───────────────────────
@@ -331,9 +378,9 @@ def _agregar_nombre_y_alias(out: pd.DataFrame, crudo: pd.Series, nz: Normalizado
     partes = crudo.map(nz.separar_alias)
     out["NOMBRE_NORM"] = nz.normalizar(partes.str[0]).to_numpy()
     alias = nz.normalizar(partes.str[1]).to_numpy()
-    # Hallazgo F3: con 0 filas np.array([]) es float64 y el `&` de abajo lanza TypeError: una fuente
-    # sin filas (solo encabezado) revienta aquí sin mensaje accionable.
-    util = np.array([bool(nz.distintivas(a)) for a in alias])
+    util = np.array(
+        [bool(nz.distintivas(a)) for a in alias], dtype=bool
+    )  # dtype: con 0 filas sería float64
     out["ALIAS_NORM"] = np.where(util & (alias != out["NOMBRE_NORM"].to_numpy()), alias, "")
     # Sin nombre principal utilizable pero con alias: el alias pasa a principal.
     # Hallazgo F3: «utilizable» se mide con NOMBRE_NORM == "", no con nz.utiles(): un nombre que queda

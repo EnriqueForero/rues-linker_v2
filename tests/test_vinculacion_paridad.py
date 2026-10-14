@@ -16,7 +16,7 @@ import pytest
 from lineas_base_vinculacion import (
     AVISOS_MOTOR_ORIGINAL,
     CAMBIOS_DECLARADOS,
-    CONTROLES_NO_OK_MOTOR_ORIGINAL,
+    CONTROLES_NO_OK_VIGENTES,
     HUELLAS_MOTOR_ORIGINAL,
 )
 
@@ -76,16 +76,16 @@ def test_los_avisos_son_los_del_original(corrida):
     assert tuple(str(a) for a in res.avisos) == AVISOS_MOTOR_ORIGINAL[escenario]
 
 
-def test_los_controles_que_no_salen_en_ok_son_los_del_original(corrida):
-    # El original deja una FALLA conocida (EMPRESA/A por identificador comparable con palabras sin alinear):
-    # el paquete la conserva a propósito hasta que se declare su arreglo.
+def test_los_controles_que_no_salen_en_ok_son_los_vigentes(corrida):
+    # El original dejaba una FALLA conocida (EMPRESA/A por identificador comparable con palabras sin alinear, hallazgo
+    # C1/M-a): F3.1b la corrigió y está declarada en CAMBIOS_DECLARADOS. Queda solo la advertencia de recall.
     escenario, res = corrida
     no_ok = res.invariantes[res.invariantes["ESTADO"] != "OK"]
     assert (
         dict(zip(no_ok["CONTROL"], no_ok["ESTADO"], strict=True))
-        == (CONTROLES_NO_OK_MOTOR_ORIGINAL[escenario])
+        == CONTROLES_NO_OK_VIGENTES[escenario]
     )
-    assert res.todo_ok is False
+    assert res.todo_ok is True
 
 
 def test_dos_corridas_seguidas_dan_las_mismas_tablas(insumos):

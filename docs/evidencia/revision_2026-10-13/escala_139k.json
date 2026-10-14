@@ -1,0 +1,107 @@
+{
+  "etiqueta": "revision_1013",
+  "perfil": "produccion_estandar",
+  "semilla": 42,
+  "marca_tiempo": "2026-10-13T22:26:41",
+  "version": "0.22.4",
+  "entorno": {
+    "vcpu": 4,
+    "memoria_total_mib": 16093
+  },
+  "nota": "",
+  "ajustes_perfil": null,
+  "tamanos": {
+    "139k": {
+      "parametros": {
+        "empresas_extra": 48000,
+        "importadores_extra": 9600,
+        "semilla": 42,
+        "filas_esperadas": 139028
+      },
+      "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+      "filas": 139028,
+      "grupos": 54136,
+      "version": "0.22.4",
+      "perfil": "produccion_estandar",
+      "marca_tiempo": "2026-10-13T22:32:22",
+      "entorno": {
+        "python": "3.11.17",
+        "pandas": "3.0.6",
+        "numpy": "2.3.5",
+        "plataforma": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+        "version": "0.22.4",
+        "vcpu": 4,
+        "memoria_total_mib": 16093
+      },
+      "recursos": {
+        "segundos_total": 333.26,
+        "segundos_por_fase": {
+          "L1_prep": 2.17,
+          "L2_lsh_candidates": 189.4,
+          "L3_scoring": 111.97,
+          "L4_clustering": 1.31,
+          "L5_golden": 23.16
+        },
+        "rss_por_fase": {
+          "L1_prep": 471.8,
+          "L2_lsh_candidates": 1158.4,
+          "L3_scoring": 735.1,
+          "L4_clustering": 734.7,
+          "L5_golden": 1015.7
+        },
+        "rss_pico_mib": 1150.9,
+        "rss_inicial_mib": 343.8,
+        "muestras_rss": 1298,
+        "bytes_disco": 204494349,
+        "candidatos": 12739949,
+        "pares_scoreados": 195368,
+        "candidatos_por_valido": 65.2
+      },
+      "calidad": {
+        "registros": 139028,
+        "grupos_verdad": 54136,
+        "grupos_predichos": 57092,
+        "pares_verdaderos": 199415,
+        "tp": 188955,
+        "fp": 2760,
+        "fn": 10460,
+        "precision": 0.9856,
+        "recall": 0.9475,
+        "f1": 0.9662,
+        "b3_precision": 0.9942,
+        "b3_recall": 0.9671,
+        "b3_f1": 0.9805,
+        "recall_por_regimen": {
+          "CON_NIT": 0.9869,
+          "SIN_NIT": 0.7145
+        },
+        "recall_por_caso": {
+          "positivo_con_nit": 0.9869,
+          "positivo_sin_nit": 0.7144,
+          "negativo_intermediario": 1.0,
+          "negativo_generico": null
+        },
+        "fp_que_tocan_negativo": 34,
+        "calidad_por_estrato": {},
+        "macro_f1": null,
+        "grupo_mayor_sin_identificador": {
+          "filas": 13,
+          "entidades": 3,
+          "grupos": 8161,
+          "grupos_grandes": 0
+        }
+      },
+      "huella": "d904ea161a33c8dbb97aca663e122762bce73eda7ad00c6430e78f55e821399f",
+      "especificacion": {
+        "datos": "/tmp/escala_datos/gt_s42_e48000_i9600.csv",
+        "perfil": "produccion_estandar",
+        "confiables": [],
+        "variables_extra": null,
+        "ajustes_perfil": null,
+        "perfil_multicampo": null,
+        "semilla": 42
+      },
+      "dir_trabajo": null
+    }
+  }
+}

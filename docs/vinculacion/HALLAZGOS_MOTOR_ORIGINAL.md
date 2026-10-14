@@ -1,10 +1,13 @@
 # Hallazgos del motor original de vinculación (F3)
 
 Al portar el motor del notebook 10 (`vinculador_empresas` 1.0.0) a `record_linkage.flujo.vinculacion` se midió, módulo por módulo y
-con revisión independiente, qué hace de más o de menos. **El paquete conserva cada uno de estos comportamientos a propósito** (la regla de
-F3.1 es paridad: tablas y Excel idénticos al original; ver `scripts/oraculo_vinculacion/` y `tests/test_vinculacion_paridad.py`) y los marca en
-el código con `# Hallazgo F3:`. Arreglarlos es trabajo aparte, un commit por hallazgo con su prueba y su declaración: el plan está en
-`docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`.
+con revisión independiente, qué hace de más o de menos. **En el hito F3.1 el paquete conservó cada uno de estos comportamientos a propósito** (la regla era paridad:
+tablas y Excel idénticos al original; ver `scripts/oraculo_vinculacion/` y `tests/test_vinculacion_paridad.py`) y los marcó en el código con `# Hallazgo F3:`.
+
+**Estado desde F3.1b (2026-10-13):** el nivel 1 del plan de arreglos y cinco del nivel 2 ya están corregidos, cada uno con su prueba y su declaración (qué cambia y qué tablas de los escenarios
+toca: `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`, sección «Estado»). Las tablas de abajo describen el defecto **tal como estaba en el original**; el comentario `# Hallazgo F3:` sigue en el código
+solo donde el hallazgo no se ha corregido. Corregidos: A1–A6, A8, A10–A12, B1–B3, B6, B8, B9, C1, C3, C10, C11, D (etiquetas, claves de repetición, columna `ND` no), E1, E2, E4–E6, E8, g1-O1…O4, g1-O6, g2-C1,
+g3-O1…O6, M-a, M-b. Pendientes: ver el plan.
 
 Cómo leer los identificadores: A1…A17 (lectura/normalización), B1…B10 (comparar/decisiones/deduplicar), C1…C13 (candidatos…validación),
 D (tablas; sin número, por línea del original), E1…E14 (Excel), g1/g2/g3 = defectos y diferencias que halló la revisión independiente

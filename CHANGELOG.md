@@ -1,8 +1,8 @@
 # Changelog
 
-## [Sin publicar] — F3 (en curso) · Vinculación de empresas dentro de la librería: hito F3.1, el motor extraído con paridad
+## [Sin publicar] — F3 (en curso) · Vinculación de empresas dentro de la librería: hito F3.1 (motor extraído con paridad) y F3.1b (arreglos declarados)
 
-Aditivo: ningún comportamiento publicado cambia. El motor `vinculador_empresas` 1.0.0 (la celda `%%writefile` del notebook 10) pasa a
+Aditivo: ningún comportamiento **publicado** cambia (el motor de vinculación no estaba en ninguna versión). El hito F3.1 llevó el motor `vinculador_empresas` 1.0.0 (la celda `%%writefile` del notebook 10) a
 `record_linkage.flujo.vinculacion`, **con las mismas tablas y el mismo Excel que el original** (15 tablas, `resumen`, `por_pais`, avisos y Excel celda por celda,
 en 4 escenarios inventados y en Python 3.10 + pandas 2.3 y Python 3.11 + pandas 3.0). Aún no hay `vincular_empresas` (contrato estándar), ni notebooks delgados,
 ni versión ni tag; ver `docs/REANUDAR.md`.
@@ -18,10 +18,30 @@ ni versión ni tag; ver `docs/REANUDAR.md`.
 - **Cambios declarados respecto del original** (no son arreglos de defectos): `print` → `registro`/logging; `assert` → `RuntimeError` con mensaje; `sha256_archivo` acepta la ruta con barra final
   (el original reventaba al final de la corrida); una celda del RESUMEN (fila 16) y tres textos del LEEME/guía de revisión nombraban empresas reales y ahora usan marcas inventadas;
   `dec["TIPO"]` en lugar de `dec.TIPO` (KeyError en vez de AttributeError con una tabla mal formada); `zip(strict=True)` donde los largos son iguales por construcción.
-- **Hallazgos del original, conservados a propósito** (≈ 90, `docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md`; plan de arreglos en `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`).
+- **Hallazgos del original** (conservados a propósito en F3.1 y corregidos los de nivel 1 en F3.1b, abajo; ≈ 90, `docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md`; plan de arreglos en `docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`).
   Los más graves: `id_comparable(pd.NA)` devuelve `'NA'` (falso «mismo identificador»); `evidencia_extra` sube a EMPRESA/A por identificador sin mirar país ni palabras;
   la deduplicación une «J Martinez» con «A Martinez»; «Ltda», «Lda», «S. en C.», «E.U.» no tienen forma legal reconocida; `exportar_excel` cae con pandas 3 si una columna no tiene valores.
 - **CI:** el anillo bloqueante de mypy incluye `flujo/vinculacion` y `flujo/vinculacion_excel` (0 errores en 66 archivos, en frío).
+
+### F3.1b · arreglos declarados del motor (cambian resultados respecto del original)
+
+Cada arreglo tiene su prueba y su declaración (`tests/lineas_base_vinculacion_cambios.json`; la línea base del original no se toca). Detalle, tablas afectadas y lo que NO se hizo:
+`docs/vinculacion/PLAN_ARREGLOS_F3.1b.md`. En los 4 escenarios inventados cambia poco: `ENLACES` (1 celda de MOTIVO), `CONTROL_QA` (una invariante pasa de FALLA a OK), `PARAMETROS`, `resumen`,
+`REVISION` (relajado), `COMPARACION_REVISIONES` (8 columnas) y, con `max_ediciones_palabra=2`, `REVISION`/`EXPORTADORES` (9 preguntas menos entre empresas distintas, ningún vínculo cambia).
+
+- **Precisión (menos uniones y vínculos falsos):** un identificador comparable igual ya no sube a EMPRESA/A un par de países distintos o sin palabras en común (C1, M-a); la deduplicación no une sola «J Martinez»
+  con «A Martinez» ni «Kramento 2» con «Kramento 3» (B1) y un puente no mezcla formas legales incompatibles ni anula una decisión DISTINTA (g3-O1, g3-O2); «Ltda», «Lda», «S. en C.», «E.U.», «EIRL»
+  tienen familia legal y «Unlimited»/«Ilimitada» ya no se leen como LTD/SL (g3-O6); un ausente de pandas (`pd.NA`, `NaT`) deja de ser el texto «NA» y de «compartir identificador» (g1-O1);
+  `tienda.zelvora.gob.es` ya no se reduce a `gob.es` (A8); una IP no es un dominio (A10); una sustitución más una inserción ya no es «la misma palabra» con errata doble (B8).
+- **Recall:** la sigla también se busca del lado del destino (C3: «KRONOS EMPRESARIAL VALDORIA» ↔ «KEV»); el texto `'NA'` (Namibia) ya no se pierde como país vacío: se conserva en las columnas de país y el catálogo lo rechaza con un mensaje que dice qué hacer (A2; en las demás columnas `'NA'`, `'N/A'`, `'None'`, `'null'` siguen siendo ausentes);
+  un entero guardado como float conserva sus dígitos al comparar identificadores y teléfonos (g1-O2).
+- **Robustez y mensajes:** configuración que rechaza un texto suelto donde va una colección, etiquetas en blanco y destinos con la misma primera palabra, `metricas_repetidas`/`claves_repeticion` inexistentes (g1-O3, D);
+  columnas reservadas, `.xls` sin xlrd, transformación sobre una columna que no existe, fuente sin filas (A3, A6, A12, g1-O4); validación contra la referencia sin candidatos y F1 = 0,0 sin aciertos (C10, C11);
+  decisiones del destino con la regla de la ancla (la última manda; claves desconocidas y autopares se avisan: B2, g3-O3); líneas en blanco de un CSV ya no corren `FILA_EXCEL` (A5); lectura de 4 KiB para el separador (A1);
+  `es_abreviatura` sin recursión ni costo exponencial (B9, D1); la pérdida por truncamiento se mide por posición (B3).
+- **Excel:** no cae con pandas 3 si una columna no tiene valores (E1); no depende de la versión de pandas al ocultar columnas constantes (E2); encabezados y advertencias del RESUMEN pasan por el escritor seguro (E4, E5);
+  solo un sitio web de verdad se vuelve enlace (E6); hojas con los mismos 31 primeros caracteres reciben `_2`, `_3` (E8); `unir_valores` descarta `pd.NA`/`NaT`.
+- **No se hizo** (decisión de Enrique o necesita datos reales): C9 (propagar por web solo desde vínculos de confianza ALTA), B7 (`raiz_id` con guion), M-c (umbral de «parecido»), A13, rendimiento a escala (F4) y los cosméticos.
 
 ## [Sin publicar] — F2 · Calidad y unificación del motor: estrellas en `linkage()`, identidad estable, un estándar en los cinco caminos
 

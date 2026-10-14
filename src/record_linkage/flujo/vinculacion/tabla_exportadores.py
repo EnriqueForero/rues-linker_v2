@@ -172,9 +172,7 @@ def _columnas_de_metricas(ancla: Fuente, sub: pd.DataFrame) -> dict[str, object]
     for c in ancla.cols_metricas:
         nombre = nombre_columna_ancla(ancla, c)
         if c in ancla.metricas_repetidas:  # la cifra recomendada va primero
-            # Hallazgo F3: una clave de ``claves_repeticion`` que no es columna de las filas de la ancla se
-            # ignora SIN aviso (``if k in sub.columns``); con una errata ('HS' por 'HS6') la cifra «sin
-            # repetidos» deduplica solo por (empresa, valor) y subestima. Debería fallar al validar la fuente.
+            # ``leer_fuente`` ya exige que cada clave de ``claves_repeticion`` sea columna de la base (D de F3.1b).
             claves = ["ENT", *[k for k in ancla.claves_repeticion if k in sub.columns], c]
             fila[f"{nombre}_SIN_REPETIDOS"] = float(sub.drop_duplicates(claves)[c].sum())
         fila[nombre] = float(sub[c].sum())

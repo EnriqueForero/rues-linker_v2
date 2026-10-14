@@ -240,12 +240,33 @@ def test_via_sigla_una_ficha_larga_sola_no_se_busca():
     assert x.empty
 
 
-def test_via_sigla_solo_busca_la_sigla_del_lado_de_la_ancla():
-    """Hallazgo F3 (fijado tal cual está): con la sigla en el destino y el nombre largo en la ancla no hay candidato.
+def test_via_sigla_busca_la_sigla_tambien_del_lado_del_destino():
+    """Arreglo C3 (recall): con la sigla en el destino y el nombre largo en la ancla el par también es candidato.
 
-    El mismo par al revés (``test_via_sigla_las_iniciales_de_un_nombre_de_varias_palabras``) sí entra.
+    El motor original solo miraba la sigla del lado de la ancla y perdía este par, aunque
+    ``Comparador.rasgos`` reconoce la abreviatura en los dos sentidos. Es el espejo de
+    ``test_via_sigla_las_iniciales_de_un_nombre_de_varias_palabras``.
     """
-    assert _generar(_ancla("KRONOS EMPRESARIAL VALDORIA"), _destino("KEV")).empty
+    assert _pares(_generar(_ancla("KRONOS EMPRESARIAL VALDORIA"), _destino("KEV"))) == [
+        (0, "KRONOS EMPRESARIAL VALDORIA", "NOMBRE", "KEV", 0, "NOMBRE")
+    ]
+
+
+def test_via_sigla_del_destino_aplica_los_mismos_limites_que_la_de_la_ancla():
+    """La sigla del destino tampoco se busca con 6 fichas, ni con una ficha larga sola, ni si solo abrevia genéricas."""
+    assert _generar(
+        _ancla("KRONOS EMPRESARIAL VALDORIA ALIMENTACION IBERICA SURESTE"),
+        _destino("KR EMP VAL ALIM IB SUR"),
+    ).empty
+    assert _generar(_ancla("KRONOSAMERICANAINTERNACIONALCOMERCIAL"), _destino("KRONOS")).empty
+    assert _generar(_ancla("ALIMENTOS INDUSTRIAS CONSERVAS"), _destino("ALIM IND CONS")).empty
+
+
+def test_via_sigla_del_destino_con_la_forma_legal_pegada_y_otro_destino_sin_relacion():
+    """KEVSAU (destino) abrevia a KRONOS EMPRESARIAL VALDORIA (ancla); un destino que no empieza igual no entra."""
+    x = _generar(_ancla("KRONOS EMPRESARIAL VALDORIA"), _destino("KEVSAU"))
+    assert _pares(x) == [(0, "KRONOS EMPRESARIAL VALDORIA", "NOMBRE", "KEVSAU", 0, "NOMBRE")]
+    assert _generar(_ancla("KRONOS EMPRESARIAL VALDORIA"), _destino("TEV")).empty
 
 
 def test_via_sigla_una_superficie_del_destino_solo_con_formas_legales_no_tiene_fichas():

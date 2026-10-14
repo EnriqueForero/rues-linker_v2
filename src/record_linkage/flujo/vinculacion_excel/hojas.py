@@ -6,6 +6,7 @@ cambia el libro (índices de estilo incluidos). ``escribir_hojas`` es el único 
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import partial
 from typing import cast
@@ -36,6 +37,7 @@ from record_linkage.flujo.vinculacion_excel.leeme import (
 )
 from record_linkage.flujo.vinculacion_excel.tablas import (
     colorear_columna,
+    escribir_celda,
     escribir_tabla,
     formatear_tabla,
     hoja_desde_tabla,
@@ -160,13 +162,12 @@ def _advertencias_de_calidad(
     hoja.cell(
         row=fila, column=1, value="Advertencias de los datos (detalle en CALIDAD_DATOS)"
     ).font = estilos.titulo(12)
-    # Hallazgo F3: estas celdas no pasan por escribir_tabla: un «=» inicial sería fórmula y un control, un error.
     for r in calidad.head(_ADVERTENCIAS_EN_RESUMEN).itertuples(index=False):
         fila += 1
-        hoja.cell(row=fila, column=1, value=r.FUENTE).font = estilos.negrita
-        hoja.cell(row=fila, column=2, value=r.TEMA).font = estilos.negrita
+        escribir_celda(hoja, fila, 1, r.FUENTE).font = estilos.negrita
+        escribir_celda(hoja, fila, 2, r.TEMA).font = estilos.negrita
         texto = f"{r.HALLAZGO} {r.IMPACTO}"
-        hoja.cell(row=fila, column=3, value=texto).font = estilos.base
+        escribir_celda(hoja, fila, 3, texto).font = estilos.base
         hoja.cell(row=fila, column=3).alignment = ALINEACION_ARRIBA_ENVUELTA
         for col in (1, 2):
             hoja.cell(row=fila, column=col).alignment = ALINEACION_ARRIBA_ENVUELTA
@@ -206,16 +207,22 @@ def _hoja_resumen(libro: Workbook, estilos: Estilos, res: Resultado) -> None:
 
 
 # ── EXPORTADORES ─────────────────────────────────────────────────────────────
+#: Un sitio web: dominio con una terminación de letras (``zelvora.es``), con o sin esquema, ruta o puerto. Un texto como
+#: 'N.A.', '1.5' o 'x@y.com' no lo es (E6 de F3.1b: antes todo texto con un punto y sin espacios se volvía enlace).
+_ES_SITIO_WEB = re.compile(
+    r"(?:https?://)?[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/:?#]\S*)?", re.IGNORECASE
+)
+
+
 def _enlaces_web(hoja: Worksheet, estilos: Estilos, exportadores: pd.DataFrame) -> None:
     """Convierte en hipervínculo el primer sitio web de cada celda de las columnas ``*_WEB``."""
     columnas = list(exportadores.columns)
-    # Hallazgo F3: todo texto con punto y sin espacios ('N.A.', '1.5') se vuelve enlace; `== "CONTACTO_WEB"` sobra.
     for nombre in [c for c in columnas if c.endswith("_WEB") or c == "CONTACTO_WEB"]:
         col = columnas.index(nombre) + 1
         for fila in range(2, len(exportadores) + 2):
             celda = hoja.cell(row=fila, column=col)
             sitio = str(celda.value or "").split(" | ")[0].strip()
-            if sitio and "." in sitio and " " not in sitio:
+            if _ES_SITIO_WEB.fullmatch(sitio):
                 celda.hyperlink = sitio if sitio.startswith("http") else f"https://{sitio}"
                 celda.font = estilos.enlace
 
@@ -242,14 +249,12 @@ def _ocultar_columnas_constantes(
         ancla.nombres_contexto.get(m, m).upper().replace(" ", "_") for m in ancla.cols_metricas
     } | {ancla.nombres_contexto.get(m, m).upper().replace(" ", "_") for m in ancla.cols_contexto}
     columnas = list(exportadores.columns)
-    # Hallazgo F3: `astype(str)` deja los ausentes en NaN (pandas 3) o 'nan' (pandas 2): con un valor y ausentes,
-    # la columna se oculta o no según la versión de pandas.
+    # Un ausente cuenta como un valor más (E2 de F3.1b): ``astype(str)`` los dejaba en NaN con pandas 3 y en 'nan' con
+    # pandas 2, y una columna con un valor y ausentes se ocultaba o no según la versión.
     for nombre in columnas:
-        if (
-            nombre in metricas
-            and exportadores[nombre].astype(str).nunique() <= 1
-            and len(exportadores) > 1
-        ):
+        serie = exportadores[nombre]
+        distintos = serie.astype(object).where(serie.notna(), "ausente").astype(str).nunique()
+        if nombre in metricas and distintos <= 1 and len(exportadores) > 1:
             hoja.column_dimensions[get_column_letter(columnas.index(nombre) + 1)].hidden = True
 
 

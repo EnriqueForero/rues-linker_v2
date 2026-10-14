@@ -26,6 +26,13 @@ __all__ = ["TRANSFORMACIONES", "formatear_hs6", "leer_fuente", "leer_tabla", "sh
 #: Bytes del comienzo de un CSV/TXT/TSV que se miran para decidir el separador.
 _BYTES_MUESTRA_SEPARADOR = 4096
 
+#: Lo que pandas toma por ausente al leer un CSV o un Excel, SALVO el texto 'NA': es el ISO2 de Namibia y, como país,
+#: llegaba vacío sin aviso (A2 de F3.1b). ``leer_fuente`` lo vuelve ausente en las columnas que no son de país, como antes.
+_AUSENTES_DE_PANDAS_SIN_NA = [
+    "", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan", "1.#IND", "1.#QNAN",
+    "<NA>", "N/A", "NULL", "NaN", "None", "n/a", "nan", "null",
+]  # fmt: skip
+
 
 def sha256_archivo(ruta: str | Path) -> str:
     """SHA-256 (hexadecimal) del contenido de un archivo, leído por bloques de 1 MiB."""
@@ -44,24 +51,52 @@ def _detectar_separador(texto: str) -> str:
     return ";" if puntos_y_coma > comas else ","
 
 
+def _lineas_en_blanco_iniciales(muestra: str) -> int:
+    """Cuántas líneas en blanco hay antes del encabezado (en la muestra); no cuentan para ``FILA_EXCEL``."""
+    n = 0
+    for linea in muestra.splitlines():
+        if linea.strip():
+            break
+        n += 1
+    return n
+
+
 def _leer_csv(ruta: Path) -> pd.DataFrame:
-    """Lee un CSV/TXT/TSV como texto: separador detectado, UTF-8 (con o sin BOM) y si no, cp1252."""
-    # Hallazgo F3: read_bytes() lee el archivo ENTERO solo para mirar sus primeros 4096 bytes;
-    # en una base de millones de filas debería leer únicamente ese bloque.
-    muestra = ruta.read_bytes()[:_BYTES_MUESTRA_SEPARADOR].decode("utf-8", errors="ignore")
-    sep = _detectar_separador(muestra)
-    # Hallazgo F3: sin keep_default_na=False, pandas convierte en NaN los textos 'NA' (¡Namibia!),
-    # 'N/A', 'None', 'null', 'NULL', 'NaN' y 'n/a': una celda de país 'NA' llega vacía. Vale también para Excel.
+    """Lee un CSV/TXT/TSV como texto: separador detectado, UTF-8 (con o sin BOM) y si no, cp1252.
+
+    Conserva el texto 'NA' (Namibia); 'N/A', 'None', 'null', 'NaN'… siguen siendo ausentes, como en pandas.
+    Las líneas en blanco del medio se leen como filas vacías (``leer_fuente`` las descarta conservando la
+    numeración de las demás); las que van antes del encabezado se ignoran.
+    """
+    # Solo se leen los primeros bytes para decidir el separador, no el archivo entero.
+    with ruta.open("rb") as fh:
+        muestra = fh.read(_BYTES_MUESTRA_SEPARADOR).decode("utf-8", errors="ignore")
+    sep, saltar = _detectar_separador(muestra), _lineas_en_blanco_iniciales(muestra)
     try:
-        return pd.read_csv(ruta, sep=sep, dtype=object, encoding="utf-8-sig")
+        return _leer_csv_en(ruta, sep, saltar, "utf-8-sig")
     except UnicodeDecodeError:
-        return pd.read_csv(ruta, sep=sep, dtype=object, encoding="cp1252")
+        return _leer_csv_en(ruta, sep, saltar, "cp1252")
+
+
+def _leer_csv_en(ruta: Path, sep: str, saltar: int, codificacion: str) -> pd.DataFrame:
+    """``read_csv`` con las opciones del motor: todo texto, 'NA' conservado, líneas en blanco como filas."""
+    return pd.read_csv(
+        ruta,
+        sep=sep,
+        dtype=object,
+        encoding=codificacion,
+        keep_default_na=False,
+        na_values=_AUSENTES_DE_PANDAS_SIN_NA,
+        skip_blank_lines=False,
+        skiprows=saltar,
+    )
 
 
 def leer_tabla(ruta: str | Path, hoja: str | int = 0) -> pd.DataFrame:
     """Lee una tabla según la extensión del archivo.
 
-    * ``.xlsx``, ``.xlsm``, ``.xls``: la ``hoja`` (nombre o posición), todo como ``object``.
+    * ``.xlsx``, ``.xlsm``, ``.xls``: la ``hoja`` (nombre o posición), todo como ``object``. El texto 'NA' se conserva (ver
+      ``leer_fuente``); los demás marcadores de ausente de pandas ('N/A', 'None', 'null'…) siguen siendo ausentes.
     * ``.parquet``: tal cual viene.
     * ``.csv``, ``.txt``, ``.tsv``: todo como texto, con el separador detectado (``hoja`` no aplica).
 
@@ -76,9 +111,21 @@ def leer_tabla(ruta: str | Path, hoja: str | int = 0) -> pd.DataFrame:
         )
     suf = p.suffix.lower()
     if suf in (".xlsx", ".xlsm", ".xls"):
-        # Hallazgo F3: ".xls" se acepta, pero pandas lo lee con xlrd y xlrd no es dependencia
-        # declarada: con un .xls la lectura falla con un ImportError ajeno al contrato.
-        return pd.read_excel(p, sheet_name=hoja, dtype=object)
+        try:
+            return pd.read_excel(
+                p,
+                sheet_name=hoja,
+                dtype=object,
+                keep_default_na=False,
+                na_values=_AUSENTES_DE_PANDAS_SIN_NA,
+            )
+        except ImportError as e:
+            if suf != ".xls":
+                raise
+            raise ImportError(
+                f"Qué pasó: no se pudo leer {p.name}: el formato .xls antiguo necesita el paquete xlrd, que no viene instalado.\n"
+                "Qué hacer: guarde el archivo como .xlsx (Excel → Guardar como) o instale xlrd."
+            ) from e
     if suf == ".parquet":
         return pd.read_parquet(p)
     if suf in (".csv", ".txt", ".tsv"):
@@ -90,20 +137,30 @@ def formatear_hs6(x: object) -> str:
     """Partida arancelaria a 6 dígitos: ``1905.9`` → ``'190590'``; ``901.11`` → ``'090111'``.
 
     Excel guarda la partida como número y le quita los ceros de los extremos. Los valores vacíos dan
-    ``''``; un texto de 6 dígitos o que no es un número queda como llegó; un número de 10000 o más
-    se toma como el entero de 5-6 dígitos ya completo.
+    ``''`` (también ``None``, ``NaN``, ``pd.NA`` y los textos 'nan'/'inf'); un texto de 6 dígitos, que no es un
+    número o que es negativo queda como llegó; un número de 10000 o más se toma como el entero de 5-6 dígitos
+    ya completo.
     """
-    if x is None or (isinstance(x, float) and math.isnan(x)) or str(x).strip() == "":
+    if (
+        x is None
+        or x is pd.NA
+        or x is pd.NaT
+        or (isinstance(x, float | np.floating) and math.isnan(x))
+    ):
         return ""
     s = str(x).strip()
+    if s == "":
+        return ""
     if re.fullmatch(r"\d{6}", s):
         return s
     try:
         v = float(s.replace(",", "."))
     except ValueError:
         return s
-    # Hallazgo F3: el texto 'nan' da '000nan', 'inf' lanza OverflowError, pd.NA da '<NA>'
-    # (no se trata como vacío) y un negativo da '-00500'.
+    if not math.isfinite(v):
+        return ""
+    if v < 0:
+        return s
     if v >= 10000:  # ya viene como entero de 5-6 dígitos
         return f"{round(v):06d}"
     return f"{v:.2f}".replace(".", "").zfill(6)
@@ -114,8 +171,15 @@ TRANSFORMACIONES: dict[str, Callable[[object], str]] = {"hs6": formatear_hs6}
 
 
 def _exigir_columnas(df: pd.DataFrame, f: Fuente) -> None:
-    """Falla con la lista de las columnas declaradas por ``f`` que no están en ``df``."""
+    """Falla con la lista de las columnas declaradas por ``f`` (y sus ``claves_repeticion``) que no están en ``df``."""
     faltan = [c for c in f.columnas_declaradas() if c not in df.columns]
+    claves = [c for c in f.claves_repeticion if c not in df.columns]
+    if claves:
+        raise KeyError(
+            f"Qué pasó: a la fuente {f.clave} (hoja {f.hoja!r}) le faltan las columnas de claves_repeticion {claves}.\n"
+            "Por qué importa: sin ellas la cifra «sin repetidos» deduplicaría solo por empresa y valor y subestimaría.\n"
+            f"Qué hacer: corrija el nombre en la configuración. Columnas disponibles: {list(df.columns)}"
+        )
     if faltan:
         raise KeyError(
             f"Qué pasó: a la fuente {f.clave} (hoja {f.hoja!r}) le faltan las columnas {faltan}.\n"
@@ -124,13 +188,27 @@ def _exigir_columnas(df: pd.DataFrame, f: Fuente) -> None:
         )
 
 
+#: Columnas que el motor agrega al frente de cada fuente: la base no puede traerlas con ese nombre.
+_COLUMNAS_RESERVADAS = ("FILA_EXCEL", "ID_REGISTRO", "FUENTE")
+
+
+def _exigir_sin_reservadas(df: pd.DataFrame, f: Fuente) -> None:
+    """Falla si la base trae una columna con un nombre que el motor usa para trazar las filas."""
+    choques = [c for c in _COLUMNAS_RESERVADAS if c in df.columns]
+    if choques:
+        raise ValueError(
+            f"Qué pasó: la base de {f.clave} trae columnas con nombres reservados del motor: {choques}.\n"
+            "Por qué importa: el motor agrega FILA_EXCEL, ID_REGISTRO y FUENTE para trazar cada fila hasta su origen.\n"
+            "Qué hacer: renombre esas columnas en el archivo."
+        )
+
+
 def _numerar_y_descartar_vacias(df: pd.DataFrame, f: Fuente) -> pd.DataFrame:
     """Pone ``FILA_EXCEL`` al frente y descarta las filas sin ningún dato en las columnas declaradas.
 
-    ``FILA_EXCEL`` se asigna ANTES de descartar, así que conserva la fila real de la hoja.
+    ``FILA_EXCEL`` se asigna ANTES de descartar, así que conserva la fila real de la hoja (o la línea del
+    CSV: ``_leer_csv`` no omite las líneas en blanco).
     """
-    # Hallazgo F3: en un CSV, read_csv omite las líneas en blanco y FILA_EXCEL (índice + 2)
-    # deja de coincidir con la línea real del archivo; en Excel sí coincide.
     df = df.reset_index(drop=True).copy()
     df.insert(0, "FILA_EXCEL", np.arange(2, len(df) + 2))
     vacias = df[f.columnas_declaradas()].isna().all(axis=1)
@@ -144,8 +222,12 @@ def _aplicar_transformaciones(df: pd.DataFrame, f: Fuente) -> None:
             raise KeyError(
                 f"Transformación desconocida {nombre!r}. Disponibles: {sorted(TRANSFORMACIONES)}"
             )
-        # Hallazgo F3: ``col`` no se valida contra el encabezado; si no existe, el error es un
-        # KeyError('<col>') pelado, sin el formato qué pasó / qué hacer.
+        if col not in df.columns:
+            raise KeyError(
+                f"Qué pasó: la transformación {nombre!r} de la fuente {f.clave} se aplica a la columna {col!r}, "
+                "que no está en la base.\n"
+                f"Qué hacer: corrija el nombre en la configuración. Columnas disponibles: {list(df.columns)}"
+            )
         df[col] = df[col].map(TRANSFORMACIONES[nombre])
 
 
@@ -175,20 +257,40 @@ def _asignar_ids(df: pd.DataFrame, f: Fuente) -> None:
         df.insert(1, "ID_REGISTRO", [f"{f.prefijo_id}-F{n:04d}" for n in df["FILA_EXCEL"]])
 
 
+def _na_solo_en_los_paises(df: pd.DataFrame, f: Fuente) -> None:
+    """El texto 'NA' sigue siendo ausente en toda columna que no es de país (como lo leía pandas); en las de país se conserva.
+
+    En una columna de país 'NA' es Namibia: dejarlo vacío era perder el país sin aviso. Si en esa base significa «no
+    disponible», el catálogo de países lo rechaza con un mensaje que dice qué hacer. No aplica a Parquet, que no pasa por
+    la conversión de pandas.
+    """
+    if Path(f.archivo).suffix.lower() == ".parquet":
+        return
+    paises = {c for c in (f.col_pais, *f.cols_pais_extra) if c}
+    for j, c in enumerate(df.columns):
+        if c not in paises:
+            col = df.iloc[:, j]
+            df.isetitem(j, col.mask(col == "NA").to_numpy())
+
+
 def leer_fuente(f: Fuente) -> pd.DataFrame:
     """Lee la hoja, verifica el contrato y asigna ``FILA_EXCEL``, ``ID_REGISTRO`` y ``FUENTE``.
 
-    Los encabezados se recortan de espacios. La tabla devuelta no tiene filas completamente vacías
+    Los encabezados se recortan de espacios. El texto 'NA' se conserva solo en las columnas de país (Namibia).
+    La tabla devuelta no tiene filas completamente vacías
     (en las columnas declaradas) y trae al frente ``FILA_EXCEL``, ``ID_REGISTRO`` y ``FUENTE``.
 
     Raises:
         FileNotFoundError: el archivo no existe.
-        ValueError: formato no soportado; o ``col_id`` con vacíos o con repetidos.
-        KeyError: faltan columnas declaradas, o una transformación desconocida.
+        ValueError: formato no soportado; la base trae una columna reservada (``FILA_EXCEL``, ``ID_REGISTRO``,
+            ``FUENTE``); o ``col_id`` con vacíos o con repetidos.
+        KeyError: faltan columnas declaradas, o una transformación desconocida o sobre una columna que no está.
     """
     df = leer_tabla(f.archivo, f.hoja).copy()
     df.columns = [str(c).strip() for c in df.columns]
+    _na_solo_en_los_paises(df, f)
     _exigir_columnas(df, f)
+    _exigir_sin_reservadas(df, f)
     df = _numerar_y_descartar_vacias(df, f)
     _aplicar_transformaciones(df, f)
     _asignar_ids(df, f)

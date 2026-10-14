@@ -5,6 +5,43 @@ un commit por hallazgo (prueba que falla primero → arreglo → prueba verde), 
 4 escenarios, un sobrescrito en `tests/lineas_base_vinculacion.py` (`CAMBIOS_DECLARADOS[(escenario, tabla)] = (huella_nueva, motivo)` (ya existe; ver el RESUMEN, fila 16); `HUELLAS_MOTOR_ORIGINAL` NO se toca:
 es el registro del oráculo). Fuente: `docs/vinculacion/HALLAZGOS_MOTOR_ORIGINAL.md` (A1–A17, B1–B10, C1–C13, D, E1–E14 y las revisiones g1–g3).
 
+## Estado al 2026-10-13 · rama `claude/f3-arreglos`: el nivel 1 está hecho (y cinco del nivel 2)
+
+Cada arreglo tiene su prueba (`tests/test_vinculacion_arreglos*.py` y las pruebas vecinas que fijaban el defecto, ya actualizadas) y los que alteran las
+tablas de los 4 escenarios inventados están declarados en `tests/lineas_base_vinculacion_cambios.json` (la línea base del ORIGINAL no se toca).
+Lo que cambia en esas tablas es poco: el resto de los arreglos corrige entradas que los escenarios no traen.
+
+| Arreglo | Qué cambia para quien usa el motor | Tablas de los escenarios que cambian |
+| --- | --- | --- |
+| g1-O1 · g1-O2 | un ausente de pandas (`pd.NA`, `NaT`) ya no es el texto «NA» (no más falso «mismo identificador»); un entero guardado como float conserva sus dígitos | ninguna |
+| C1 + M-a | un identificador comparable igual **no sube** a EMPRESA/A un par de países distintos o sin palabras en común; la invariante de palabras alineadas exceptúa los pares justificados por identificador | `ENLACES` (1 celda de MOTIVO), `CONTROL_QA` (una invariante pasa de FALLA a OK), `PARAMETROS`, `resumen` |
+| B1 · g3-O6 | la deduplicación no une sola «J Martinez» con «A Martinez» ni «Kramento 2» con «Kramento 3» (van a pendientes); «Ltda», «Lda», «S. en C.», «E.U.», «EIRL» tienen familia legal; «Unlimited» ya no es LTD | `REVISION` (relajado) |
+| g3-O1 · g3-O2 · g3-O3 · g3-O4 | un puente no mezcla formas legales incompatibles ni anula una decisión DISTINTA (union-find con restricciones); una grafía contra sí misma se avisa; `pe` conserva columnas | ninguna |
+| g3-O5 | la clave de una grafía normaliza los espacios Unicode igual en pandas 2 y 3 | ninguna |
+| g1-O3 + g2-C1 · D (etiquetas) | un texto suelto donde va una colección (`patrones_intermediario="CARGO"`) se rechaza; la etiqueta en blanco vale la clave; dos destinos no pueden compartir primera palabra | ninguna |
+| C10 · C11 | la validación contra la referencia no cae sin candidatos; F1 vale 0,0 (no NaN) sin aciertos | ninguna |
+| **C3 (recall)** | la sigla también se busca del lado del **destino**: «KRONOS EMPRESARIAL VALDORIA» (ancla) ya se empareja con «KEV» (destino) | ninguna |
+| A2 · A1 · A5 · A3 · A4 · A6 · g1-O4 · A12 · A11 | el texto `'NA'` (Namibia) se conserva en las columnas de país (en las demás sigue siendo «no disponible», y `'N/A'`, `'None'`, `'null'` siguen siendo ausentes); un `'NA'` de país sin alias se rechaza con un mensaje que dice qué hacer; el CSV se muestrea sin leerlo entero; las líneas en blanco no corren `FILA_EXCEL`; mensajes accionables (`.xls`, columna de transformación, columnas reservadas); fuente sin filas; `SIN PAIS` fuera de las sugerencias; HS6 con nan/inf | ninguna |
+| A8 · A10 · g1-O6 | `tienda.zelvora.gob.es` → `zelvora.gob.es` (no `gob.es`); separadores iniciales, `usuario@` e IP en el sitio web | ninguna |
+| B9 · D1 | `es_abreviatura` sin recursión ni costo exponencial (mismo resultado, comprobado con 4.000 casos al azar) | ninguna |
+| B3 | la pérdida por truncamiento se mide por posición, no por la primera aparición de la palabra | ninguna |
+| **B8** | con `max_ediciones_palabra=2`, una sustitución más una inserción en una palabra corta (MIRVANA↔MIRVAXAS) ya no es «la misma palabra» (con la errata por defecto, 1, nada cambia) | `errata_doble`: `REVISION` (−9 preguntas entre empresas distintas), `EXPORTADORES` (4 dejan de pedir revisión), `resumen`; ningún vínculo cambia |
+| B2 | `deduplicar_destino` aplica las decisiones como la ancla: manda la última y las claves desconocidas o un registro contra sí mismo se avisan | ninguna |
+| B6 | el docstring de `deduplicar_destino` dice lo que hace el código | ninguna |
+| M-b | `COMPARACION_REVISIONES` tiene siempre las 8 columnas | `automatico_puro`: `COMPARACION_REVISIONES` |
+| E1 · E2 · E4 · E5 · E6 · E8 | el Excel no cae con pandas 3 si una columna no tiene valores; no depende de la versión de pandas al ocultar columnas constantes; encabezados y advertencias pasan por el escritor seguro (`=` inicial = texto, controles = espacio); solo un sitio web de verdad se vuelve enlace; hojas con el mismo prefijo de 31 caracteres reciben `_2`, `_3` | ninguna (el Excel de los escenarios no trae esos casos) |
+| D · claves_repeticion | una clave de repetición que no es columna de la base falla al leerla; `metricas_repetidas` debe estar en `cols_metricas` | ninguna |
+
+**No se hizo (con la razón):**
+
+* **Nivel 2:** **C9** (la propagación por web parte de cualquier vínculo EMPRESA, también los de confianza MEDIA; exigir ALTA bajaría el recall y no hay datos reales que digan cuánta precisión se ganaría: decisión de Enrique);
+  **B7** (`raiz_id` corta en el primer «-»; requiere conocer los formatos reales de `col_id`); **C13/D** rendimiento O(empresas × pares) (F4); C4–C8 (textos y esquemas sin efecto en los vínculos);
+  columna numérica con `ND` (D); E3, E7, E9–E13 (cosméticos o de F4).
+* **Nivel 3 (preguntas a Enrique, sin tocar):** **M-c** (la rama REVISAR por «parecido» es inalcanzable con el umbral por defecto: si se quiere más recall hay que bajar `umbral_parecido`, a costa de más preguntas de revisión; necesita datos reales),
+  A13 (promoción del alias), A9, C2, C12.
+* **Limitación que conviene saber:** ningún arreglo se midió contra los datos reales del piloto (los insumos se perdieron al reciclarse el contenedor y la huella `9e3950f469ae0523` sigue sin reproducirse). Las decisiones de precisión y recall están
+  validadas con pruebas unitarias y los 4 escenarios inventados, no con una medición de precisión/recall sobre empresas reales.
+
 ## Nivel 1 — ARREGLAR en F3.1b (alta, o media con disparador realista; arreglo pequeño y seguro)
 | id | defecto | arreglo | efecto en salidas |
 | --- | --- | --- | --- |

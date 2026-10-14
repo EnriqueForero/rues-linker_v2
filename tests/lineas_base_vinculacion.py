@@ -15,6 +15,9 @@ el cambio, con una línea en el ADR que diga qué se declaró distinto y por qu�
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 #: escenario → tabla → huella
 HUELLAS_MOTOR_ORIGINAL: dict[str, dict[str, str]] = {
     "automatico_puro": {
@@ -126,19 +129,22 @@ CONTROLES_NO_OK_MOTOR_ORIGINAL: dict[str, dict[str, str]] = {
     "relajado": {_FALLA_A_ALINEADAS: "FALLA", _ADVERTENCIA_RECALL: "ADVERTENCIA"},
 }
 
-#: Cambios DECLARADOS respecto del motor original: (escenario, tabla) → (huella nueva, qué cambió y por qué).
-#: La prueba de paridad exige esta huella en lugar de la del original. Nunca se agrega una entrada para que una
-#: prueba pase: cada una dice qué cambió, y se demuestra que deshaciendo ese cambio sale la huella del original.
-CAMBIOS_DECLARADOS: dict[tuple[str, str], tuple[str, str]] = {
-    (escenario, "resumen"): (
-        huella,
-        "F3.1: el ejemplo «p. ej.» de la lectura de las decisiones aportadas (RESUMEN, fila 16, columna LECTURA) "
-        "nombraba dos empresas reales y ahora usa marcas inventadas (Quelmar frente a Zelvora); es la única "
-        "celda distinta.",
-    )
-    for escenario, huella in {
-        "base": "f47eaf7459bcc8b4",
-        "errata_doble": "ce2895231fefec46",
-        "relajado": "094e6055af68eb71",
-    }.items()
+
+#: Cambios DECLARADOS respecto del motor original: (escenario, tabla) → (huella vigente, qué cambió y por qué).
+#: Viven en ``lineas_base_vinculacion_cambios.json`` y los mantiene ``scripts/oraculo_vinculacion/declarar_cambio.py``
+#: (un arreglo del motor que altera una tabla de los 4 escenarios se declara ahí, con su id y su motivo). La prueba de
+#: paridad exige esta huella en lugar de la del original. Nunca se agrega una entrada para que una prueba pase.
+def _cargar_cambios_declarados() -> dict[tuple[str, str], tuple[str, str]]:
+    ruta = Path(__file__).with_name("lineas_base_vinculacion_cambios.json")
+    crudo = json.loads(ruta.read_text(encoding="utf-8"))
+    return {tuple(k.split("|", 1)): (v["huella"], v["motivo"]) for k, v in crudo.items()}  # type: ignore[misc]
+
+
+CAMBIOS_DECLARADOS: dict[tuple[str, str], tuple[str, str]] = _cargar_cambios_declarados()
+
+#: Controles que no salen en OK HOY (tras los arreglos declarados de F3.1b). La FALLA «A con palabras sin alinear» del
+#: original desapareció con el arreglo M-a/C1; queda la advertencia de recall del bloqueo.
+CONTROLES_NO_OK_VIGENTES: dict[str, dict[str, str]] = {
+    escenario: {c: e for c, e in controles.items() if e != "FALLA"}
+    for escenario, controles in CONTROLES_NO_OK_MOTOR_ORIGINAL.items()
 }

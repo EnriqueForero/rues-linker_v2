@@ -232,6 +232,38 @@ def _validar(
     return validar_contra_referencia(l_auto, ref_map, prep, destinos)
 
 
+def _avisos_de_decisiones_sin_aplicar(
+    clave: str, entidades: pd.DataFrame, sujeto: str
+) -> list[str]:
+    """Avisos de las decisiones DUPLICADO que no se pudieron aplicar: clave inexistente o un ``sujeto`` contra sí mismo.
+
+    ``entidades`` es la tabla que devuelven ``deduplicar_ancla`` (grafías) o ``deduplicar_destino`` (registros);
+    ``sujeto`` es «grafía» o «registro», para el texto del aviso.
+    """
+    return [
+        *[
+            f"{clave}: decisión DUPLICADO con {sujeto} inexistente {a} ↔ {b}"
+            for a, b in entidades.attrs.get("desconocidas", [])
+        ],
+        *[
+            f"{clave}: decisión DUPLICADO de un {sujeto} contra sí mismo ({a}); se ignora"
+            if sujeto == "registro"
+            else f"{clave}: decisión DUPLICADO de una {sujeto} contra sí misma ({a}); se ignora"
+            for a, _ in entidades.attrs.get("autopares", [])
+        ],
+    ]
+
+
+def _avisos_de_decisiones_de_la_ancla(clave: str, graf: pd.DataFrame) -> list[str]:
+    """Avisos de las decisiones DUPLICADO de la ancla que no se pudieron aplicar."""
+    return _avisos_de_decisiones_sin_aplicar(clave, graf, "grafía")
+
+
+def _avisos_de_decisiones_de_un_destino(clave: str, entidades: pd.DataFrame) -> list[str]:
+    """Avisos de las decisiones DUPLICADO de un destino que no se pudieron aplicar (B2)."""
+    return _avisos_de_decisiones_sin_aplicar(clave, entidades, "registro")
+
+
 def ejecutar(
     cfg: ConfigVinculacion, verboso: bool = True, registro: Emisor | None = None
 ) -> Resultado:
@@ -262,10 +294,9 @@ def ejecutar(
     vinculos, ent1, uniones_emp, avisos = _vinculos_con_decisiones(
         cfg, pares, graf, prep, dec, nz, comp, log
     )
-    avisos += [
-        f"{cfg.ancla.clave}: decisión DUPLICADO con grafía inexistente {a} ↔ {b}"
-        for a, b in graf.attrs.get("desconocidas", [])
-    ]
+    avisos += _avisos_de_decisiones_de_la_ancla(cfg.ancla.clave, graf)
+    for d in cfg.destinos:
+        avisos += _avisos_de_decisiones_de_un_destino(d.clave, ent_dest[d.clave])
     val, disc = _validar(cfg, ref, l_auto, graf_auto, ent_auto, prep, avisos)
 
     internos = {

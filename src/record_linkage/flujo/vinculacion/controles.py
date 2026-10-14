@@ -108,6 +108,9 @@ def _controles_de_pares(c: _Controles, pares: pd.DataFrame) -> None:
     malos = emp_auto[(emp_auto["MISMO_PAIS"] == "NO")]
     c.agregar("Ningún vínculo EMPRESA automático cruza países", len(malos) == 0, len(malos), "")
     emp_a = pares[(pares["BANDA_AUTO"] == "A") & (pares["TIPO_SUP_B"] != "WEB")]
+    if "EVIDENCIA_EXTRA" in emp_a.columns:
+        # F3.1b (M-a): un A que sube por identificador comparable se justifica por el identificador, no por las palabras.
+        emp_a = emp_a[~emp_a["EVIDENCIA_EXTRA"].fillna("").str.contains("mismo identificador")]
     sin_alinear = emp_a[(emp_a["SOBRA_EXPORTADOR"] != "") | (emp_a["SOBRA_DESTINO"] != "")]
     c.agregar(
         "Todo vínculo automático A tiene todas las palabras alineadas",
@@ -216,6 +219,7 @@ _COLUMNAS_COMPARACION = [
     "NOMBRE_B",
     "DECISIONES",
     "COINCIDEN",
+    "RAZON_ULTIMA",
 ]
 
 
@@ -223,8 +227,9 @@ def comparar_fuentes_decision(decisiones: pd.DataFrame) -> pd.DataFrame:
     """Pares decididos en más de un archivo: ¿coinciden las revisiones?
 
     Devuelve una fila por par (``TIPO``, ``FUENTE``, par de claves) que aparece en al menos dos archivos de
-    decisiones, con lo que decidió cada archivo y si las decisiones coinciden. Sin decisiones, o con un solo
-    archivo, devuelve la tabla vacía con sus siete columnas.
+    decisiones, con lo que decidió cada archivo y si las decisiones coinciden. Sin decisiones, con un solo
+    archivo o sin ningún par repetido devuelve la tabla vacía con las mismas ocho columnas que la llena (M-b: el
+    original daba siete vacía, ocho llena y ninguna cuando había dos archivos y ningún par repetido).
     """
     if decisiones.empty or decisiones["ARCHIVO"].nunique() < 2:
         return pd.DataFrame(columns=_COLUMNAS_COMPARACION)
@@ -250,4 +255,4 @@ def comparar_fuentes_decision(decisiones: pd.DataFrame) -> pd.DataFrame:
                 "RAZON_ULTIMA": grp["RAZON"].iat[-1],
             }
         )
-    return pd.DataFrame(filas)
+    return pd.DataFrame(filas, columns=_COLUMNAS_COMPARACION)
