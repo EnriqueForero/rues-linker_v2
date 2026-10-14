@@ -694,6 +694,13 @@ PERFILES_BASE = {
 }
 
 
+# Fase 2 (2026-10-13): el generador de candidatos de L2 se elige por perfil. "lsh" es el motor de siempre
+# (MinHash-LSH + bloqueo por NIT); "hibrido" compone identificador + tokens distintivos + TF-IDF de trigramas
+# + llaves (engine/candidatos). El defecto sigue siendo "lsh": cambiarlo cambia huellas y se declara.
+for _perfil in PERFILES_BASE.values():
+    _perfil.setdefault("motor_candidatos", "lsh")
+    _perfil.setdefault("candidatos_hibrido", {})
+
 # NOTA: en el notebook fuente (celda 260), `output_directory` y `lsh_storage_dir`
 # referenciaban globales `WORKSPACE` y `NOMBRE_EJECUCION` definidas en runtime.
 # En el paquete .py se exponen como placeholders ("$WORKSPACE", "$NOMBRE_EJECUCION")

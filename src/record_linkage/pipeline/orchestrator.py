@@ -1306,6 +1306,10 @@ class Orchestrator:
         trusted_cfg = set(self.profile.get("trusted_unique_sources", []))
         cross_source_cfg = self.profile.get("cross_source_only", False)
 
+        if str(self.profile.get("motor_candidatos", "lsh")) == "hibrido":
+            return self._run_L2_hibrido(
+                df, outfile, trusted_cfg, bool(trusted_cfg) or bool(cross_source_cfg)
+            )
         engine: TrustedSourceLSHEngine | DiskBasedLSHEngine
         if trusted_cfg:
             engine = TrustedSourceLSHEngine(self.profile, self.config, trusted_sources=trusted_cfg)
@@ -1462,6 +1466,42 @@ class Orchestrator:
     # y selección automática entre DiskBasedLSHEngine y TrustedSourceLSHEngine.
     # Eliminar tras 2 ciclos completos de producción exitosos.
     # ════════════════════════════════════════════════════════════════════
+    def _run_L2_hibrido(
+        self, df: pd.DataFrame, outfile: Path, trusted: set[str], cross_source_only: bool
+    ) -> tuple[Path, list[Path]]:
+        """L2 con el generador de candidatos híbrido (Fase 2, 2026-10-13; ``motor_candidatos = "hibrido"``).
+
+        Identificador + tokens distintivos + TF-IDF de trigramas + llaves, cada estrategia por lotes que se
+        escriben y se sueltan; deja el mismo ``candidates.db`` que el LSH, así que L3 no cambia.
+        """
+        from ..engine.candidatos import (
+            ConfigCandidatosHibrido,
+            escribir_candidatos_sqlite,
+            generar_candidatos_hibrido,
+        )
+
+        if "FUENTE" not in df.columns and "SRC" in df.columns:
+            df = df.assign(FUENTE=df["SRC"])
+        cfg = ConfigCandidatosHibrido.desde_perfil(self.profile)
+        self.log.info(
+            f"   🧩 Motor: candidatos híbrido (nit={cfg.nit}, tokens={cfg.tokens}, tfidf={cfg.tfidf}, "
+            f"llaves={list(cfg.llaves)}; confiables={sorted(trusted)}; solo_cruzado={cross_source_only})"
+        )
+        self.log.info(f"   📊 Registros de entrada: {len(df):,}")
+        lotes = generar_candidatos_hibrido(
+            df.reset_index(drop=True),
+            cfg,
+            cross_source_only=cross_source_only,
+            fuentes_confiables=frozenset(trusted),
+            registrador=self.log,
+        )
+        estadisticas = escribir_candidatos_sqlite(
+            lotes, outfile, registros=len(df), huella="hibrido", registrador=self.log
+        )
+        self.estadisticas_candidatos = estadisticas.como_dict()
+        self.log.info(f"   ✅ Candidatos: {outfile.name} ({estadisticas.total:,} pares)")
+        return outfile, [outfile]
+
     def _run_L2_legacy(self, df: pd.DataFrame) -> tuple[Path, list[Path]]:
         """
         L2: Generación de candidatos LSH.
