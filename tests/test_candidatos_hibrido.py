@@ -244,3 +244,13 @@ def test_las_variantes_por_borrado_vienen_apagadas_por_defecto():
         ).tokens_borrados
         is True
     )
+
+
+def test_el_tamano_del_lote_de_tfidf_no_cambia_los_pares():
+    """El lote solo acota memoria (a 139k: 500 filas = 820 MiB, 2.000 = 1.383 MiB); los pares son los mismos."""
+    from record_linkage.engine.candidatos import pares_por_nombre_tfidf
+
+    nombres = _base()["NOMBRE_LIMPIO"]
+    chico = _pares(pares_por_nombre_tfidf(nombres, umbral=0.3, max_df=1.0, lote_filas=2))
+    grande = _pares(pares_por_nombre_tfidf(nombres, umbral=0.3, max_df=1.0, lote_filas=1000))
+    assert chico == grande and chico

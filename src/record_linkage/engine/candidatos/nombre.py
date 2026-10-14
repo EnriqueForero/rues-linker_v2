@@ -191,14 +191,16 @@ def pares_por_nombre_tfidf(
     ngram: int = 3,
     min_df: int = 2,
     max_df: float = 0.05,
-    lote_filas: int = 2000,
+    lote_filas: int = 500,
     max_filas: int = 1_500_000,
     tam_lote: int = 2_000_000,
     registrador: logging.Logger | None = None,
 ) -> Iterator[np.ndarray]:
     """Pares con coseno TF-IDF de trigramas de caracteres ≥ ``umbral``, a lo sumo ``top_k`` por registro.
 
-    Se calcula por lotes de ``lote_filas`` filas contra todo el corpus (producto disperso); ``max_df`` deja fuera los
+    Se calcula por lotes de ``lote_filas`` filas contra todo el corpus (producto disperso; el tamaño del lote no cambia
+    los pares: medido a 139.028 registros, 500 filas dan los mismos 6.486.210 pares que 2.000 con 820 MiB de RSS en vez de
+    1.383 y en 116 s en vez de 183); ``max_df`` deja fuera los
     trigramas que están en más de esa fracción de nombres (son los que harían denso el producto). Con más de ``max_filas``
     registros la estrategia se omite y lo dice: parta la base (por país, por régimen) o confíe en los tokens.
 
