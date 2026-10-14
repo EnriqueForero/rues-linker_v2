@@ -1955,6 +1955,11 @@ no depende de Enrique.*
   por tarea), Fase 6 (camino único, partir los seis módulos gigantes, deuda a cero por lotes, release 1.0), compuertas con regla de
   decisión en cuatro pasos, riesgos con señal y respuesta, glosario y calendario de nueve semanas.
 
+* **Una prueba que dependía del orden de filas.** `tests/test_contrato_salida.py::test_id_entidad_nit_y_ent` comparaba la primera
+  fila con NIT contra su propio NIT; en `cruce_disco` (DuckDB) el orden no es fijo y en el CI de Python 3.10 esa fila fue
+  800200007, cuyo 7 valida como dígito de verificación de 80020000. Ahora exige la regla real en todas las filas: `NIT-` + base
+  canónica del `NIT_FINAL` del grupo.
+
 ### Lo que la iteración enseñó
 
 * Dos perfiles «de precisión» (`produccion_calibrada`, `alta_precision`) no unen ningún par sin identificador porque el puntaje lineal
