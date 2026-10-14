@@ -62,9 +62,12 @@ class ResultadoCobertura:
         similitud_al_lider: similitud FIRMADA de cada fila con su líder.
         n_grupos_antes: grupos que entraron (componentes conexas).
         n_grupos_despues: grupos que salieron.
+        componentes_en_streaming: componentes con más de ``FILAS_MATRIZ_MAX`` nombres, resueltas
+            con líder por masa y sin matriz k×k (ver la constante).
     """
 
     __slots__ = (
+        "componentes_en_streaming",
         "es_lider",
         "etiquetas",
         "n_grupos_antes",
@@ -78,11 +81,13 @@ class ResultadoCobertura:
         es_lider: np.ndarray,
         similitud_al_lider: np.ndarray,
         n_grupos_antes: int,
+        componentes_en_streaming: int = 0,
     ) -> None:
         self.etiquetas = etiquetas
         self.es_lider = es_lider
         self.similitud_al_lider = similitud_al_lider
         self.n_grupos_antes = int(n_grupos_antes)
+        self.componentes_en_streaming = int(componentes_en_streaming)
         self.n_grupos_despues = len(np.unique(etiquetas)) if len(etiquetas) else 0
 
     @property
@@ -97,8 +102,16 @@ class ResultadoCobertura:
         )
 
 
+#: Componentes con más nombres distintos que esto no arman la matriz k×k: a 139.028 registros, un
+#: encadenamiento de nombres genéricos produjo una componente de decenas de miles de filas y la matriz
+#: (k² pares de nombres más dos índices k² de 8 bytes) pidió 13,5 GB y murió por OOM. Por encima de
+#: este tamaño el líder se elige por masa y solo se compara contra él, en streaming: O(k) de memoria.
+#: 2.000 nombres son 4 M de pares: ~100 MB con los índices, en segundos.
+FILAS_MATRIZ_MAX = 2_000
+
+
 def _matriz_similitud(comparador, nombres: np.ndarray) -> np.ndarray:
-    """Matriz k×k de similitud firmada. k es pequeño: una componente conexa."""
+    """Matriz k×k de similitud firmada, para componentes de hasta ``FILAS_MATRIZ_MAX`` nombres."""
     k = len(nombres)
     a, b = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
     s = comparador.compare(nombres[a.ravel()], nombres[b.ravel()]).reshape(k, k)
@@ -127,7 +140,9 @@ def cobertura_estrella(
             en la estrella solo si alcanza este valor contra el líder.
         regla_lider: ``"cobertura"`` elige al que cubre a más miembros libres
             (medoide operativo, maximiza los grupos que sobreviven enteros);
-            ``"masa"`` elige simplemente al de mayor masa.
+            ``"masa"`` elige simplemente al de mayor masa. Una componente con más
+            de ``FILAS_MATRIZ_MAX`` nombres se resuelve siempre por masa y en
+            streaming (sin matriz k×k), cualquiera sea la regla.
 
     Returns:
         ``ResultadoCobertura``.
@@ -165,12 +180,32 @@ def cobertura_estrella(
     rango[orden] = np.arange(n)
 
     siguiente = 0
+    componentes_en_streaming = 0
     for _, posiciones in pd.Series(np.arange(n)).groupby(etiquetas):
         pos = posiciones.to_numpy()
         if len(pos) == 1:
             nuevas[pos] = siguiente
             es_lider[pos] = True
             siguiente += 1
+            continue
+        if len(pos) > FILAS_MATRIZ_MAX:
+            # Componente gigante: líder por masa y una sola fila de similitud por estrella.
+            componentes_en_streaming += 1
+            libres = np.ones(len(pos), dtype=bool)
+            while libres.any():
+                candidatos = np.flatnonzero(libres)
+                elegido = int(candidatos[np.argmin(rango[pos][candidatos])])
+                fila = comparador.compare(
+                    np.repeat(valores[pos][elegido], len(candidatos)), valores[pos][candidatos]
+                )
+                fila[candidatos == elegido] = 1.0
+                miembros = candidatos[fila >= similitud_minima]
+                miembros = np.union1d(miembros, [elegido])
+                nuevas[pos[miembros]] = siguiente
+                similitud[pos[miembros]] = fila[np.isin(candidatos, miembros)]
+                es_lider[pos[elegido]] = True
+                libres[miembros] = False
+                siguiente += 1
             continue
         matriz = _matriz_similitud(comparador, valores[pos])
         cerca = matriz >= similitud_minima
@@ -188,7 +223,13 @@ def cobertura_estrella(
             es_lider[pos[elegido]] = True
             libres[miembros] = False
             siguiente += 1
-    return ResultadoCobertura(nuevas, es_lider, similitud, n_grupos_antes=len(np.unique(etiquetas)))
+    return ResultadoCobertura(
+        nuevas,
+        es_lider,
+        similitud,
+        n_grupos_antes=len(np.unique(etiquetas)),
+        componentes_en_streaming=componentes_en_streaming,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
