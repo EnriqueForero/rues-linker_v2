@@ -31,8 +31,11 @@ PISO_F1 = 0.975
 PISO_PRECISION = 0.980
 PISO_RECALL = 0.965
 PISO_RECALL_SIN_NIT = 0.900
-#: F1 de produccion_estandar sobre el mismo conjunto, medido.
-F1_BASE = 0.9659
+#: F1 de produccion_estandar sobre el mismo conjunto, medido. Hasta F3 era 0,9659 (comparador legado); con
+#: ADR-0015 y ADR-0016 (híbrido + Soft TF-IDF + exención por identificador idéntico) sube a 0,9745. El perfil
+#: `fuentes_mixtas` conserva el comparador legado y lo supera por poco: medirlo con el comparador nuevo es tarea
+#: de la Fase 3 restante (ADR-0015, «Consecuencias»).
+F1_BASE = 0.9745
 
 
 def test_el_perfil_existe_y_se_puede_construir() -> None:
@@ -85,7 +88,7 @@ def test_el_perfil_alcanza_la_calidad_medida(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 def test_el_perfil_estandar_conserva_su_linea_base(tmp_path: Path) -> None:
-    """El perfil por defecto no cambió: las perillas nuevas están en 0."""
+    """El perfil por defecto reproduce su F1 medido (las perillas de v0.18.0 siguen en 0 en él)."""
     corrida = correr_banco(
         EspecificacionBanco(
             etiqueta="prueba_estandar",

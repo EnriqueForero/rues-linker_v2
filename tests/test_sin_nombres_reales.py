@@ -89,6 +89,8 @@ ARCHIVOS_VIGILADOS = (
     "docs/evidencia/fase3_*.md",
     "docs/evidencia/fase2_candidatos/*.json",
     "docs/evidencia/fase3_comparador/*.json",
+    "docs/evidencia/escala_f3_*.json",
+    "docs/evidencia/corrida_base_f3.json",
     "docs/adr/0015-*.md",
     "docs/adr/0016-*.md",
 )
