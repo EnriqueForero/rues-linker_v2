@@ -2011,3 +2011,198 @@ Todo en `main` tras el PR #8. Siguen las tareas 3.1 a 3.6 y 4.1 a 4.5 del plan; 
   pero ya no se describe como marca inventada. Pruebas: 20 en `tests/test_plantilla_base_real.py` (eran 15, no 16 como decía el
   reporte), incluida la cadena completa muestreo → etiquetas → `medir_verdad_real` por `ID_REGISTRO_FUENTE` y `--hoja ETIQUETAS_PARES`
   sobre el Excel.
+
+## Multicriterio sobre la plantilla (2026-10-14)
+
+**Rama:** `claude/multicriterio-plantilla` · **Sin cambio de motor** (medición, script y documentación; ninguna huella del banco se mueve).
+
+* **Pregunta:** ¿sirve la plantilla de `data/ejemplos/` para una prueba multicriterio (varias variables además de NIT y nombre) y qué
+  aporta cada variable? La respuesta sale de cifras: `scripts/multicriterio_plantilla.py` corre doce configuraciones de
+  `extra_features` sobre las mismas fuentes y mide cada una contra `VERDAD_GRUPOS`, contra `ETIQUETAS_PARES` y contra la base
+  (casos y pares, por id). Reutiliza `correr_motor`, `evaluar_casos` y `metricas_pares` del verificador (que gana
+  `extra_features=None` y `ajustes_perfil=None`, sin cambiar su comportamiento por defecto, y expone `pares_por_particion`).
+  *Nota de la entrada siguiente:* ese mismo día las funciones pasaron a `record_linkage.evaluation.plantilla_base_real`
+  (`pares_por_particion` incluida) y el verificador las importa de ahí; `cargar_script("verificar_plantilla_base_real")`
+  ya no expone `pares_por_particion`.
+* **Evidencia:** `docs/evidencia/plantilla_base_real_multicriterio.json`. Base 281 grupos, P 0,9875 / R 0,9754, 18 de 24 (igual que §5).
+  Correo + teléfono firmados a 0,10 (`B_contacto`): 283 grupos, **P 0,9937** / R 0,9754, 20 de 24; separa el singleton
+  `OLVERANA`/`LAVIRENA` (correo con dominio distinto) y el ambiguo `JUAN CARLOS PEREZ GOMEZ` (teléfono distinto). Añadir municipio
+  y dirección (C), subir pesos (D), añadir DEPARTAMENTO/CIIU/SITIO_WEB (J) o bloquear por correo (K, L) no mueve ni un par más.
+  Solo municipio (E) une un falso nuevo (`VALDORIA`, las dos en CALI). Los no firmados (F) unen dos falsos: `categorical`
+  devuelve 0,5 si falta un lado. `TRUVEL`/`TRUVELA` no se separa con nada (ADUANAS sin contacto). Los 8 FN no cambian: el
+  filtro de NIT distinto y `min_name_similarity` 0,30 van antes de las extras, y la cobertura por estrellas solo mira el nombre.
+  Contra `ETIQUETAS_PARES` las doce dan lo mismo: los pares movidos están `UNCLEAR` o sin etiquetar. Determinismo: dos
+  subprocesos con `PYTHONHASHSEED` distinto, misma huella.
+* **Veredicto:** sirve para la fontanería (las columnas llegan al scorer; `MUNICIPIO` debe declararse `CIUDAD`; dicts, no tuplas),
+  para firmados contra no firmados y para los dos FP de borde; no sirve para el riesgo real del contacto (ningún negativo comparte
+  correo o teléfono), el rescate de recall ni la sensibilidad al peso. Faltan casos MC01–MC05 y etiquetas para los pares de borde
+  (`docs/PLANTILLA_BASE_REAL.md` §5.1). Recomendada: `B_contacto` (precisión antes que recall).
+* **Pendiente (constructor):** pruebas de `scripts/multicriterio_plantilla.py` (`tests/cargar_script.py`), el notebook para
+  explorar las configuraciones (no el 11), y los casos nuevos en el generador.
+
+## Notebook 13 y módulo `evaluation.multicriterio` (2026-10-14)
+
+**Rama:** `claude/multicriterio-plantilla` · **Sin cambio de motor** (módulo de evaluación, notebook, pruebas y documentación;
+ninguna huella del banco se mueve; la versión no sube).
+
+* **Qué se hizo.** Enrique pidió «un notebook para probar los resultados que se obtienen» con varias variables. La lógica del
+  experimento (que vivía en `scripts/multicriterio_plantilla.py` y `scripts/verificar_plantilla_base_real.py`, no instalables)
+  se movió al paquete, una sola vez: `src/record_linkage/evaluation/plantilla_base_real.py` (leer las hojas `FUENTE_*`,
+  `correr_motor`, `evaluar_casos`, `pares_por_particion`, `pares_predichos`, `metricas_pares`) y
+  `src/record_linkage/evaluation/multicriterio/` (paquete, ver la viñeta final; configuraciones, `a_columnas_del_motor`, validación fail-fast,
+  `pares_de_prueba`, `aporte_por_variable`, `medir_configuracion`, `comparar_con_base`, `tabla_pares_que_cambian` con los
+  valores de las dos filas, `comparar_off_on`, `exportar_comparacion`, `descripcion_tipos`, `localizar_plantilla`). Los dos
+  scripts son envoltorios delgados (`tests/test_multicriterio.py::test_los_scripts_son_envoltorios_delgados` lo vigila) y el
+  script reproduce bit a bit la evidencia: mismas cifras, ids, huellas y aporte en las doce configuraciones (el JSON se
+  regeneró con el envoltorio; solo gana la clave `pares_predichos`). `Medicion` admite ahora una base SIN verdad: se comparan
+  las particiones y se listan los pares que cambian, sin cifras.
+* **Notebook** `notebooks/13_multicriterio_plantilla_base_real.ipynb` (patrón A / A1 / B del 04 y el 12; sin Drive): Celda A
+  instala desde `main` si el paquete instalado no trae `evaluation/multicriterio/__init__.py` (el tag v0.22.4 no lo tiene; se comprueba
+  por archivo, sin importar el paquete viejo); Celda B = `ARCHIVO`, `VARIABLES_EXTRA` (con el nombre de columna del archivo:
+  `MUNICIPIO`), `NOMBRE_CORRIDA`. Secciones: tipos de comparador desde el registro; demo OFF/ON sobre la plantilla (la localiza
+  en `RUTA_DATOS`, en un checkout, o la descarga de GitHub); sus datos (Excel con `FUENTE_*`; con o sin verdad); exportación.
+  Entra al contrato (`tests/test_notebooks_contrato.py`: CONTRATO, `_preparar_13` copia los CSV de `data/ejemplos/` y arma el
+  Excel con hojas `FUENTE_*`/`VERDAD_GRUPOS`/`CASOS`/`ETIQUETAS_PARES`, ARTEFACTOS_ESPERADOS = los dos Excel y los dos JSON;
+  `tests/test_notebooks_v014.py`: TODOS y NUEVOS; el 08 lo publica), a `ARCHIVOS_VIGILADOS` y a `.gitignore` (los
+  `*.ipynb` se ignoran salvo los re-incluidos uno por uno; sin esa línea el notebook no habría llegado al commit).
+* **Cifras** (sin cambio respecto a la entrada anterior): base 281 grupos / P 0,9875 / R 0,9754 / 18 de 24; correo + teléfono
+  firmados 0,10: 283 / **0,9937** / 0,9754 / 20 de 24, pierde (bien) `CRM-000037`/`RUES-000016` y `CRM-000051`/`CRM-000161`,
+  gana 0; los 8 FN idénticos; huellas `d858130f…` y `714c1cc4…`, iguales en subprocesos con `PYTHONHASHSEED` distinto.
+  `pares_de_prueba`: 325 positivos, 210 negativos difíciles; `email_signed` 59/59 premia y 0/69 en negativos;
+  `categorical_signed` sobre TELEFONO premia 4 de 114 (la regla de CLAUDE.md medida).
+* **Hallazgos del motor** (ya escritos en §5.1 de la guía, repetidos aquí porque el módulo los codifica): `MUNICIPIO` se renombra
+  a `CIUDAD` antes de validar las extras (el módulo traduce); el aviso del scorer ante una columna ausente es solo un log que la
+  medición apaga (se comprueba `L1_prep/data.parquet`); las extras se suman tras el filtro de nombre y el de NIT distinto, y la
+  cobertura por estrellas no las ve; `categorical` devuelve 0,5 si falta un lado; `llaves_bloqueo` es igualdad exacta; la
+  docstring de `puente_campos.py` enseña tuplas que `_normalizar_extra_features` rechaza; `linkage()` anota
+  `extra_features: list[str]` pero acepta dicts (el módulo lo pasa como `Any` para no mentirle al tipado, y lo deja escrito).
+  Una fricción de herramientas: `scripts/reglas_estrictas.py --base origin/main` compara revisiones de git, así que con cambios
+  sin commit dice PASA sin medir; se aplicó su juego de reglas (PTH, BLE001, E722, T201, C901 ≤ 15) directamente a los archivos
+  nuevos: limpio.
+* **Pruebas:** `tests/test_multicriterio.py` (36 tras la verificación; 30 al cierre de la construcción), `tests/test_plantilla_base_real.py` (21), contrato de notebooks
+  rápido (119) y la prueba `slow` del 13 con `nbclient` sobre `data/ejemplos/`; mypy limpio en los dos módulos nuevos (no suben
+  el conteo de `deuda.py`); ruff limpio en `src`, `tests`, `scripts` y el notebook. La primera corrida de la suite rápida
+  completa falló en `tests/test_escritor.py::test_solo_el_escritor_escribe_fuera_de_trabajo`: `huella_particion` armaba el
+  texto a hashear con `to_csv` (a una cadena, no a disco) y la compuerta de escritores lo cuenta como escritor; se reemplazó por
+  `str.cat` con el mismo texto (huella `714c1cc4…` idéntica a la evidencia, comprobada completa) y la suite quedó en verde.
+* **Correcciones tras la verificación** (tres verificadores, lentes *reproducir*, *contrato* y *usabilidad*; 26 hallazgos
+  sobre el notebook 13, los dos módulos, sus pruebas y su documentación). Cada uno se comprobó antes de tocar nada:
+  **ninguno resultó falso, así que no hay descartes**; donde la corrección se aparta de lo propuesto se dice por qué.
+  Ninguna cifra de evidencia se movió salvo una que estaba mal escrita: el llenado de EMAIL en la tabla de aporte
+  (49,2 % → 49,3 %): `round` redondea al par y la medida a mano (264 de 536 = 49,25 %) da 49,3. Se corrigió en el
+  módulo (`_porcentaje`, medio hacia arriba), en §5.1 de la guía y en el JSON (que guarda la fracción 0,4925, sin cambio);
+  comprobado que los otros seis llenados no se mueven con ese redondeo.
+  - *Celda A del 13 (tres hallazgos: reproducir, contrato, usabilidad).* Comprobado: `git ls-tree origin/main
+    src/record_linkage/evaluation/` no lista `multicriterio.py` ni `plantilla_base_real.py` (e31bf53, versión 0.22.4), y
+    en pip 26.2.1 (`resolution/resolvelib/resolver.py`) una URL git con la misma versión ya instalada y sin
+    `--force-reinstall` cae en `continue`: no reinstala, y «reinicie el entorno» no arreglaba nada. Corrección: cuando el
+    paquete instalado no trae el módulo se reinstala con `--force-reinstall --no-deps`; el error final distingue «el
+    origen no trae el módulo» (el PR de `claude/multicriterio-plantilla` no se ha fusionado; reiniciar no lo arregla;
+    cambie `ORIGEN_GIT` a esa rama o `pip uninstall -y rues-linker`) de «hay otra versión cargada en memoria» (reinicie);
+    se exige versión ≥ 0.22.4 con el módulo (`VERSION_MINIMA`), no igualdad, porque `main` puede ir por delante del tag.
+    `ORIGEN_GIT` sigue en `@main` y no en la rama, a propósito: el estado durable es el posterior al merge y la rama
+    puede borrarse; el mensaje nombra la rama. La nota «hasta el merge, en Colab la Celda A no encuentra el módulo en
+    `main`» está en la celda 0, en `README_notebooks.md` §13 y en §8.1 de la guía. Pendiente sin cambio: fijar el tag
+    cuando exista.
+  - *CHANGELOG:24 y la entrada anterior de esta bitácora decían que el verificador «expone `pares_por_particion`».*
+    Comprobado con `git diff origin/main -- scripts/verificar_plantilla_base_real.py`: importa `COL_ID, correr_motor,
+    evaluar_casos, leer_plantilla, metricas_pares, tabla_markdown` y nada más. Viñeta reescrita y nota en la entrada
+    anterior.
+  - *Dos huellas para la misma partición base (`b847d835…` del banco en §5; `d858130f…` del módulo en pruebas, JSON y
+    bitácora).* Cierto; una frase en §8.2 lo explica y cita las dos.
+  - *«109 pares etiquetados» contra «etiquetas: 106».* Cierto (IS_MATCH 76 / 30 / 3 UNCLEAR). La celda 6 dice «109
+    etiquetados, 106 evaluables» y junto a la P 0,9937 avisa que son datos inventados.
+  - *`DETALLE` del caso `singleton` sin denominador («1 singletons…»).* Cierto: el refactor perdió `de {len(sub)}` y
+    contradecía «sin cambiar su comportamiento por defecto». Restaurado (`_veredicto_del_caso` recibe `n_registros`);
+    `tests/test_plantilla_base_real.py::test_evaluar_casos_reproduce_la_evidencia_incluido_el_detalle` compara la tabla
+    por caso entera del verificador (cifras y texto) con `docs/evidencia/plantilla_base_real_casos.json` y exige «n de 60».
+    `plantilla_base_real_multicriterio.json` se regeneró con el envoltorio (`--determinismo 2`): 56 diferencias con el
+    anterior, todas esperadas —12 `DETALLE` del singleton, 22 `neutro` y 22 `premia_con_un_lado_vacio` nuevas— y cifras,
+    ids, huellas, FP/FN, `cambios_vs_base`, `premia` y `castiga` idénticos clave por clave; determinismo idéntico
+    (`714c1cc4e2c7` en los dos subprocesos).
+  - *`docs/evidencia/README.md` sin el nombre exacto del notebook.* Cierto; escrito, con la nota de la regeneración.
+  - *El 13 no estaba en los contratos de la celda de entorno (`CONSUMIDORES`).* Cierto. Entra a los dos: al de «nunca
+    editable» (y también el 12, como se propuso) y al de «código fresco y completo», que ahora admite por escrito una
+    tercera estrategia: instalar desde GitHub con `--force-reinstall` cuando falta el módulo y comprobar el módulo por
+    archivo (`find_spec` + `is_file()`), más `invalidate_caches`, `"record_linkage" in sys.modules`,
+    `capture_output=True` y la salida de emergencia. El 12 no entra al segundo contrato: su Celda A no verifica el paquete
+    submódulo a submódulo (deuda previa a este cambio, como 01–04; queda escrito en el test).
+  - *`pares_de_prueba` repetía el merge de `_pares_de`; `evaluar_casos` daba `KeyError` sin CASO.* Cierto. Nace
+    `plantilla_base_real.pares_verdaderos` (única regla de «mismo grupo verdadero»; la usan `pares_por_particion` y
+    `pares_de_prueba`); `evaluar_casos` y `pares_de_prueba` lanzan `ValueError` con qué falta.
+  - *`leer_plantilla` no exigía `ID_REGISTRO_FUENTE` único en todo el libro (bloqueante).* Cierto por lectura del código:
+    `marco_registros` indexa por id (con repetidos, `registros.at` devuelve una Serie y la tabla de pares muestra varias
+    empresas por celda) y `_marco_con_prediccion` revienta con `InvalidIndexError`. Ahora `_exigir_ids_unicos` lanza
+    `ValueError` con los repetidos y el remedio (prefijo de la fuente, §3.3); prueba con dos hojas numeradas 1..3; la
+    sección 3 del notebook lo dice.
+  - *`columnas_que_ve_el_scorer` se calculaba y no se mostraba ni detenía nada.* Cierto. `exigir_columnas_en_scorer`
+    lanza `RuntimeError` con qué hacer y `medir_configuracion` la llama; las celdas 7 y 11 imprimen «Columnas extra que
+    vio el motor»; prueba con `columnas_que_ve_el_scorer` sustituida por `{EMAIL: False}`; el envoltorio ya no tiene la
+    rama «AVISO» (muerta) y en su lugar imprime las columnas que vio el motor.
+  - *La sección 1 decía que todos los `tipo_*` son firmados.* Cierto que era falso: `tipo_conjunto`, `tipo_geo` y
+    `tipo_numerico` tienen `firmado=False` y devuelven 0 ante una discrepancia (medido con `obtener(...)`). Corregido en
+    la sección 1 y en la Celda B.
+  - *Sin peso sugerido ni frase llana por tipo.* Cierto. Tabla columna → tipo / peso sugerido / qué hace, con las cifras
+    de §5.1 (`tipo_direccion` 147 de 147 positivos y 38 de 106 negativos; municipio tolerante 21 de 172), y la regla de
+    pesos (0,05–0,10 por variable, suma ≤ 0,30; D y L dieron exactamente lo mismo: subir el peso no es una prueba).
+  - *`aporte_por_variable` contaba `premia` sobre todos los pares y dividía por los llenos.* Cierto (con `categorical`:
+    255 premiados de 59 llenos, 287 pp). Ahora `premia` / `castiga` / `neutro` se cuentan solo sobre pares con ambos
+    lados llenos (suman `ambos_llenos`) y `premia_con_un_lado_vacio` va aparte; la tabla gana
+    `POSITIVOS_/NEGATIVOS_PREMIA_UN_LADO_VACIO`. Cambio declarado en el JSON: `neutro` ya no incluye los pares con un
+    lado vacío (que los firmados siempre puntúan 0); `premia` y `castiga` no cambian para ningún tipo firmado. La tabla
+    Markdown de la guía (`tabla_aporte`) no cambia de columnas.
+  - *`VERDAD_GRUPOS` mínima → `KeyError: 'CASO'`; con CASO pero sin hoja CASOS, resumen sin cifras y sin aviso.* Cierto.
+    `leer_plantilla` exige `ID_REGISTRO_FUENTE` e `ID_GRUPO` (CASO opcional); `caso_por_id` devuelve `None` sin CASO;
+    `medir_configuracion` mide pares con cualquier verdad y casos solo con CASO + CASOS (`LibroPlantilla.con_casos`,
+    `Medicion.con_casos`; `con_verdad` pasa a significar «hay VERDAD_GRUPOS»); `describir_libro` dice antes de correr
+    qué cifras va a haber («Sin VERDAD_GRUPOS…», «Sin hoja CASOS…», «Sin ETIQUETAS_PARES…») y las celdas 7 y 11 lo
+    imprimen; el JSON exportado gana `con_casos`. Pruebas con `correr_motor` sustituido por la correlativa ya medida (no
+    se vuelve a correr el motor).
+  - *Sin NIT o sin MUNICIPIO el motor corría callado.* Cierto por lectura (solo se exigían id y razón social).
+    `leer_plantilla` avisa (`UserWarning`) con el remedio; prueba de las tres variantes; la sección 3 dice el mínimo
+    (`ID_REGISTRO_FUENTE`, `RAZON_SOCIAL`, `NIT` vacío si no hay, `MUNICIPIO`; lo demás opcional).
+  - *Se prometía P y R por régimen con Wilson y solo se mostraban las globales, a 6 decimales.* Cierto.
+    `Medicion.tabla_etiquetas` (la `tabla()` de `ResultadoVerdadReal`: una sola implementación) se muestra en las celdas
+    7 y 11; `resumen` redondea `ETIQUETAS_P/R` a 4 decimales; §8.1 reescrito.
+  - *Celda 13 con `NameError` si no corrió la sección 3.* Cierto; guarda con qué hacer.
+  - *Celda 14 sin guía por fila ni regla contra subir pesos a ciegas.* Cierto; guía de cuatro filas (se une / se separa
+    × verdadero sí / no / vacío) y la regla.
+  - *A1 no creaba `/content/datos`.* Cierto. Se crea en la primera celda EJECUTAR (sección 1) y no en A1 como se
+    propuso: `tests/test_notebooks_contrato.py` inyecta sus rutas justo DESPUÉS de A1, así que un `mkdir` en A1 crearía
+    `/content/datos` en la máquina de pruebas y fallaría sin permisos en el CI. A1 y `README_notebooks.md` lo dicen.
+  - *Jerga sin explicar; sin tamaño ni tiempo.* Cierto: glosario en la celda 0, leyenda impresa tras el resumen
+    (`LEYENDA_RESUMEN`) y «para qué tamaño» (una muestra de miles a decenas de miles; ≈ 15 s por 536 registros; para la
+    base completa, 04 / 06).
+  - *§8.1 con dos sobrepromesas (Wilson solo en el JSON; «comprueba» sin mostrar ni detener).* Cierto; reescrito tras
+    corregir módulo y notebook.
+  - Lo que NO cambió: el motor (engine, matching, config, pipeline), `data/ejemplos/*.csv`, el generador, la versión,
+    las compuertas del banco, y todas las cifras de §5, §5.1 y §8.2 salvo el llenado de EMAIL.
+  - Controles tras las correcciones: `ruff check` y `ruff format --check` limpios en `src`, `tests`, `scripts` y el
+    notebook 13 (`ruff check .` sobre todo el repositorio sigue con la deuda previa de `main`, en archivos que no se
+    tocaron); `scripts/reglas_estrictas.py --base origin/main` dice PASA sin medir (compara revisiones; sin commit) y su
+    juego de reglas aplicado a mano a los archivos tocados solo encuentra el PTH123 previo de `tests/test_notebooks_v014.py`
+    (`open()` de `pyproject.toml`, ahora en la línea 550); `scripts/deuda.py --referencia docs/evidencia/deuda_f0.json`
+    PASA (11 / 100 / 147 / 115 / 77, ningún conteo sube); mypy limpio en los dos módulos; pytest dirigido
+    (`test_multicriterio` 36, `test_notebooks_contrato` rápido, `test_notebooks_v014`, `test_sin_nombres_reales`,
+    `test_plantilla_base_real` 21): 349 passed, 9 deselected (32 s); la prueba `slow` del 13 con `nbclient`: 1 passed
+    (16 s), con `RUTA_DATOS.mkdir` en la primera celda EJECUTAR y las celdas nuevas de impresión.
+    Suite rápida completa (`-n 4 --dist loadfile -m "not canario and not slow"`): **4066 passed, 0 failed**, 3 skipped
+    previos (2 de Windows, 1 «verdad real sin medir»), 1 xfailed previo, 8 min 44 s (eran 4056 al cierre de la
+    construcción: +6 de `test_multicriterio`, +1 de `test_plantilla_base_real`, +3 de los contratos de la celda de entorno).
+* **División en paquete (mismo día).** El módulo nació como un archivo de 1.180 líneas; se dividió en el paquete
+  `evaluation/multicriterio/` (4 módulos más `__init__.py`, máximo 399 líneas: `configuraciones.py` 275, `datos.py` 166,
+  `medicion.py` 399, `informe.py` 345, `__init__.py` 177) sin cambiar lógica ni cifras, por la compuerta de ≤ 600 líneas
+  (`docs/PLAN_DETALLADO_2026-10-14.md` §7). Dependencias en una sola dirección (configuraciones ← datos ← medicion ← informe;
+  `datos` no necesita `configuraciones`); el `__init__` reexporta los 42 nombres de `__all__`, idéntico al del archivo, así que
+  `from record_linkage.evaluation.multicriterio import X` sigue valiendo para todo X. Comprobado, no supuesto: las 58
+  definiciones de nivel superior (funciones, clases y constantes) tienen el mismo AST en el paquete que en el archivo, y
+  `scripts/multicriterio_plantilla.py --datos data/ejemplos` reproduce `docs/evidencia/plantilla_base_real_multicriterio.json`
+  clave por clave (0 diferencias; determinismo `714c1cc4e2c7` en los dos subprocesos), por lo que el JSON no se regeneró. Lo
+  único que cambió fuera del paquete: las tres pruebas que sustituían `correr_motor`, `columnas_que_ve_el_scorer` y `urlopen`
+  en el espacio de nombres del módulo lo hacen ahora en el submódulo donde se busca el nombre (`mc.medicion`, `mc.datos`); la
+  Celda A del notebook 13 comprueba `evaluation/multicriterio/__init__.py` (`MODULO_NECESARIO`); `ARCHIVOS_VIGILADOS` vigila
+  `src/record_linkage/evaluation/multicriterio/*.py`; CLAUDE.md, `docs/PLANTILLA_BASE_REAL.md` §8 y el CHANGELOG nombran el
+  paquete. Controles: `ruff check` y `ruff format --check` limpios (src, tests, scripts y el notebook 13); mypy limpio en el
+  paquete y en `plantilla_base_real.py`; `scripts/deuda.py` PASA (11 / 100 / 147 / 115 / 77, ningún conteo sube); pytest
+  dirigido (`test_multicriterio`, `test_plantilla_base_real`, `test_sin_nombres_reales`, `test_notebooks_contrato`,
+  `test_notebooks_v014`): 353 passed, 9 deselected; la prueba `slow` del 13 con `nbclient`: 1 passed.

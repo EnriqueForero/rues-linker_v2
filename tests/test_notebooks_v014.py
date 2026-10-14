@@ -24,11 +24,18 @@ ORQUESTADOR = "06_orquestador_configurable.ipynb"
 IMPORTADORES = "07_deduplicar_importadores_razon_social_pais.ipynb"
 PUBLICACION = "08_PUBLICAR_GITHUB.ipynb"
 OPTIMIZACION = "12_optimizar_parametros_con_optuna.ipynb"
-NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION, OPTIMIZACION)
+MULTICRITERIO = "13_multicriterio_plantilla_base_real.ipynb"
+NUEVOS = (GENERAL, PLANTILLA, IMPORTADORES, PUBLICACION, OPTIMIZACION, MULTICRITERIO)
 #: Notebooks que INSTALAN y consumen la librería. El 08 publica el paquete: su
 #: primera celda instala herramientas de build, no rues-linker, así que los
-#: contratos de la celda de entorno no le aplican.
-CONSUMIDORES = (GENERAL, PLANTILLA, IMPORTADORES)
+#: contratos de la celda de entorno no le aplican. El 13 entró el 2026-10-14:
+#: instala desde GitHub y comprueba el módulo que necesita por archivo (la
+#: tercera estrategia que admite ``test_la_celda_de_entorno_garantiza_codigo_fresco_y_completo``).
+CONSUMIDORES = (GENERAL, PLANTILLA, IMPORTADORES, MULTICRITERIO)
+#: El 12 también instala la librería (desde el tag) y la consume, pero su celda
+#: de entorno no verifica el paquete submódulo a submódulo (deuda previa a este
+#: cambio, igual que 01-04): entra solo al contrato que no admite matices.
+INSTALAN_LA_LIBRERIA = (*CONSUMIDORES, OPTIMIZACION)
 TODOS = (
     "01_deduplicar_una_base.ipynb",
     "02_cruzar_dos_bases.ipynb",
@@ -40,6 +47,7 @@ TODOS = (
     IMPORTADORES,
     PUBLICACION,
     OPTIMIZACION,
+    MULTICRITERIO,
 )
 
 
@@ -187,7 +195,7 @@ def test_la_plantilla_descarta_modulos_viejos_y_exige_version() -> None:
     assert "record_linkage.__version__ != VERSION_ESPERADA" in entorno
 
 
-@pytest.mark.parametrize("nombre", CONSUMIDORES)
+@pytest.mark.parametrize("nombre", INSTALAN_LA_LIBRERIA)
 def test_la_celda_de_entorno_nunca_instala_editable(nombre: str) -> None:
     """`pip install -e` deja un .pth que un kernel YA en marcha no lee.
 
@@ -203,12 +211,12 @@ def test_la_celda_de_entorno_nunca_instala_editable(nombre: str) -> None:
 
 @pytest.mark.parametrize("nombre", CONSUMIDORES)
 def test_la_celda_de_entorno_garantiza_codigo_fresco_y_completo(nombre: str) -> None:
-    """El invariante real, que admite dos estrategias.
+    """El invariante real, que admite tres estrategias.
 
     Lo que no puede pasar es correr código **rancio** (una copia vieja del
     paquete que quedó en el kernel o en site-packages) o **incompleto** (un
-    árbol que Drive dejó a medias). Hay dos formas legítimas de garantizarlo y
-    el repositorio usa las dos:
+    árbol que Drive dejó a medias). Hay tres formas legítimas de garantizarlo y
+    el repositorio usa las tres:
 
     * **Instalar la rueda** (05, 06): un solo archivo, o está completo o falla
       ruidosamente. Exige `capture_output=True` — un `pip -q` silencioso
@@ -216,18 +224,26 @@ def test_la_celda_de_entorno_garantiza_codigo_fresco_y_completo(nombre: str) -> 
     * **Importar desde el árbol de Drive** (07): no hay instalación que pueda
       quedar rancia, pero hay que verificar de dónde se importó de verdad,
       porque un `record_linkage` previo en el kernel ganaría la partida.
+    * **Instalar desde GitHub y comprobar el módulo por archivo** (13, desde el
+      2026-10-14): pip construye la rueda de un clon completo (o falla), pero
+      NO reinstala una URL git con la misma versión ya instalada —el resolver
+      hace `continue` si la versión coincide y no hay `--force-reinstall`—, así
+      que «fresco» exige `--force-reinstall` cuando el paquete instalado no
+      trae el módulo, y «completo» se comprueba mirando que el archivo del
+      módulo exista (`find_spec` + `is_file()`), sin importar el paquete viejo.
 
     Fijar «tiene que haber un pip install» confundía una implementación con el
-    invariante, y rechazaba una celda de entorno correcta. Lo común a las dos
+    invariante, y rechazaba una celda de entorno correcta. Lo común a las tres
     es lo que se exige aquí.
     """
     entorno = _codigo(_cargar(nombre))[0]
 
     instala = "pip" in entorno and "install" in entorno and "rueda" in entorno.lower()
     importa_del_arbol = "sys.path.insert" in entorno
+    instala_de_github = "git+https://" in entorno and "pip" in entorno and "install" in entorno
 
-    assert instala or importa_del_arbol, (
-        "la celda de entorno no instala la rueda ni importa desde el árbol: "
+    assert instala or importa_del_arbol or instala_de_github, (
+        "la celda de entorno no instala la rueda, ni desde GitHub, ni importa desde el árbol: "
         "no se sabe qué código va a correr"
     )
     # Un kernel en marcha conserva los módulos ya importados: sin esto se
@@ -239,15 +255,27 @@ def test_la_celda_de_entorno_garantiza_codigo_fresco_y_completo(nombre: str) -> 
     # nombre `_SUBPAQUETES` rechazaba la segunda, que es la más exhaustiva —
     # otra vez un contrato escrito sobre la implementación y no sobre la
     # propiedad. Lo común es que se importen submódulos, uno por uno.
-    assert "import_module(" in entorno and (
-        "_SUBPAQUETES" in entorno or "walk_packages" in entorno
-    ), "falta la verificación de que el paquete está completo (submódulo a submódulo)"
+    if instala_de_github and not instala and not importa_del_arbol:
+        assert "find_spec(" in entorno and ".is_file()" in entorno, (
+            "instalar desde GitHub obliga a comprobar por archivo que el módulo necesario existe"
+        )
+        assert "--force-reinstall" in entorno, (
+            "pip no reinstala una URL git con la misma versión instalada: sin --force-reinstall el "
+            "paquete viejo sigue ahí y el módulo nuevo nunca llega"
+        )
+        assert '"record_linkage" in sys.modules' in entorno, (
+            "un record_linkage ya cargado en el kernel ganaría al recién instalado"
+        )
+    else:
+        assert "import_module(" in entorno and (
+            "_SUBPAQUETES" in entorno or "walk_packages" in entorno
+        ), "falta la verificación de que el paquete está completo (submódulo a submódulo)"
     # Cuando nada de lo anterior alcanza, el usuario necesita saber qué hacer.
     assert (
         "Reiniciar sesion" in entorno or "Reinicie el" in entorno or ("Reiniciar sesión" in entorno)
     ), "falta la salida de emergencia"
 
-    if instala:
+    if instala or instala_de_github:
         assert "capture_output=True" in entorno, "un pip -q silencioso esconde la causa del fallo"
     if importa_del_arbol:
         assert "record_linkage.__file__" in entorno or "rl.__file__" in entorno, (

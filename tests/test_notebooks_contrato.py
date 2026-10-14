@@ -1,4 +1,4 @@
-"""Contrato de los notebooks 01–06 y 12 con el estándar de salida (F1.15, F2.15).
+"""Contrato de los notebooks 01–06, 12 y 13 con el estándar de salida (F1.15, F2.15; 13 el 2026-10-14).
 
 Dos compuertas, con propósitos distintos:
 
@@ -15,7 +15,11 @@ Dos compuertas, con propósitos distintos:
   separadores)— con un tope de 10 minutos por notebook. Un notebook que nunca
   se ejecutó no es un entregable. El 12 (F2.15) no recibe archivo: genera su
   base de demostración con empresas inventadas y necesita ``optuna`` en el
-  venv (extra ``optimization``; sin él la prueba FALLA, no se salta).
+  venv (extra ``optimization``; sin él la prueba FALLA, no se salta). El 13
+  (multicriterio) recibe en ``RUTA_DATOS`` los CSV de ``data/ejemplos/`` (la
+  plantilla de base real, que su demo localiza sin red) y el mismo libro como
+  ``plantilla_base_real.xlsx`` con hojas ``FUENTE_*`` (su sección «sus datos»),
+  así que corre entero sobre la plantilla y deja los dos Excel y los dos JSON.
 * **Delgadez del 12** (``test_el_notebook_12_no_reimplementa_el_optimizador``):
   el notebook configura y llama a ``OrchestratorOptimizer``; no define
   clases, ni una función objetivo, ni toca ``optuna`` directamente.
@@ -58,6 +62,8 @@ import pytest
 RAIZ = Path(__file__).resolve().parents[1]
 NOTEBOOKS = RAIZ / "notebooks"
 SINTETICA = RAIZ / "tests" / "data_sintetica" / "dataset_sintetico_p2_extra_features.csv"
+#: La plantilla de base real (empresas inventadas) sobre la que corre el 13.
+PLANTILLA = RAIZ / "data" / "ejemplos"
 
 NB01 = "01_deduplicar_una_base.ipynb"
 NB02 = "02_cruzar_dos_bases.ipynb"
@@ -67,7 +73,8 @@ NB05 = "05_general_cruce_configurable.ipynb"
 NB06_PLANTILLA = "06_ejemplo_rues_x_exportaciones.ipynb"
 NB06_ORQUESTADOR = "06_orquestador_configurable.ipynb"
 NB12 = "12_optimizar_parametros_con_optuna.ipynb"
-CONTRATO = (NB01, NB02, NB03, NB04, NB05, NB06_PLANTILLA, NB06_ORQUESTADOR, NB12)
+NB13 = "13_multicriterio_plantilla_base_real.ipynb"
+CONTRATO = (NB01, NB02, NB03, NB04, NB05, NB06_PLANTILLA, NB06_ORQUESTADOR, NB12, NB13)
 
 #: Notebooks cuya primera celda es la de entorno (instalan desde Drive o, en
 #: 01 a 04, desde GitHub si la versión no coincide): en la prueba se sustituye
@@ -396,6 +403,27 @@ def _preparar_12(datos: Path) -> dict[str, str]:
     return {}
 
 
+def _preparar_13(datos: Path) -> dict[str, str]:
+    """La plantilla de ``data/ejemplos/`` dos veces: los CSV (la demo los localiza en
+    ``RUTA_DATOS`` sin red) y el mismo libro como Excel con hojas ``FUENTE_*``,
+    ``VERDAD_GRUPOS``, ``CASOS`` y ``ETIQUETAS_PARES`` (la sección «sus datos»)."""
+    datos.mkdir(parents=True, exist_ok=True)
+    hojas = {
+        "FUENTE_CRM": "plantilla_fuente_crm.csv",
+        "FUENTE_RUES": "plantilla_fuente_rues.csv",
+        "FUENTE_ADUANAS": "plantilla_fuente_aduanas.csv",
+        "VERDAD_GRUPOS": "plantilla_verdad_grupos.csv",
+        "CASOS": "plantilla_casos.csv",
+        "ETIQUETAS_PARES": "plantilla_etiquetas_pares.csv",
+    }
+    with pd.ExcelWriter(datos / "plantilla_base_real.xlsx") as escritor:
+        for hoja, archivo in hojas.items():
+            tabla = pd.read_csv(PLANTILLA / archivo, dtype=str, keep_default_na=False)
+            tabla.to_csv(datos / archivo, index=False)
+            tabla.to_excel(escritor, sheet_name=hoja, index=False)
+    return {}
+
+
 def _preparar_06_orquestador(datos: Path) -> dict[str, str]:
     base = _sintetica()
     _csv_en_zip(
@@ -433,6 +461,7 @@ PREPARADORES: dict[str, Callable[[Path], dict[str, str]]] = {
     NB06_PLANTILLA: _preparar_06_plantilla,
     NB06_ORQUESTADOR: _preparar_06_orquestador,
     NB12: _preparar_12,
+    NB13: _preparar_13,
 }
 
 #: Lo que cada notebook tiene que haber dejado en disco (glob relativo a tmp_path).
@@ -463,6 +492,12 @@ ARTEFACTOS_ESPERADOS: dict[str, tuple[str, ...]] = {
         "resultados/*_optimizado/manifest.json",
         "resultados/*_optimizado/correlativa.parquet",
         "resultados/estudio_optuna.json",
+    ),
+    NB13: (
+        "resultados/demo_plantilla_multicriterio.xlsx",
+        "resultados/demo_plantilla_multicriterio.json",
+        "resultados/multicriterio.xlsx",
+        "resultados/multicriterio.json",
     ),
 }
 

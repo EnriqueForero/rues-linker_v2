@@ -15,7 +15,8 @@ números al azar dentro de los rangos reales (cualquier coincidencia es casual).
 | El generador (semilla 42, determinista entre procesos) | `scripts/generar_plantilla_base_real.py` |
 | El verificador: motor caso por caso, correlativa, muestreo de pares, CSV del banco | `scripts/verificar_plantilla_base_real.py` |
 | Las pruebas (20) | `tests/test_plantilla_base_real.py` |
-| La evidencia de esta corrida | `docs/evidencia/plantilla_base_real_casos.json`, `plantilla_base_real_verdad_real.json`, `plantilla_base_real_verdad_real_AB.json` |
+| La prueba multicriterio: paquete, notebook 13, script y pruebas (36) | §8: `src/record_linkage/evaluation/multicriterio/` (paquete), `notebooks/13_multicriterio_plantilla_base_real.ipynb`, `scripts/multicriterio_plantilla.py`, `tests/test_multicriterio.py` |
+| La evidencia de esta corrida | `docs/evidencia/plantilla_base_real_casos.json`, `plantilla_base_real_verdad_real.json`, `plantilla_base_real_verdad_real_AB.json`, `plantilla_base_real_multicriterio.json` |
 
 ```bash
 python scripts/generar_plantilla_base_real.py --salida data/ejemplos --semilla 42
@@ -261,8 +262,139 @@ positivas aunque el motor deba revisarlas), la errata doble y el mojibake; el FP
 Huella `b847d835…`, precisión 0,9875, recall 0,9754, F1 0,9814, B³ F1 0,9907, 281 grupos vs 278,
 2 FP que tocan un negativo, recall CON_ID 0,9865 / SIN_ID 0,8000, 2,6 s, 260 MiB.
 
+### 5.1 ¿Sirve para una prueba multicriterio? (`scripts/multicriterio_plantilla.py`, 2026-10-14)
+
+Multicriterio = el motor usa, además del NIT y la razón social, otras columnas de la plantilla como
+evidencia: `linkage(..., extra_features=[{"column": "EMAIL", "weight": 0.10, "type": "email_signed"}, ...])`.
+El puntaje es lineal (0,5·nombre + 0,5·nit + Σ peso·similitud, umbral 0,45) y los comparadores
+firmados valen −1..+1 (0 si falta un lado). `scripts/multicriterio_plantilla.py` corrió doce
+configuraciones sobre las mismas fuentes y midió cada una contra `VERDAD_GRUPOS`, contra
+`ETIQUETAS_PARES` y contra la base; todo está en
+`docs/evidencia/plantilla_base_real_multicriterio.json` (ids y cifras, sin datos de registros).
+Cómo repetirla sobre la plantilla o sobre su base (notebook 13, módulo del paquete): §8.
+
+**Respuesta corta: sí, para lo que la plantilla tiene; no, para lo que le falta.** Sirve para probar
+de punta a punta que las variables extra llegan al scorer y mueven decisiones, para ver la diferencia
+entre comparadores firmados y no firmados, y para ver que correo y teléfono separan los dos falsos
+positivos de borde. No sirve para medir el riesgo real de las variables de contacto (ningún negativo
+comparte correo o teléfono), ni el rescate de recall (ningún FN es rescatable por las extras), ni la
+sensibilidad a los pesos (0,10 y 0,15 dan lo mismo).
+
+**Qué aporta cada variable** (comparador aplicado a los 325 pares positivos y a 210 negativos
+difíciles: los 30 `IS_MATCH=0` de ETIQUETAS_PARES más los pares entre entidades distintas de los
+casos `negativo_*`; «llenos» = las dos celdas con dato; el llenado redondea el medio hacia arriba, como se
+mide a mano: EMAIL 264 de 536 = 49,25 % → 49,3 %):
+
+| Columna | Comparador | Llenado | Positivos llenos / premia / castiga | Negativos llenos / premia / castiga | Separación (pp) |
+|---|---|---|---|---|---|
+| EMAIL | `email_signed` | 49,3 % | 59 / 59 / 0 | 69 / 0 / 69 | +100,0 |
+| TELEFONO | `telefono_signed` | 61,6 % | 114 / 114 / 0 | 97 / 0 / 97 | +100,0 |
+| TELEFONO | `categorical_signed` (exacto) | 61,6 % | 114 / 4 / 110 | 97 / 0 / 97 | +3,5 |
+| DIRECCION | `tipo_direccion` | 68,5 % | 147 / 147 / 0 | 106 / 38 / 66 | +64,2 |
+| DIRECCION | `categorical_signed` (exacto) | 68,5 % | 147 / 1 / 146 | 106 / 0 / 106 | +0,7 |
+| MUNICIPIO | `categoria_tolerante_signed` | 90,1 % | 268 / 261 / 7 | 172 / 21 / 151 | +85,2 |
+| MUNICIPIO | `categorical_signed` (exacto) | 90,1 % | 268 / 215 / 53 | 172 / 21 / 151 | +68,0 |
+| DEPARTAMENTO | `categoria_tolerante_signed` | 65,7 % | 138 / 135 / 3 | 75 / 14 / 61 | +79,2 |
+| CIIU | `conjunto_signed` | 37,1 % | 12 / 12 / 0 | 33 / 0 / 33 | +100,0 |
+| SITIO_WEB | `exact_signed` | 11,9 % | 8 / 8 / 0 | 1 / 0 / 1 | +100,0 |
+
+Lectura: correo y teléfono discriminan del todo, pero porque la plantilla es sintética (59 de 59
+correos idénticos crudos; ningún negativo comparte contacto). El comparador exacto de teléfono ve
+el formato y no el número (4 de 114): es la regla de CLAUDE.md medida. La dirección exacta no
+reconoce casi nada (1 de 147) y `tipo_direccion` reconoce todo, pero premia 38 de 106 negativos.
+El municipio tolerante premia 21 de 172 negativos: coincidir de ciudad no es evidencia fuerte.
+CIIU y SITIO_WEB están llenos en 12 y 8 pares positivos: no hay con qué medirlos.
+
+**Qué hace el motor con cada configuración** (pares contra `VERDAD_GRUPOS`; 325 verdaderos):
+
+| Configuración | Variables extra | Grupos | P | R | F1 | FP | FN | Casos |
+|---|---|---|---|---|---|---|---|---|
+| `A_base` | ninguna | 281 | 0,9875 | 0,9754 | 0,9814 | 4 | 8 | 18/24 |
+| `B_contacto` | EMAIL 0,10 `email_signed` + TELEFONO 0,10 `telefono_signed` | 283 | **0,9937** | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `C_contacto_geo` | B + MUNICIPIO 0,05 tolerante + DIRECCION 0,05 `tipo_direccion` | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `D_contacto_geo_alto` | como C con 0,15 / 0,15 / 0,10 / 0,10 | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `E_solo_geo` | MUNICIPIO 0,10 tolerante | 282 | 0,9906 | 0,9754 | 0,9829 | 3 | 8 | 19/24 |
+| `F_no_firmados` | las de C con `categorical` / `token_set_ratio` | 279 | 0,9814 | 0,9754 | 0,9784 | 6 | 8 | 18/24 |
+| `G_solo_email` | EMAIL 0,10 | 282 | 0,9906 | 0,9754 | 0,9829 | 3 | 8 | 19/24 |
+| `H_solo_telefono` | TELEFONO 0,10 | 282 | 0,9906 | 0,9754 | 0,9829 | 3 | 8 | 19/24 |
+| `I_solo_direccion` | DIRECCION 0,10 | 281 | 0,9875 | 0,9754 | 0,9814 | 4 | 8 | 18/24 |
+| `J_todas` | C + DEPARTAMENTO, CIIU (`conjunto_signed`), SITIO_WEB, 0,05 cada una | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `K_llave_email` | B + `llaves_bloqueo: ["EMAIL"]` (candidatos por correo idéntico) | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `L_llave_email_pesos_altos` | K con EMAIL y TELEFONO a 0,30 | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+
+Contra `ETIQUETAS_PARES` las doce dan lo mismo (P 0,9859 / R 0,9211): los pares que las extras
+mueven están `UNCLEAR` o sin etiquetar. Las etiquetas de la plantilla no ven el multicriterio.
+
+**Qué pares se mueven** (ids de `data/ejemplos/`; nunca cambia un par verdadero):
+
+- Correo y teléfono (B, C, D, J, K, L) separan los dos falsos positivos de borde de §5: el singleton
+  `CRM-000051`/`CRM-000161` (`OLVERANA`/`LAVIRENA`, 0,48: el correo tiene dominio distinto, −0,10) y el
+  ambiguo `CRM-000037`/`RUES-000016` (`JUAN CARLOS PEREZ GOMEZ`, 0,50: el teléfono es distinto, −0,10).
+  Por eso `singleton` y `ambiguo_revisar` pasan a acertar (18 → 20 casos). `G` solo separa el
+  primero y `H` solo el segundo: cada variable hace exactamente una cosa.
+- `TRUVEL`/`TRUVELA` (`ADUANAS-000029` con `CRM-000077` y `RUES-000057`) **no se separa con nada**: el
+  registro de ADUANAS no tiene teléfono ni correo, el municipio coincide (premia) y la dirección
+  distinta pesa poco. Siguen siendo los 2 FP de la recomendada.
+- Solo municipio (E) separa los dos de borde pero **une uno nuevo**: `CRM-000130`/`RUES-000119`
+  (`VALDORIA`, ambiguo, las dos en CALI). Coincidir de ciudad premia mal.
+- Los no firmados (F) no separan nada (no castigan) y unen dos falsos: `ADUANAS-000027`/`CRM-000115`
+  (`ORBITAL`) y el de `VALDORIA`. El motivo está en el motor: `categorical` devuelve **0,5 cuando un
+  lado está vacío**, así que un dato ausente suma +0,05 por variable y empuja pares de borde.
+- Dirección sola (I) no mueve ningún par. Pesos altos (D) dan lo mismo que B: no hay ningún par cuyo
+  veredicto dependa de que el peso sea 0,10 o 0,15.
+- Los 8 FN no cambian en ninguna configuración, y se sabe por qué cada uno: los 4 pares de NIT con
+  ceros a la izquierda son candidatos pero el filtro de NIT distinto los descarta **antes** de sumar
+  las extras (aun con correo y teléfono idénticos, +0,60 en L); la errata doble
+  (`ADUANAS-000003`/`CRM-000059`) puntúa 0,4585 ≥ 0,45 y la corta la cobertura por estrellas, que
+  solo mira el nombre, y además ese registro no trae contacto; el mojibake solo comparte la
+  dirección y no alcanza; y las dos siglas sin NIT nunca son candidatas por nombre. Con EMAIL como
+  llave de bloqueo (K) la sigla `ADUANAS-000172`/`CRM-000182` (mismo correo) sí entra como
+  candidata (3.566 → 3.567), pero el filtro `min_name_similarity` 0,30 la descarta antes de las
+  extras, con cualquier peso (L). La otra sigla comparte el teléfono solo en dígitos
+  (`576078095288` / `6078095288`): una llave exacta no lo ve.
+
+**Hallazgos del motor** (escritos aquí y en la docstring del script; no se arregla nada en silencio):
+
+1. Con `col_ciudad="MUNICIPIO"` el motor renombra la columna a `CIUDAD` antes de validar las
+   variables extra: `{"column": "MUNICIPIO"}` lanza `ValueError`. El script traduce y lo anota.
+2. El scorer solo avisa por log si una columna extra no llega a su DataFrame, y `silenciar_pipeline`
+   apaga ese log al medir. El script comprueba las columnas en `L1_prep/data.parquet`
+   (`columnas_extra_en_scorer`: todas llegan).
+3. Las variables extra se suman **después** del filtro de nombre (`min_name_similarity` 0,30) y del
+   filtro de NIT distinto (`engine/scorer.py`, `valid_pairs_mask`): no pueden rescatar un par que
+   esos filtros descartan, y la cobertura por estrellas del régimen sin NIT tampoco las ve.
+4. `categorical` (no firmado) devuelve 0,5 si falta un lado: premia el dato ausente.
+5. `llaves_bloqueo` es igualdad exacta de la columna; una llave que no existe solo deja un aviso.
+6. La docstring de `matching/puente_campos.py` muestra `extra_features=[("FECHA", "tipo_fecha", 0.10)]`;
+   `_normalizar_extra_features` rechaza tuplas. Use dicts.
+
+**Recomendación** (regla del proyecto: precisión antes que recall): **`B_contacto`** —
+`[{"column": "EMAIL", "weight": 0.10, "type": "email_signed"}, {"column": "TELEFONO", "weight": 0.10, "type": "telefono_signed"}]`.
+Es la de mayor precisión (0,9937) con el mismo recall y la más simple de las empatadas; municipio y
+dirección no cambian nada aquí y E y F muestran cómo pueden unir de más. Determinismo: dos
+subprocesos con `PYTHONHASHSEED` distinto dan la misma huella (`714c1cc4…`) y las mismas cifras.
+
+**Lo que esto NO prueba y lo que le falta a la plantilla.** Es sintética: los correos de un mismo
+grupo son idénticos y ningún negativo comparte contacto, así que la precisión de contacto sale
+perfecta por construcción. Para que la plantilla pruebe multicriterio de verdad faltan casos que
+hoy no tiene: (MC01) sin NIT, nombre con dos erratas o nombre comercial distinto, mismo correo y
+teléfono, con similitud de nombre ≥ 0,30 (rescate de recall); (MC02) entidades distintas que
+comparten teléfono o correo —el contador, el centro comercial— (riesgo de FP de contacto);
+(MC03) sucursal con teléfono y dirección distintos (extras en contra de un positivo); (MC04) pares de
+nombre entre 0,40 y 0,50 con contacto a favor y en contra (sensibilidad al peso); (MC05) SITIO_WEB y
+CIIU con datos. Y etiquetar en `ETIQUETAS_PARES` los pares que las extras mueven (hoy `UNCLEAR` o
+ausentes, como `CRM-000051`/`CRM-000161` y `ADUANAS-000029`/`RUES-000057`). La certificación sale de
+la base real y sus etiquetas, no de aquí.
+
+Reproducir: `python scripts/multicriterio_plantilla.py --datos data/ejemplos --dir-trabajo /tmp/multicriterio --salida docs/evidencia/plantilla_base_real_multicriterio.json`
+(unos 40 s; `--configuraciones mis_configs.json` para otras variables y pesos, `--determinismo 0`
+para saltar los subprocesos).
+
 ## 6. Qué no es esta plantilla
 
+- **No es una prueba multicriterio completa.** Ningún negativo comparte correo o teléfono y ningún FN
+  es rescatable por las variables extra (§5.1): mide la fontanería y la dirección del efecto, no el
+  riesgo real de las variables de contacto.
 - **No es verdad real.** Es sintética; certifica el formato, no el motor. La primera cifra válida
   sobre empresas reales sale de la base real etiquetada según §4.
 - **No es el banco.** El banco sigue siendo `data/benchmark/benchmark_institucional.csv.gz`; la
@@ -298,3 +430,106 @@ mismo orden):
   repositorio y existe como marca en otros sectores → los textos dicen que los nombres no
   identifican a ninguna empresa, no que sean inventados; nombres de uso común (`DISTRIBUIDORA DEL
   NORTE SAS`, `PANADERIA LA ESPIGA DORADA`) anotados como tales en `LEEME`.
+
+## 8. Prueba multicriterio: cómo correrla (notebook 13 y `evaluation.multicriterio`, 2026-10-14)
+
+Multicriterio = el motor usa, además del NIT y la razón social, otras columnas como evidencia
+(§5.1 tiene la medición completa y los hallazgos del motor; aquí está cómo repetirla y cómo
+aplicarla a su base). Desde 2026-10-14 la lógica vive en el paquete, una sola vez:
+
+| Qué | Dónde |
+|---|---|
+| Leer la plantilla (hojas `FUENTE_*` por prefijo, del Excel o de los CSV), correr el motor y medir por casos y por pares | `src/record_linkage/evaluation/plantilla_base_real.py` (`leer_plantilla`, `correr_motor`, `evaluar_casos`, `metricas_pares`) |
+| Configuraciones, validación, aporte por variable, medición de cada corrida, pares que cambian con sus valores, exportación | `src/record_linkage/evaluation/multicriterio/` (paquete de cuatro módulos ≤ 600 líneas: `configuraciones.py`, `datos.py`, `medicion.py`, `informe.py`; todo se importa desde el paquete: `comparar_off_on`, `medir_configuracion`, `tabla_pares_que_cambian`, `exportar_comparacion`, `descripcion_tipos`) |
+| El notebook: OFF contra ON con UNA configuración editable, sobre la plantilla y sobre su Excel | `notebooks/13_multicriterio_plantilla_base_real.ipynb` |
+| El script: doce configuraciones de una vez, con determinismo en subprocesos | `scripts/multicriterio_plantilla.py` (envoltorio delgado) |
+| Las pruebas (36: cifras de §5.1 reproducidas, traducción `MUNICIPIO` → `CIUDAD`, validación, ids únicos, VERDAD_GRUPOS mínima, aviso sin NIT/MUNICIPIO, columnas en el scorer, sin verdad, exportación, subprocesos) | `tests/test_multicriterio.py`; el notebook corre entero en `tests/test_notebooks_contrato.py` (prueba `slow`) |
+
+### 8.1 En el notebook 13
+
+Celda A (entorno: instala desde la rama `main` si el paquete instalado no trae el módulo —el tag
+`v0.22.4` no lo tiene— con `--force-reinstall --no-deps`, porque pip no reinstala una URL git con la
+misma versión ya instalada; exige versión ≥ 0.22.4 con el módulo presente, no igualdad; y hasta que
+el PR de la rama `claude/multicriterio-plantilla` se fusione, `main` no trae el módulo: la celda lo
+detecta y dice qué cambiar), Celda A1 (`RUTA_DATOS`, `RUTA_RESULTADOS`, `RUTA_TRABAJO`; nada en
+Drive; la carpeta de datos la crea la primera celda EJECUTAR) y Celda B, lo único que se edita:
+
+```python
+ARCHIVO = "plantilla_base_real.xlsx"          # su Excel con hojas FUENTE_* dentro de RUTA_DATOS
+VARIABLES_EXTRA = [
+    {"column": "EMAIL", "weight": 0.10, "type": "email_signed"},
+    {"column": "TELEFONO", "weight": 0.10, "type": "telefono_signed"},
+]
+NOMBRE_CORRIDA = "multicriterio"
+```
+
+Luego cuatro secciones: (1) la tabla de comparadores registrados (`descripcion_tipos()`, generada
+desde el registro de la librería; los firmados son los que marca `FIRMADO = sí`: todos los `*_signed`
+y los `tipo_*` salvo `tipo_conjunto`, `tipo_geo` y `tipo_numerico`, que solo premian) y una tabla
+columna → tipo / peso sugerido con la regla de pesos (0,05–0,10 por variable, suma ≤ 0,30; subir el
+peso no es una prueba); (2) la demo sobre la plantilla —la localiza en `RUTA_DATOS`, en un checkout
+o la descarga de GitHub (`main`)—, con el resumen OFF/ON y su leyenda, las columnas extra que vio el
+motor, la tabla contra `ETIQUETAS_PARES` por régimen con Wilson 95 %, el aporte de cada variable
+(con `*_PREMIA_UN_LADO_VACIO`, que delata a `categorical`) y los pares que cambian de decisión con
+los valores de las dos filas (`RAZON_SOCIAL_1/_2`, `NIT_1/_2`, `MUNICIPIO_1/_2`, `TELEFONO_1/_2`,
+`EMAIL_1/_2`, `DIRECCION_1/_2` y las columnas de sus extras); (3) lo mismo sobre su Excel: la
+lectura exige `ID_REGISTRO_FUENTE` único en todas las hojas y `RAZON_SOCIAL`, avisa si falta `NIT` o
+`MUNICIPIO` y dice antes de correr qué cifras va a haber —con `VERDAD_GRUPOS` (mínimo
+`ID_REGISTRO_FUENTE` e `ID_GRUPO`), precisión y recall por pares; con la columna `CASO` y la hoja
+`CASOS`, además la tabla de casos y el aporte; con `ETIQUETAS_PARES`, P y R globales en el resumen y
+por régimen con intervalos de Wilson 95 % en la tabla aparte y en el JSON (clave `etiquetas_pares`);
+sin verdad, solo los pares que cambian, que es lo que una persona revisa—; (4) la exportación:
+`<NOMBRE_CORRIDA>.xlsx` con las hojas `RESUMEN`, `PARES_QUE_CAMBIAN`, `CORRELATIVA_ON`,
+`CORRELATIVA_OFF` y, con verdad, `CASOS` y `APORTE`, más `<NOMBRE_CORRIDA>.json` (cifras, ids de
+FP/FN y de los pares que cambian, configuración exacta que recibió el motor; ningún dato de
+registro); si no corrió la sección 3, la celda lo dice en vez de fallar con `NameError`. Las columnas
+se declaran con el nombre de su archivo (`MUNICIPIO`): la librería las traduce a lo que el motor ve
+(`CIUDAD`), comprueba por archivo que llegaron al scorer, lo imprime y **se detiene** si alguna no
+llegó (el aviso del motor es un log que la medición apaga). «Interpretación y límites» cierra con
+qué hacer con cada fila de `PARES_QUE_CAMBIAN` (se une / se separa × verdadero sí / no / vacío) y
+un glosario de la jerga (scorer, parquet de L1, régimen, singleton, Wilson, huella).
+
+Desde Python, sin notebook:
+
+```python
+from record_linkage.evaluation.multicriterio import comparar_off_on, exportar_comparacion, leer_etiquetas_de
+from record_linkage.evaluation.plantilla_base_real import leer_plantilla
+
+libro = leer_plantilla("data/ejemplos")                       # o "mi_base.xlsx"
+resultado = comparar_off_on(libro, leer_etiquetas_de("data/ejemplos"), VARIABLES_EXTRA, "/tmp/trabajo")
+resultado.resumen; resultado.pares_que_cambian; resultado.aporte
+exportar_comparacion(resultado, "salida", "multicriterio")
+```
+
+### 8.2 Las cifras (plantilla de `data/ejemplos`, pares contra `VERDAD_GRUPOS`; detalle en §5.1)
+
+| Configuración | Variables extra | Grupos | P | R | F1 | FP | FN | Casos |
+|---|---|---|---|---|---|---|---|---|
+| `A_base` | ninguna | 281 | 0,9875 | 0,9754 | 0,9814 | 4 | 8 | 18/24 |
+| **`B_contacto`** (recomendada) | EMAIL 0,10 `email_signed` + TELEFONO 0,10 `telefono_signed` | 283 | **0,9937** | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `C_contacto_geo`, `D_contacto_geo_alto`, `J_todas`, `K_llave_email`, `L_llave_email_pesos_altos` | B más municipio, dirección, departamento, CIIU, sitio web, pesos 0,15/0,30 o EMAIL como llave de bloqueo | 283 | 0,9937 | 0,9754 | 0,9845 | 2 | 8 | 20/24 |
+| `E_solo_geo` | MUNICIPIO 0,10 `categoria_tolerante_signed` | 282 | 0,9906 | 0,9754 | 0,9829 | 3 | 8 | 19/24 |
+| `G_solo_email` / `H_solo_telefono` | una sola variable firmada 0,10 | 282 | 0,9906 | 0,9754 | 0,9829 | 3 | 8 | 19/24 |
+| `I_solo_direccion` | DIRECCION 0,10 `tipo_direccion` | 281 | 0,9875 | 0,9754 | 0,9814 | 4 | 8 | 18/24 |
+| `F_no_firmados` | las de C con `categorical` / `token_set_ratio` | 279 | 0,9814 | 0,9754 | 0,9784 | 6 | 8 | 18/24 |
+
+Contra `ETIQUETAS_PARES` las doce dan lo mismo (P 0,9859 / R 0,9211): los pares movidos están
+`UNCLEAR` o sin etiquetar. Determinismo: dos subprocesos con `PYTHONHASHSEED` distinto, misma
+huella (`714c1cc4…`). Evidencia: `docs/evidencia/plantilla_base_real_multicriterio.json`. Sobre las
+huellas: la del banco (`b847d835…`, `scripts/banco.py` sobre `plantilla_banco.csv`, §5) y la de
+`huella_particion` del módulo (`d858130f…` para la base, `714c1cc4…` para la recomendada) miden la
+misma partición con funciones distintas; la partición base no cambió.
+
+**Recomendada** (regla del proyecto, precisión antes que recall; empate → más recall; empate → menos
+variables): `B_contacto`, la que trae la Celda B del notebook. Separa los dos falsos positivos de borde
+(`CRM-000051`/`CRM-000161`, dominio de correo distinto; `CRM-000037`/`RUES-000016`, teléfono distinto)
+y no mueve ningún par verdadero.
+
+**Límites de lo que esto prueba**: la plantilla es sintética; los correos de un mismo grupo son
+idénticos y ningún negativo comparte correo ni teléfono, así que la precisión del contacto sale
+perfecta por construcción; ningún FN es rescatable por las extras (los filtros de nombre y de NIT van
+antes; la cobertura por estrellas solo mira el nombre); 0,10 y 0,15 de peso dan lo mismo;
+`TRUVEL`/`TRUVELA` no se separa con nada (ADUANAS sin contacto); CIIU y SITIO_WEB casi no tienen con
+qué medirse. El riesgo real del contacto (contador común, teléfono de centro comercial) y la
+certificación salen de la base real y sus etiquetas, con el mismo notebook. Lo que le falta a la
+plantilla (casos MC01–MC05 y etiquetas de los pares de borde) está en §5.1.

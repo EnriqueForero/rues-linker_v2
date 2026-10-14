@@ -6,13 +6,16 @@ ejercitado, que las etiquetas de pares no contradigan la partición, que los NIT
 validen, que ningún nombre sea una marca real, que los correos y sitios usen dominios
 reservados, que ``construir_banco`` reproduzca el CSV del banco, que el verificador descubra
 las hojas FUENTE_* por prefijo y muestree pares con ids medibles, que
-``scripts/medir_verdad_real.py --hoja`` lea la hoja ETIQUETAS_PARES del Excel y que
-``linkage()`` una los casos básicos. Todo es inventado (vocabulario de prueba del
-repositorio: KRONOS, ZELVORA, TRIVENTA…).
+``scripts/medir_verdad_real.py --hoja`` lea la hoja ETIQUETAS_PARES del Excel, que
+``linkage()`` una los casos básicos y que la tabla por caso del verificador (incluido el texto
+DETALLE) reproduzca ``docs/evidencia/plantilla_base_real_casos.json``: el 2026-10-14 un refactor
+cambió «1 de 60 singletons…» por «1 singletons…» sin que ninguna cifra ni prueba lo viera. Todo
+es inventado (vocabulario de prueba del repositorio: KRONOS, ZELVORA, TRIVENTA…).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -30,6 +33,7 @@ from record_linkage.matching.identificadores import base_canonica, digito_verifi
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPT = RAIZ / "scripts" / "generar_plantilla_base_real.py"
 CARPETA_REPO = RAIZ / "data" / "ejemplos"
+EVIDENCIA_CASOS = RAIZ / "docs" / "evidencia" / "plantilla_base_real_casos.json"
 
 HOJAS = (
     "LEEME",
@@ -403,6 +407,21 @@ def test_linkage_une_los_casos_basicos(motor, verdad) -> None:
     for caso in ("positivo_nit_igual", "positivo_nit_con_y_sin_dv"):
         sub = marco[marco["CASO"] == caso]
         assert (sub.groupby("ID_GRUPO")["PRED"].nunique() == 1).all(), caso
+
+
+def test_evaluar_casos_reproduce_la_evidencia_incluido_el_detalle(
+    verificador, carpeta: Path, motor, verdad
+) -> None:
+    """La tabla por caso (cifras Y texto DETALLE) es la de ``plantilla_base_real_casos.json`` y la de
+    la guía §5; el singleton dice «n de 60», con denominador."""
+    correlativa, _ = motor
+    tabla = verificador.evaluar_casos(correlativa, verdad, _csv(carpeta, "casos"))
+    evidencia = json.loads(EVIDENCIA_CASOS.read_text(encoding="utf-8"))
+    assert tabla.to_dict(orient="records") == evidencia["por_caso"]
+    assert int(tabla["ACERTO"].sum()) == evidencia["casos_acertados"] == 18
+    detalle = tabla.set_index("CASO").loc["singleton", "DETALLE"]
+    assert re.fullmatch(r"\d+ de 60 singletons mezclados con otro registro", detalle), detalle
+    assert verificador.metricas_pares(correlativa, verdad) == evidencia["pares"]
 
 
 def test_el_muestreo_de_pares_da_ids_medibles(

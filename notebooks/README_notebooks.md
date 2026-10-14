@@ -39,11 +39,19 @@ orquestador declarativo: entorno, parámetros, preflight, ejecución y QA lazy.
   etiquetó (muestra estratificada, Optuna, `linkage(ajustes_perfil=...)`)
   -> `12_optimizar_parametros_con_optuna.ipynb` (experto; F2.15, trae demo
   autocontenida con empresas inventadas).
+- Quiero **probar varias variables a la vez** (teléfono, correo, dirección,
+  municipio, CIIU...) como evidencia de `linkage()` y ver, par por par, qué
+  cambia frente al motor sin ellas, sobre la plantilla de base real o sobre mi
+  Excel con hojas `FUENTE_*`
+  -> `13_multicriterio_plantilla_base_real.ipynb` (experto; 2026-10-14, demo
+  autocontenida sobre `data/ejemplos/`).
 
 ## Preparación en Colab Free
 
 1. Suba sus archivos desde el panel **Archivos** de Colab a `/content/datos/`
    (el 06 también busca allí los nombres auditados) o defina las variables de ruta.
+   El panel no deja subir a una carpeta que no existe: créela allí (clic derecho →
+   nueva carpeta) o, en el 13, corra la primera celda EJECUTAR, que la crea.
 2. Ejecute la Celda A. Los notebooks 01-04 instalan el tag oficial con
    `pip install rues-linker @ git+https://github.com/EnriqueForero/rues-linker_v2@v0.16.0`.
    En el 06 configure una ruta exacta mediante `RUES_LINKER_WHEEL` o
@@ -62,9 +70,9 @@ Su lógica no vive en las celdas sino en `record_linkage.flujo`, que se entrega
 con pruebas; los notebooks tienen además contratos en
 `tests/test_notebooks_v014.py`, `tests/test_notebook_orquestador_v016.py` y
 `tests/test_notebooks_contrato.py` (F1.15: ninguno usa la API anterior al
-contrato de salida y los siete 01–06, más el 12, se ejecutan enteros con
-`nbclient` sobre `tests/data_sintetica/`, prueba marcada `slow`; el 12 además
-tiene la compuerta de que no reimplementa el optimizador)
+contrato de salida y los siete 01–06, más el 12 y el 13, se ejecutan enteros con
+`nbclient` sobre `tests/data_sintetica/` —el 13 sobre `data/ejemplos/`—, prueba
+marcada `slow`; el 12 además tiene la compuerta de que no reimplementa el optimizador)
 (el primer nombre es histórico; el contrato actual es 0.16.0:
 el código compila, los nombres importados
 existen, la celda editable se mantiene corta y el trabajo nunca se configura
@@ -267,3 +275,37 @@ de los 01–04 con las extras `optimization` y `viz`. Medido sobre la demo (304
 registros, 160 pares): F1 0,9917 → 1,000 en 8 trials, ≈ 35 s enteros con
 `nbclient`. Cuándo optimizar, cómo construir la verdad y qué NO hace:
 [`docs/OPTIMIZACION.md`](../docs/OPTIMIZACION.md).
+
+## 13 · Prueba multicriterio sobre la plantilla de base real (2026-10-14)
+
+Para responder, con cifras y no con opinión, qué hacen las **variables extra** del motor
+(`linkage(extra_features=[{"column", "weight", "type"}, ...])`: teléfono, correo, dirección,
+municipio, departamento, CIIU, sitio web) sobre una base con la estructura de la plantilla
+(`docs/PLANTILLA_BASE_REAL.md`). Corre el motor **dos veces sobre las mismas fuentes** —sin
+extras y con las que declara la Celda B— y muestra el resumen (grupos, P/R/F1 por pares contra
+`VERDAD_GRUPOS`, casos acertados, P/R contra `ETIQUETAS_PARES`), el aporte de cada variable con su
+comparador (cuántos positivos y negativos premia y castiga) y, sobre todo, **los pares que cambian
+de decisión con los valores de las dos filas**, para auditarlos a ojo. Sin verdad (una base real
+recién estructurada) hace lo mismo menos las cifras.
+
+Es **delgado**: la lógica vive en `record_linkage.evaluation.multicriterio` (y la lectura de la
+plantilla y el motor en `evaluation.plantilla_base_real`), con 36 pruebas en
+`tests/test_multicriterio.py`; `scripts/multicriterio_plantilla.py` es el envoltorio que mide doce
+configuraciones de una vez. La tabla de comparadores sale de `descripcion_tipos()` (el registro de
+la librería), no de una lista copiada. La demo localiza la plantilla en `RUTA_DATOS`, en un
+checkout o la descarga de GitHub (`main`); la prueba `slow` del contrato la ejecuta entera sobre
+`data/ejemplos/` sin red. Exporta `<NOMBRE_CORRIDA>.xlsx` (RESUMEN, PARES_QUE_CAMBIAN,
+CORRELATIVA_ON, CORRELATIVA_OFF, CASOS, APORTE) y `<NOMBRE_CORRIDA>.json`.
+
+Medido sobre la plantilla: correo + teléfono firmados a 0,10 suben la precisión de 0,9875 a
+**0,9937** con el mismo recall (0,9754) y 20 de 24 casos (eran 18), separando los dos falsos
+positivos de borde; ninguna otra variable mueve un par más, municipio solo une un falso nuevo y los
+comparadores no firmados unen dos. Qué prueba y qué NO prueba (es sintética: ningún negativo comparte
+contacto): `docs/PLANTILLA_BASE_REAL.md` §5.1 y §8. La Celda A instala desde la rama `main` mientras
+el módulo no esté en un tag; cuando el paquete instalado ya es 0.22.4 sin el módulo (el tag que dejó
+otro notebook) reinstala con `--force-reinstall --no-deps`, porque pip no reinstala una URL git con
+la misma versión. **Hasta que el PR de la rama `claude/multicriterio-plantilla` se fusione, `main`
+no trae el módulo**: en Colab la Celda A se detiene y dice qué cambiar (`ORIGEN_GIT` a esa rama);
+reiniciar el entorno no lo arregla. Lo que corrigió la verificación del mismo día (ids únicos entre
+hojas, `VERDAD_GRUPOS` mínima, aviso si falta `NIT`/`MUNICIPIO`, columnas que vio el motor, tabla
+por régimen con Wilson, guía por fila de `PARES_QUE_CAMBIAN`, glosario) está en `docs/BITACORA.md`.

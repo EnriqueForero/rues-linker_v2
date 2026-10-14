@@ -1,0 +1,6117 @@
+{
+  "version": "0.22.4",
+  "fecha": "2026-10-14",
+  "datos": "data/ejemplos",
+  "registros": 536,
+  "grupos_verdaderos": 278,
+  "pares_de_prueba": {
+    "positivos": 325,
+    "negativos_dificiles": 210
+  },
+  "columnas_canonicas": {
+    "MUNICIPIO": "CIUDAD"
+  },
+  "aporte_por_variable": [
+    {
+      "columna": "EMAIL",
+      "tipo": "email_signed",
+      "llenado": 0.4925,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 59,
+        "premia": 59,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 69,
+        "premia": 0,
+        "castiga": 69,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.9452
+      },
+      "separacion_pp": 100.0
+    },
+    {
+      "columna": "EMAIL",
+      "tipo": "categorical_signed",
+      "llenado": 0.4925,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 59,
+        "premia": 59,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 69,
+        "premia": 0,
+        "castiga": 69,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -1.0
+      },
+      "separacion_pp": 100.0
+    },
+    {
+      "columna": "TELEFONO",
+      "tipo": "telefono_signed",
+      "llenado": 0.6157,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 114,
+        "premia": 114,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 97,
+        "premia": 0,
+        "castiga": 97,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -1.0
+      },
+      "separacion_pp": 100.0
+    },
+    {
+      "columna": "TELEFONO",
+      "tipo": "categorical_signed",
+      "llenado": 0.6157,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 114,
+        "premia": 4,
+        "castiga": 110,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.9298
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 97,
+        "premia": 0,
+        "castiga": 97,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -1.0
+      },
+      "separacion_pp": 3.5
+    },
+    {
+      "columna": "DIRECCION",
+      "tipo": "tipo_direccion",
+      "llenado": 0.6847,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 147,
+        "premia": 147,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 106,
+        "premia": 38,
+        "castiga": 66,
+        "neutro": 2,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.0457
+      },
+      "separacion_pp": 64.2
+    },
+    {
+      "columna": "DIRECCION",
+      "tipo": "categorical_signed",
+      "llenado": 0.6847,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 147,
+        "premia": 1,
+        "castiga": 146,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.9864
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 106,
+        "premia": 0,
+        "castiga": 106,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -1.0
+      },
+      "separacion_pp": 0.7
+    },
+    {
+      "columna": "MUNICIPIO",
+      "tipo": "categoria_tolerante_signed",
+      "llenado": 0.9011,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 268,
+        "premia": 261,
+        "castiga": 7,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 0.9478
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 172,
+        "premia": 21,
+        "castiga": 151,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.7558
+      },
+      "separacion_pp": 85.2
+    },
+    {
+      "columna": "MUNICIPIO",
+      "tipo": "categorical_signed",
+      "llenado": 0.9011,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 268,
+        "premia": 215,
+        "castiga": 53,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 0.6045
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 172,
+        "premia": 21,
+        "castiga": 151,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.7558
+      },
+      "separacion_pp": 68.0
+    },
+    {
+      "columna": "DEPARTAMENTO",
+      "tipo": "categoria_tolerante_signed",
+      "llenado": 0.6567,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 138,
+        "premia": 135,
+        "castiga": 3,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 0.9565
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 75,
+        "premia": 14,
+        "castiga": 61,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.6267
+      },
+      "separacion_pp": 79.2
+    },
+    {
+      "columna": "CIIU",
+      "tipo": "conjunto_signed",
+      "llenado": 0.3713,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 12,
+        "premia": 12,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 33,
+        "premia": 0,
+        "castiga": 33,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -0.9798
+      },
+      "separacion_pp": 100.0
+    },
+    {
+      "columna": "SITIO_WEB",
+      "tipo": "exact_signed",
+      "llenado": 0.1194,
+      "positivos": {
+        "pares": 325,
+        "ambos_llenos": 8,
+        "premia": 8,
+        "castiga": 0,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": 1.0
+      },
+      "negativos": {
+        "pares": 210,
+        "ambos_llenos": 1,
+        "premia": 0,
+        "castiga": 1,
+        "neutro": 0,
+        "premia_con_un_lado_vacio": 0,
+        "similitud_media_ambos_llenos": -1.0
+      },
+      "separacion_pp": 100.0
+    }
+  ],
+  "configuraciones": [
+    {
+      "nombre": "A_base",
+      "descripcion": "sin variables extra: lo que hace el motor hoy (§5 de la guía)",
+      "extra_features": [],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {},
+      "grupos_predichos": 281,
+      "pares_predichos": 321,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 321,
+        "tp": 317,
+        "fp": 4,
+        "fn": 8,
+        "precision": 0.9875,
+        "recall": 0.9754,
+        "f1": 0.9814
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000037",
+          "ID_2": "RUES-000016",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        },
+        {
+          "ID_1": "CRM-000051",
+          "ID_2": "CRM-000161",
+          "verdadero": false,
+          "casos": [
+            "singleton"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 18,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "1 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "0/0 grupos unidos y 1 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "d858130fd8a2ba564a4a5d8ea33f1e5ed4bdf5f140e915f50fc5ce761279ff19",
+      "cambios_vs_base": {}
+    },
+    {
+      "nombre": "B_contacto",
+      "descripcion": "correo y teléfono firmados, 0,10 cada uno",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "C_contacto_geo",
+      "descripcion": "B más municipio (tolerante) y dirección, 0,05 cada uno",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "MUNICIPIO",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "CIUDAD",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true,
+        "CIUDAD": true,
+        "DIRECCION": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "D_contacto_geo_alto",
+      "descripcion": "como C con pesos altos (0,15/0,15/0,10/0,10): cuándo dominan las extras",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.15,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.15,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "MUNICIPIO",
+          "weight": 0.1,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.1,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.15,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.15,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "CIUDAD",
+          "weight": 0.1,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.1,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true,
+        "CIUDAD": true,
+        "DIRECCION": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "E_solo_geo",
+      "descripcion": "solo municipio tolerante 0,10: coincide en 7 de 25 negativos, ¿premia mal?",
+      "extra_features": [
+        {
+          "column": "MUNICIPIO",
+          "weight": 0.1,
+          "type": "categoria_tolerante_signed"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "CIUDAD",
+          "weight": 0.1,
+          "type": "categoria_tolerante_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "CIUDAD": true
+      },
+      "grupos_predichos": 282,
+      "pares_predichos": 320,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 320,
+        "tp": 317,
+        "fp": 3,
+        "fn": 8,
+        "precision": 0.9906,
+        "recall": 0.9754,
+        "f1": 0.9829
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000130",
+          "ID_2": "RUES-000119",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 19,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "0/0 grupos unidos y 1 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "a02574ad67fb9936ca1dc35f90957fb86003fe709bade2a1c06c140fbaef6ad8",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [
+          {
+            "ID_1": "CRM-000130",
+            "ID_2": "RUES-000119",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          }
+        ],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "F_no_firmados",
+      "descripcion": "las mismas variables de C con comparadores NO firmados (solo premian, nunca castigan)",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "categorical"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "categorical"
+        },
+        {
+          "column": "MUNICIPIO",
+          "weight": 0.05,
+          "type": "categorical"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "token_set_ratio"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "categorical"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "categorical"
+        },
+        {
+          "column": "CIUDAD",
+          "weight": 0.05,
+          "type": "categorical"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "token_set_ratio"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true,
+        "CIUDAD": true,
+        "DIRECCION": true
+      },
+      "grupos_predichos": 279,
+      "pares_predichos": 323,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 323,
+        "tp": 317,
+        "fp": 6,
+        "fn": 8,
+        "precision": 0.9814,
+        "recall": 0.9754,
+        "f1": 0.9784
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000027",
+          "ID_2": "CRM-000115",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000037",
+          "ID_2": "RUES-000016",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        },
+        {
+          "ID_1": "CRM-000051",
+          "ID_2": "CRM-000161",
+          "verdadero": false,
+          "casos": [
+            "singleton"
+          ]
+        },
+        {
+          "ID_1": "CRM-000130",
+          "ID_2": "RUES-000119",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 18,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "1 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 3,
+          "DETALLE": "0/0 grupos unidos y 3 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "945c0455cd22a090cda8959e3288c30776922249071a94ab20e4f1f874224a7b",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [],
+        "casos_que_empeoran": [],
+        "pares_ganados": [
+          {
+            "ID_1": "ADUANAS-000027",
+            "ID_2": "CRM-000115",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000130",
+            "ID_2": "RUES-000119",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          }
+        ],
+        "pares_perdidos": []
+      }
+    },
+    {
+      "nombre": "G_solo_email",
+      "descripcion": "solo correo firmado 0,10",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true
+      },
+      "grupos_predichos": 282,
+      "pares_predichos": 320,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 320,
+        "tp": 317,
+        "fp": 3,
+        "fn": 8,
+        "precision": 0.9906,
+        "recall": 0.9754,
+        "f1": 0.9829
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000037",
+          "ID_2": "RUES-000016",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 19,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "0/0 grupos unidos y 1 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "79cc1f55e9255af9320444a733f482f216e85b3b789f7546868f1f69f537b780",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "H_solo_telefono",
+      "descripcion": "solo teléfono firmado 0,10",
+      "extra_features": [
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "TELEFONO": true
+      },
+      "grupos_predichos": 282,
+      "pares_predichos": 320,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 320,
+        "tp": 317,
+        "fp": 3,
+        "fn": 8,
+        "precision": 0.9906,
+        "recall": 0.9754,
+        "f1": 0.9829
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000051",
+          "ID_2": "CRM-000161",
+          "verdadero": false,
+          "casos": [
+            "singleton"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 19,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "1 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "472cd87934ca69512a7604e770858030e2561a4ae5cdcb197ea58e0916e0d70b",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "I_solo_direccion",
+      "descripcion": "solo dirección 0,10",
+      "extra_features": [
+        {
+          "column": "DIRECCION",
+          "weight": 0.1,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "DIRECCION",
+          "weight": 0.1,
+          "type": "tipo_direccion"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "DIRECCION": true
+      },
+      "grupos_predichos": 281,
+      "pares_predichos": 321,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 321,
+        "tp": 317,
+        "fp": 4,
+        "fn": 8,
+        "precision": 0.9875,
+        "recall": 0.9754,
+        "f1": 0.9814
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "CRM-000037",
+          "ID_2": "RUES-000016",
+          "verdadero": false,
+          "casos": [
+            "ambiguo_revisar"
+          ]
+        },
+        {
+          "ID_1": "CRM-000051",
+          "ID_2": "CRM-000161",
+          "verdadero": false,
+          "casos": [
+            "singleton"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 18,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "1 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 1,
+          "DETALLE": "0/0 grupos unidos y 1 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "d858130fd8a2ba564a4a5d8ea33f1e5ed4bdf5f140e915f50fc5ce761279ff19",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": []
+      }
+    },
+    {
+      "nombre": "J_todas",
+      "descripcion": "C más departamento, CIIU (solapamiento) y sitio web, 0,05 cada uno",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "MUNICIPIO",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "tipo_direccion"
+        },
+        {
+          "column": "DEPARTAMENTO",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "CIIU",
+          "weight": 0.05,
+          "type": "conjunto_signed"
+        },
+        {
+          "column": "SITIO_WEB",
+          "weight": 0.05,
+          "type": "exact_signed"
+        }
+      ],
+      "ajustes_perfil": {},
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        },
+        {
+          "column": "CIUDAD",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "DIRECCION",
+          "weight": 0.05,
+          "type": "tipo_direccion"
+        },
+        {
+          "column": "DEPARTAMENTO",
+          "weight": 0.05,
+          "type": "categoria_tolerante_signed"
+        },
+        {
+          "column": "CIIU",
+          "weight": 0.05,
+          "type": "conjunto_signed"
+        },
+        {
+          "column": "SITIO_WEB",
+          "weight": 0.05,
+          "type": "exact_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {},
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true,
+        "CIUDAD": true,
+        "DIRECCION": true,
+        "DEPARTAMENTO": true,
+        "CIIU": true,
+        "SITIO_WEB": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "K_llave_email",
+      "descripcion": "B más EMAIL como llave de bloqueo (candidatos por correo idéntico): ¿se une «sin NIT pero mismo correo»?",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil": {
+        "llaves_bloqueo": [
+          "EMAIL"
+        ]
+      },
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.1,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.1,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {
+        "llaves_bloqueo": [
+          "EMAIL"
+        ]
+      },
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "nombre": "L_llave_email_pesos_altos",
+      "descripcion": "K con correo y teléfono a 0,30: ¿puede el contacto cargar solo con un par sin NIT?",
+      "extra_features": [
+        {
+          "column": "EMAIL",
+          "weight": 0.3,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.3,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil": {
+        "llaves_bloqueo": [
+          "EMAIL"
+        ]
+      },
+      "extra_features_para_el_motor": [
+        {
+          "column": "EMAIL",
+          "weight": 0.3,
+          "type": "email_signed"
+        },
+        {
+          "column": "TELEFONO",
+          "weight": 0.3,
+          "type": "telefono_signed"
+        }
+      ],
+      "ajustes_perfil_para_el_motor": {
+        "llaves_bloqueo": [
+          "EMAIL"
+        ]
+      },
+      "columnas_extra_en_scorer": {
+        "EMAIL": true,
+        "TELEFONO": true
+      },
+      "grupos_predichos": 283,
+      "pares_predichos": 319,
+      "pares_verdad_grupos": {
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845
+      },
+      "fp": [
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "CRM-000077",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000029",
+          "ID_2": "RUES-000057",
+          "verdadero": false,
+          "casos": [
+            "negativo_raiz_confundible"
+          ]
+        }
+      ],
+      "fn": [
+        {
+          "ID_1": "ADUANAS-000003",
+          "ID_2": "CRM-000059",
+          "verdadero": true,
+          "casos": [
+            "positivo_errata_2_letras"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000022",
+          "ID_2": "CRM-000094",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000044",
+          "ID_2": "RUES-000105",
+          "verdadero": true,
+          "casos": [
+            "positivo_mojibake"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000099",
+          "ID_2": "CRM-000096",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000147",
+          "ID_2": "RUES-000170",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "ADUANAS-000172",
+          "ID_2": "CRM-000182",
+          "verdadero": true,
+          "casos": [
+            "positivo_sigla_sin_nit"
+          ]
+        },
+        {
+          "ID_1": "CRM-000094",
+          "ID_2": "RUES-000078",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        },
+        {
+          "ID_1": "CRM-000096",
+          "ID_2": "RUES-000133",
+          "verdadero": true,
+          "casos": [
+            "positivo_nit_con_ceros_o_puntuacion"
+          ]
+        }
+      ],
+      "casos_acertados": 20,
+      "casos_total": 24,
+      "por_caso": [
+        {
+          "CASO": "positivo_nit_igual",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 118,
+          "GRUPOS_UNIDOS": 118,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "118/118 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_y_sin_dv",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nit_con_ceros_o_puntuacion",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 1,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "1/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sufijo_legal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_1_letra",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_errata_2_letras",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_orden_de_palabras",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sigla_sin_nit",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 2,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/2 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        },
+        {
+          "CASO": "positivo_truncado",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_nombre_comercial_vs_razon_social",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_una_fuente",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sin_nit_en_ninguna",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 8,
+          "GRUPOS_UNIDOS": 8,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "8/8 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_sucursal",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "3/3 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_persona_natural",
+          "ESPERADO": "unir",
+          "ACERTO": true,
+          "GRUPOS": 4,
+          "GRUPOS_UNIDOS": 4,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "4/4 grupos unidos completos"
+        },
+        {
+          "CASO": "positivo_mojibake",
+          "ESPERADO": "unir",
+          "ACERTO": false,
+          "GRUPOS": 3,
+          "GRUPOS_UNIDOS": 2,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "2/3 grupos unidos completos"
+        },
+        {
+          "CASO": "negativo_homonimo_persona",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_identico_nit_distinto",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nombre_generico",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_filial_matriz",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_nit_corrupto_un_digito",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "negativo_raiz_confundible",
+          "ESPERADO": "no unir",
+          "ACERTO": false,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 3,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 2,
+          "DETALLE": "2 pares de entidades distintas unidos; 3/3 entidades con varios registros unidas internamente"
+        },
+        {
+          "CASO": "singleton",
+          "ESPERADO": "no unir",
+          "ACERTO": true,
+          "GRUPOS": 60,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0 de 60 singletons mezclados con otro registro"
+        },
+        {
+          "CASO": "ambiguo_revisar",
+          "ESPERADO": "revisar",
+          "ACERTO": true,
+          "GRUPOS": 6,
+          "GRUPOS_UNIDOS": 0,
+          "PARES_ENTRE_GRUPOS_UNIDOS": 0,
+          "DETALLE": "0/0 grupos unidos y 0 pares entre grupos unidos (se esperaba 0: sin evidencia suficiente, el motor no debe adivinar)"
+        }
+      ],
+      "etiquetas_pares": {
+        "archivo": "data/ejemplos/plantilla_etiquetas_pares.csv",
+        "n_etiquetados": 106,
+        "n_descartados": 3,
+        "global": {
+          "tp": 70,
+          "fp": 1,
+          "fn": 6,
+          "precision": 0.9859154929577465,
+          "recall": 0.9210526315789473,
+          "f1": 0.9523809523809524,
+          "n_pares_etiquetados": 106,
+          "n_pares_evaluados": 106,
+          "n_pares_sin_registro": 0,
+          "n_registros": 197
+        },
+        "por_regimen": {
+          "CON_ID": {
+            "tp": 50,
+            "fp": 0,
+            "fn": 2,
+            "precision": 1.0,
+            "recall": 0.9615384615384616,
+            "f1": 0.9803921568627451,
+            "n_pares_etiquetados": 78,
+            "n_pares_evaluados": 78,
+            "n_pares_sin_registro": 0,
+            "n_registros": 143
+          },
+          "SIN_ID": {
+            "tp": 11,
+            "fp": 0,
+            "fn": 4,
+            "precision": 1.0,
+            "recall": 0.7333333333333333,
+            "f1": 0.846153846153846,
+            "n_pares_etiquetados": 16,
+            "n_pares_evaluados": 16,
+            "n_pares_sin_registro": 0,
+            "n_registros": 32
+          },
+          "MIXTO": {
+            "tp": 9,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9,
+            "recall": 1.0,
+            "f1": 0.9473684210526316,
+            "n_pares_etiquetados": 12,
+            "n_pares_evaluados": 12,
+            "n_pares_sin_registro": 0,
+            "n_registros": 23
+          }
+        },
+        "intervalos": {
+          "GLOBAL": {
+            "precision": [
+              0.9244376915206172,
+              0.997509460865222
+            ],
+            "recall": [
+              0.8382706480636879,
+              0.9633164944785457
+            ]
+          },
+          "CON_ID": {
+            "precision": [
+              0.9286499658256813,
+              1.0
+            ],
+            "recall": [
+              0.8701857125563401,
+              0.9893885116779224
+            ]
+          },
+          "SIN_ID": {
+            "precision": [
+              0.7411599827511859,
+              1.0
+            ],
+            "recall": [
+              0.4804911034231324,
+              0.8910272389681718
+            ]
+          },
+          "MIXTO": {
+            "precision": [
+              0.5958436145024278,
+              0.9821242504842788
+            ],
+            "recall": [
+              0.7008472464490407,
+              1.0
+            ]
+          }
+        },
+        "notas": []
+      },
+      "huella_particion": "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "cambios_vs_base": {
+        "casos_que_mejoran": [
+          "ambiguo_revisar",
+          "singleton"
+        ],
+        "casos_que_empeoran": [],
+        "pares_ganados": [],
+        "pares_perdidos": [
+          {
+            "ID_1": "CRM-000037",
+            "ID_2": "RUES-000016",
+            "verdadero": false,
+            "casos": [
+              "ambiguo_revisar"
+            ]
+          },
+          {
+            "ID_1": "CRM-000051",
+            "ID_2": "CRM-000161",
+            "verdadero": false,
+            "casos": [
+              "singleton"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "recomendada": "B_contacto",
+  "regla_de_decision": "mayor precisión por pares contra VERDAD_GRUPOS; empate → mayor recall; empate → menos variables extra",
+  "determinismo": {
+    "configuracion": "B_contacto",
+    "subprocesos": 2,
+    "huellas": [
+      "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480",
+      "714c1cc4e2c7f2491d4faad001df8dd262fa23da77ecf02df751ec820d0e2480"
+    ],
+    "cifras": [
+      {
+        "grupos_predichos": 283,
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845,
+        "casos_acertados": 20
+      },
+      {
+        "grupos_predichos": 283,
+        "pares_verdaderos": 325,
+        "pares_predichos": 319,
+        "tp": 317,
+        "fp": 2,
+        "fn": 8,
+        "precision": 0.9937,
+        "recall": 0.9754,
+        "f1": 0.9845,
+        "casos_acertados": 20
+      }
+    ],
+    "identico": true
+  }
+}
