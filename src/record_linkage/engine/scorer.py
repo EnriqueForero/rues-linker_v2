@@ -32,6 +32,7 @@ import pandas as pd
 from rapidfuzz import fuzz
 from tqdm import tqdm
 
+from ..matching.idf import PesosIDF
 from ..utils.logger import CustomLogger
 from ..utils.memory import (
     MemoryManager,
@@ -428,7 +429,7 @@ class VectorizedScorer:
         )
         self.token_idf: dict[str, float] = dict(self.profile.get("_token_idf", {}))
         self.idf_default: float = float(self.profile.get("idf_default", 1.0))
-        self._pesos_idf: object | None = None
+        self._pesos_idf: PesosIDF | None = None
         self._corpus_idf: int = -1
 
         # ── Fase 3: COMPARADOR DE NOMBRE ─────────────────────────────────
@@ -1203,7 +1204,7 @@ class VectorizedScorer:
         centinela = texto.str.lower().isin({"nan", "none", "null", "<na>", ""})
         return ((texto.str.len() >= 6) & ~centinela).to_numpy()
 
-    def _obtener_pesos_idf(self, df: pd.DataFrame) -> object | None:
+    def _obtener_pesos_idf(self, df: pd.DataFrame) -> PesosIDF | None:
         """Construye una sola vez el mapa token → IDF del corpus.
 
         La informatividad de un token es una propiedad del CORPUS, no del
@@ -1939,7 +1940,7 @@ class VectorizedScorer:
         last_idx_1 = -1
         total_scored = 0
         total_passed = 0
-        write_buffer = []
+        write_buffer: list[tuple[int, int, float, float, float, int, float]] = []
         write_buffer_size = 10000
 
         # Query para leer batches (F4.1: una sola consulta de página para las dos rutas)
