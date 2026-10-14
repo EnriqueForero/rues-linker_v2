@@ -58,10 +58,11 @@ def test_escala_139k_cumple_su_piso():
 
 
 def test_bloqueo_cumple_su_piso():
-    actual = _evidencia("bloqueo")["bloqueo_actual_lsh"]
+    # Desde ADR-0016 la evidencia es un JSON de scripts/recall_bloqueo.py sobre el motor por defecto.
+    por_regimen = _evidencia("bloqueo")["por_regimen"]
     piso = COMPUERTAS["bloqueo"]["piso"]
-    assert actual["recall_pares_SIN_ID"] >= piso["recall_pares_SIN_ID"]
-    assert actual["recall_pares_CON_ID"] >= piso["recall_pares_CON_ID"]
+    assert por_regimen["SIN_ID"]["recall_pares"] >= piso["recall_pares_SIN_ID"]
+    assert por_regimen["CON_ID"]["recall_pares"] >= piso["recall_pares_CON_ID"]
 
 
 def test_la_verdad_real_sigue_sin_medirse_o_cumple_su_objetivo():

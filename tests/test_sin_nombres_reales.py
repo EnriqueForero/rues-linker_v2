@@ -74,6 +74,23 @@ ARCHIVOS_VIGILADOS = (
     "docs/vinculacion/*.md",
     "scripts/oraculo_vinculacion/*.py",
     "scripts/oraculo_vinculacion/*.md",
+    "src/record_linkage/engine/candidatos/*.py",
+    "src/record_linkage/matching/soft_tfidf.py",
+    "tests/test_candidatos_hibrido.py",
+    "tests/test_soft_tfidf.py",
+    "tests/test_comparador_nombre.py",
+    "tests/test_scorer_paginacion.py",
+    "scripts/recall_bloqueo.py",
+    "scripts/anatomia_fp.py",
+    "scripts/barrido_comparador_nombre.py",
+    "docs/BITACORA.md",
+    "CHANGELOG.md",
+    "docs/evidencia/fase2_*.md",
+    "docs/evidencia/fase3_*.md",
+    "docs/evidencia/fase2_candidatos/*.json",
+    "docs/evidencia/fase3_comparador/*.json",
+    "docs/adr/0015-*.md",
+    "docs/adr/0016-*.md",
 )
 _PALABRA = re.compile(r"[a-záéíóúüñ0-9]+")
 

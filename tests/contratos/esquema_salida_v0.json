@@ -113,7 +113,7 @@
     ]
   },
   "golden": {
-    "filas": 17,
+    "filas": 15,
     "columnas": [
       {
         "nombre": "ID_GRUPO",
@@ -386,7 +386,7 @@
       ]
     },
     "golden": {
-      "filas": 17,
+      "filas": 15,
       "columnas": [
         {
           "nombre": "ID_GRUPO",

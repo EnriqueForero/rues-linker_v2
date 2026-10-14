@@ -1,0 +1,14 @@
+{
+  "etiqueta": "f3_default",
+  "perfil": "produccion_estandar",
+  "semilla": 42,
+  "marca_tiempo": "2026-10-14T00:50:34",
+  "version": "0.22.4",
+  "entorno": {
+    "vcpu": 4,
+    "memoria_total_mib": 16093
+  },
+  "nota": "perfil produccion_estandar tras ADR-0015/0016 (hibrido + soft_tfidf)",
+  "ajustes_perfil": null,
+  "tamanos": {}
+}

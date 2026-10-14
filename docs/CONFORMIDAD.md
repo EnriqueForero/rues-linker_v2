@@ -197,11 +197,11 @@ RUES son las fuentes y RUES la confiable.
 | `C17` | TP | par | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 | ✅ 3/3 |
 | `C18` | EDGE | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
 | `C19` | TP | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
-| `C20` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `C20` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
 | `C21` | TP_DIFICIL | par | 🟡 0/1 | ✅ 1/1 | 🟡 0/1 | 🟡 0/1 |
 | `C22` | ANOMALY | par | ✅ 28/28 | ✅ 28/28 | ✅ 28/28 | ✅ 28/28 |
-| `C23` | BOUNDARY | par | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
-| `C24` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
+| `C23` | BOUNDARY | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
+| `C24` | EDGE | reg | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
 | `C25` | TN | reg | ✅ 8/8 | ✅ 8/8 | ✅ 8/8 | ✅ 8/8 |
 | `MC01` | TP | par | ✅ 1/1 | ✅ 1/1 | ❌ 0/1 | ❌ 0/1 |
 | `MC04` | FP_trap | par | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 | ✅ 1/1 |
@@ -224,10 +224,16 @@ RUES son las fuentes y RUES la confiable.
 | `solo_B` | TN | reg | ✅ 5/5 | ✅ 5/5 | ✅ 5/5 | ✅ 5/5 |
 | `homonimo_cross` | FP_trap | reg | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 | ✅ 2/2 |
 
-### Lo que el camino de producción no sabe hacer hoy (medido en F2.13)
+### Lo que el camino de producción no sabe hacer hoy (medido en F2.13; actualizado el 2026-10-14)
 
-Cuatro casos firmes reprueban por `linkage`/`flujo.cruce` y pasan por el motor
-multicampo. Se registran tal cual —esta tarea no ajusta el motor— y son
+**Desde ADR-0015 y ADR-0016 (perfil `produccion_estandar` con el comparador Soft TF-IDF y el generador híbrido), `C20`, `C23` y
+`C24` pasan también por `linkage` y `flujo.cruce`** (líneas base regeneradas: dedup por `linkage` P 1,0 · R 0,9771 · F1 0,9884,
+antes R 0,9695 · F1 0,9845; ningún caso que pasaba dejó de pasar). La fusión escandalosa de `C20`/`C24` y la frontera de `C23`
+eran exactamente el defecto del comparador legado (contención = 1,0). `MC01` sigue reprobando: es el peso de `TELEFONO`/`EMAIL`,
+no el nombre. Lo de abajo se conserva como registro de lo medido en F2.13:
+
+Cuatro casos firmes reprobaban por `linkage`/`flujo.cruce` y pasaban por el motor
+multicampo. Se registraron tal cual —esa tarea no ajustó el motor— y fueron
 insumo de F2 (cobertura por estrellas, genéricos) y de F3:
 
 - **`C20` + `C24`, una fusión escandalosa.** El registro 56 (`EMPRESA SAS`,

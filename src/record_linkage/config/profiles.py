@@ -187,7 +187,15 @@ PERFILES_BASE = {
         # Piso de similitud de cadena compactada (v0.18.0). Recupera pares
         # que un error de espaciado rompe para el comparador por tokens.
         # 0.0 = desactivada (comportamiento idéntico al de 0.17.4).
-        "similitud_compacta_min": 0.0,
+        # ADR-0015 (Fase 3): comparador Soft TF-IDF con respaldo de cadena compactada 0,93 y
+        # exención del piso de nombre para identificadores válidos idénticos. ADR-0016 (Fase 2):
+        # generador de candidatos híbrido. Medido en docs/evidencia/fase3_comparador_nombre.md
+        # (huella del banco 969145ac: macro-F1 0,9104, P 0,9697, R 0,8319, 207 FP que tocan negativo).
+        "similitud_compacta_min": 0.93,
+        "comparador_nombre": "soft_tfidf",
+        "soft_tfidf_umbral_token": 0.85,
+        "nit_identical_overrides_name_filter": True,
+        "motor_candidatos": "hibrido",
         "idf_veto_min_sin_identificador": 0.0,
         "idf_weight_blend": 0.0,
         "idf_weight_blend_sin_identificador": 0.0,

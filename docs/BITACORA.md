@@ -1875,3 +1875,43 @@ no dependa de él, abrir los PR y dejar `main` al día; se comprometió a correr
 ### Estado al cierre
 
 Rama `claude/fase0-vigilancia` (sobre `claude/f3-arreglos`, PR #6). Sigue la Fase 2: el generador de candidatos híbrido.
+
+## IT-33 · Fase 2 y Fase 3 de la ruta: candidatos híbridos, comparador Soft TF-IDF y el nuevo perfil de producción (sin publicar)
+
+*2026-10-14. Rama `claude/fase0-vigilancia` (sobre `main` con PR #6 mezclado). Evidencia: `docs/evidencia/fase2_candidatos_hibridos.md`,
+`docs/evidencia/fase3_comparador_nombre.md`, ADR-0015 y ADR-0016.*
+
+### Qué se hizo y cómo se decidió
+
+* **PR #6 mezclado en `main`** (F3.1b + diagnóstico), con el CI verde en 3.10, 3.11 y 3.12; el job de deuda mypy sigue en rojo visible.
+* **F4.1/F4.3 adelantadas:** paginación de `candidate_pairs` por la clave primaria en las dos rutas de L3 (la no streaming usaba
+  `OFFSET`, cuadrático) y escritura vectorizada; 44 pruebas de L3 verdes y la huella del banco intacta (`5bfed0d1`).
+* **Fase 2, el generador híbrido** (`engine/candidatos/`): NIT + tokens distintivos + TF-IDF de trigramas + llaves exactas, misma
+  tabla `candidate_pairs`, misma política de fuentes. Recall de pares SIN_ID 0,718 → 0,947 y L2 39 s → 22 s. Pero la calidad final
+  empeoraba (macro-F1 0,880 → 0,793; 246 → 2.859 FP que tocan un negativo). La anatomía (`scripts/anatomia_fp.py`) lo explicó: el
+  100 % de los falsos positivos eran pares de contención con `name_sim = 1,0` y sin NIT. El LSH tapaba el defecto del comparador.
+* **Un hallazgo de instrumento:** `--ajuste a=1 --ajuste b=2` solo guardaba `b=2`. Las primeras siete corridas de la fase midieron
+  el LSH creyendo medir el híbrido; se vio porque el JSON de cada corrida guarda la especificación. Arreglado con prueba.
+* **Fase 3, el comparador** (`matching/soft_tfidf.py`): coseno de tokens ponderados por IDF con emparejamiento uno a uno y tolerancia
+  Jaro-Winkler entre tokens. Barrido a nivel de par (`scripts/barrido_comparador_nombre.py`): soft solo cambia recall por precisión;
+  con tolerancia 0,85 y respaldo de cadena compactada 0,93 domina al legado (misma recall SIN_ID, precisión 0,971 vs 0,919, un tercio
+  de los falsos). En el banco completo, el recall CON_ID caía (0,977 → 0,946): 795 pares con el mismo NIT y nombres sin tokens en común
+  (siglas) que el piso de nombre vetaba y el legado pasaba por azar. La perilla `nit_identical_overrides_name_filter` existía desde
+  v2.8.0 pero los perfiles base no la declaraban; declarada y activada, los recupera.
+* **Nuevo perfil de producción** (ADR-0015, ADR-0016): híbrido + soft 0,85 + compacta 0,93 + exención por identificador idéntico.
+  Banco: macro-F1 **0,9104** (0,8803), P 0,9697 (0,9557), R 0,8319 (0,7927), recall SIN_ID 0,6484 (0,5836), FP que tocan un negativo
+  207 (246), 45 s (59 s). Huella `969145ac`. Las compuertas suben su piso (`compuertas.json`). Los demás perfiles base siguen en el
+  legado hasta medirse. Las variantes por borrado del índice de tokens quedan apagadas (no cambiaban nada; +138.000 candidatos).
+
+### Lo que la iteración enseñó
+
+* Un bloqueo con más recall no mejora nada si el comparador no es honesto: primero el comparador, después el recall.
+* Un instrumento que guarda su especificación delata al que no la aplicó. Sin el JSON de la corrida, el error de `--ajuste` habría
+  pasado como «el híbrido no sirve».
+* Lo que ningún comparador de nombre resuelve: negativos con el mismo nombre normalizado. El grueso de los 207 FP que quedan. Siguen
+  las otras variables y el puntaje probabilístico.
+
+### Lo que NO está
+
+Puntaje probabilístico (Fellegi–Sunter/EM) y umbrales por costo; otras variables en el puntaje de producción; verdad real (depende de
+Enrique); medición de escala y Colab con el nuevo perfil (Fase 4). Sin versión ni tag.

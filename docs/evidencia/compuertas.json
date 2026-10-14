@@ -1,10 +1,10 @@
 {
-  "fecha": "2026-10-13",
+  "fecha": "2026-10-14",
   "fuente": "docs/DIAGNOSTICO_Y_RUTA_2026-10-13.md, sección 4",
   "regla": "«piso» es lo que la evidencia comprometida en docs/evidencia debe cumplir HOY (tests/test_compuertas.py falla si una medición nueva lo rompe); «objetivo» es la meta de la ruta: se sube el piso a medida que se alcanza. Los tiempos no se comparan aquí (dependen de la máquina): los compara scripts/escala.py --comparar.",
   "banco_institucional": {
-    "evidencia": "docs/evidencia/corrida_base_f2.json",
-    "piso": {"macro_f1": 0.88, "precision": 0.95, "recall_SIN_ID": 0.58, "fp_que_tocan_negativo_max": 246, "grupo_mayor_sin_identificador_filas_max": 50},
+    "evidencia": "docs/evidencia/fase3_comparador/corrida_h_s085c093_id.json",
+    "piso": {"macro_f1": 0.90, "precision": 0.96, "recall_SIN_ID": 0.64, "fp_que_tocan_negativo_max": 207, "grupo_mayor_sin_identificador_filas_max": 50},
     "objetivo": {"macro_f1": 0.92, "precision": 0.95, "recall_SIN_ID": 0.80, "fp_que_tocan_negativo_max": 246}
   },
   "escala_139k": {
@@ -13,8 +13,8 @@
     "objetivo": {"f1": 0.96, "candidatos_por_registro_max": 20, "rss_pico_mib_max": 1024, "segundos_total_max": 60}
   },
   "bloqueo": {
-    "evidencia": "docs/evidencia/revision_2026-10-13/bloqueo_tfidf_resultados.json",
-    "piso": {"recall_pares_SIN_ID": 0.71, "recall_pares_CON_ID": 0.99},
+    "evidencia": "docs/evidencia/fase3_comparador/recall_h_s085c093_id.json",
+    "piso": {"recall_pares_SIN_ID": 0.92, "recall_pares_CON_ID": 0.99},
     "objetivo": {"recall_pares_SIN_ID": 0.95, "recall_pares_CON_ID": 0.99, "candidatos_por_registro_max": 20}
   },
   "verdad_real": {
